@@ -41,6 +41,70 @@ MAX_REQUESTS_PER_MINUTE = 6  # Maximum requests per user per minute
 user_last_request = {}  # Track last request time per user
 user_request_count = defaultdict(list)  # Track request timestamps for per-minute limiting
 
+async def split_long_message(message, max_length=1900):
+    """
+    Split a long message into multiple parts to avoid Discord's 2000 character limit
+
+    Args:
+        message (str): The message to split
+        max_length (int): Maximum length of each part (default: 1900 to leave room for part indicators)
+
+    Returns:
+        list: List of message parts
+    """
+    if len(message) <= max_length:
+        return [message]
+
+    parts = []
+    current_part = ""
+
+    # Split by paragraphs first (double newlines)
+    paragraphs = message.split("\n\n")
+
+    for paragraph in paragraphs:
+        # If adding this paragraph would exceed max_length, start a new part
+        if len(current_part) + len(paragraph) + 2 > max_length:
+            if current_part:
+                parts.append(current_part)
+                current_part = paragraph
+            else:
+                # If a single paragraph is too long, split it by sentences
+                sentences = paragraph.split(". ")
+                for sentence in sentences:
+                    if len(current_part) + len(sentence) + 2 > max_length:
+                        if current_part:
+                            parts.append(current_part)
+                            current_part = sentence + "."
+                        else:
+                            # If a single sentence is too long, split it by words
+                            words = sentence.split(" ")
+                            for word in words:
+                                if len(current_part) + len(word) + 1 > max_length:
+                                    parts.append(current_part)
+                                    current_part = word + " "
+                                else:
+                                    current_part += word + " "
+                    else:
+                        if current_part:
+                            current_part += " " + sentence + "."
+                        else:
+                            current_part = sentence + "."
+        else:
+            if current_part:
+                current_part += "\n\n" + paragraph
+            else:
+                current_part = paragraph
+
+    # Add the last part if it's not empty
+    if current_part:
+        parts.append(current_part)
+
+    # Add part indicators
+    for i in range(len(parts)):
+        parts[i] = f"[Part {i+1}/{len(parts)}]\n{parts[i]}"
+
+    return parts
+
 async def call_llm_api(query):
     """
     Call the LLM API with the user's query and return the response
@@ -111,14 +175,14 @@ async def call_llm_for_summary(messages, channel_name, date):
         str: The LLM's summary or an error message
     """
     try:
-        # Filter out bot messages and commands
+        # Filter out command messages but include bot responses
         filtered_messages = [
             msg for msg in messages
-            if not msg['is_bot'] and not msg['is_command']
+            if not msg['is_command']
         ]
 
         if not filtered_messages:
-            return f"No user messages found in #{channel_name} for {date.strftime('%Y-%m-%d')}."
+            return f"No messages found in #{channel_name} for {date.strftime('%Y-%m-%d')}."
 
         # Prepare the messages for summarization
         formatted_messages = []
@@ -335,7 +399,39 @@ async def on_message(message):
         # Handle $hello command
         if message.content.startswith('$hello'):
             logger.info(f"Executing command: $hello - Requested by {message.author}")
-            await message.channel.send('Hello!')
+
+            # Send the message to the channel
+            bot_response = await message.channel.send('Hello!')
+
+            # Store the bot's response in the database
+            try:
+                # Get guild and channel information
+                guild_id = str(message.guild.id) if message.guild else None
+                guild_name = message.guild.name if message.guild else None
+                channel_id = str(message.channel.id)
+                channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                # Store the bot's response in the database
+                success = database.store_message(
+                    message_id=str(bot_response.id),
+                    author_id=str(client.user.id),
+                    author_name=str(client.user),
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    content='Hello!',
+                    created_at=bot_response.created_at,
+                    guild_id=guild_id,
+                    guild_name=guild_name,
+                    is_bot=True,
+                    is_command=False,
+                    command_type=None
+                )
+
+                if not success:
+                    logger.warning(f"Failed to store bot response {bot_response.id} in database")
+            except Exception as e:
+                logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+
             logger.info(f"Command executed successfully: $hello")
 
         # Handle /bot command for LLM queries
@@ -344,7 +440,37 @@ async def on_message(message):
             query = message.content[5:].strip()
 
             if not query:
-                await message.channel.send("Please provide a query after `/bot`.")
+                error_msg = "Please provide a query after `/bot`."
+                bot_response = await message.channel.send(error_msg)
+
+                # Store the error message in the database
+                try:
+                    # Get guild and channel information
+                    guild_id = str(message.guild.id) if message.guild else None
+                    guild_name = message.guild.name if message.guild else None
+                    channel_id = str(message.channel.id)
+                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                    # Store the bot's response in the database
+                    success = database.store_message(
+                        message_id=str(bot_response.id),
+                        author_id=str(client.user.id),
+                        author_name=str(client.user),
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        content=error_msg,
+                        created_at=bot_response.created_at,
+                        guild_id=guild_id,
+                        guild_name=guild_name,
+                        is_bot=True,
+                        is_command=False,
+                        command_type=None
+                    )
+
+                    if not success:
+                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                except Exception as e:
+                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                 return
 
             logger.info(f"Executing command: /bot - Requested by {message.author}")
@@ -353,9 +479,41 @@ async def on_message(message):
             is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
             if is_limited:
                 if reason == "cooldown":
-                    await message.channel.send(f"Please wait {wait_time:.1f} seconds before making another request.")
+                    error_msg = f"Please wait {wait_time:.1f} seconds before making another request."
+                    bot_response = await message.channel.send(error_msg)
                 else:  # max_per_minute
-                    await message.channel.send(f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.")
+                    error_msg = f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+                    bot_response = await message.channel.send(error_msg)
+
+                # Store the error message in the database
+                try:
+                    # Get guild and channel information
+                    guild_id = str(message.guild.id) if message.guild else None
+                    guild_name = message.guild.name if message.guild else None
+                    channel_id = str(message.channel.id)
+                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                    # Store the bot's response in the database
+                    success = database.store_message(
+                        message_id=str(bot_response.id),
+                        author_id=str(client.user.id),
+                        author_name=str(client.user),
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        content=error_msg,
+                        created_at=bot_response.created_at,
+                        guild_id=guild_id,
+                        guild_name=guild_name,
+                        is_bot=True,
+                        is_command=False,
+                        command_type=None
+                    )
+
+                    if not success:
+                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                except Exception as e:
+                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
+
                 logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
                 return
 
@@ -366,16 +524,80 @@ async def on_message(message):
                 # Call the LLM API
                 response = await call_llm_api(query)
 
-                # Send the response
-                await message.channel.send(response)
+                # Split the response if it's too long
+                message_parts = await split_long_message(response)
+
+                # Send each part of the response and store in database
+                for part in message_parts:
+                    # Send the message to the channel
+                    bot_response = await message.channel.send(part)
+
+                    # Store the bot's response in the database
+                    try:
+                        # Get guild and channel information
+                        guild_id = str(message.guild.id) if message.guild else None
+                        guild_name = message.guild.name if message.guild else None
+                        channel_id = str(message.channel.id)
+                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                        # Store the bot's response in the database
+                        success = database.store_message(
+                            message_id=str(bot_response.id),
+                            author_id=str(client.user.id),
+                            author_name=str(client.user),
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            content=part,
+                            created_at=bot_response.created_at,
+                            guild_id=guild_id,
+                            guild_name=guild_name,
+                            is_bot=True,
+                            is_command=False,
+                            command_type=None
+                        )
+
+                        if not success:
+                            logger.warning(f"Failed to store bot response {bot_response.id} in database")
+                    except Exception as e:
+                        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
 
                 # Delete the processing message
                 await processing_msg.delete()
 
-                logger.info(f"Command executed successfully: /bot - Response length: {len(response)}")
+                logger.info(f"Command executed successfully: /bot - Response length: {len(response)} - Split into {len(message_parts)} parts")
             except Exception as e:
                 logger.error(f"Error processing /bot command: {str(e)}", exc_info=True)
-                await message.channel.send("Sorry, an error occurred while processing your request. Please try again later.")
+                error_msg = "Sorry, an error occurred while processing your request. Please try again later."
+                bot_response = await message.channel.send(error_msg)
+
+                # Store the error message in the database
+                try:
+                    # Get guild and channel information
+                    guild_id = str(message.guild.id) if message.guild else None
+                    guild_name = message.guild.name if message.guild else None
+                    channel_id = str(message.channel.id)
+                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                    # Store the bot's response in the database
+                    success = database.store_message(
+                        message_id=str(bot_response.id),
+                        author_id=str(client.user.id),
+                        author_name=str(client.user),
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        content=error_msg,
+                        created_at=bot_response.created_at,
+                        guild_id=guild_id,
+                        guild_name=guild_name,
+                        is_bot=True,
+                        is_command=False,
+                        command_type=None
+                    )
+
+                    if not success:
+                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                except Exception as e:
+                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                 try:
                     await processing_msg.delete()
                 except:
@@ -389,9 +611,41 @@ async def on_message(message):
             is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
             if is_limited:
                 if reason == "cooldown":
-                    await message.channel.send(f"Please wait {wait_time:.1f} seconds before making another request.")
+                    error_msg = f"Please wait {wait_time:.1f} seconds before making another request."
+                    bot_response = await message.channel.send(error_msg)
                 else:  # max_per_minute
-                    await message.channel.send(f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.")
+                    error_msg = f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+                    bot_response = await message.channel.send(error_msg)
+
+                # Store the error message in the database
+                try:
+                    # Get guild and channel information
+                    guild_id = str(message.guild.id) if message.guild else None
+                    guild_name = message.guild.name if message.guild else None
+                    channel_id = str(message.channel.id)
+                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                    # Store the bot's response in the database
+                    success = database.store_message(
+                        message_id=str(bot_response.id),
+                        author_id=str(client.user.id),
+                        author_name=str(client.user),
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        content=error_msg,
+                        created_at=bot_response.created_at,
+                        guild_id=guild_id,
+                        guild_name=guild_name,
+                        is_bot=True,
+                        is_command=False,
+                        command_type=None
+                    )
+
+                    if not success:
+                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                except Exception as e:
+                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
+
                 logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
                 return
 
@@ -410,7 +664,37 @@ async def on_message(message):
                 if not database:
                     logger.error("Database module not properly imported or initialized")
                     await processing_msg.delete()
-                    await message.channel.send("Sorry, an error occurred while accessing the database. Please try again later.")
+                    error_msg = "Sorry, an error occurred while accessing the database. Please try again later."
+                    bot_response = await message.channel.send(error_msg)
+
+                    # Store the error message in the database
+                    try:
+                        # Get guild and channel information
+                        guild_id = str(message.guild.id) if message.guild else None
+                        guild_name = message.guild.name if message.guild else None
+                        channel_id = str(message.channel.id)
+                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                        # Store the bot's response in the database
+                        success = database.store_message(
+                            message_id=str(bot_response.id),
+                            author_id=str(client.user.id),
+                            author_name=str(client.user),
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            content=error_msg,
+                            created_at=bot_response.created_at,
+                            guild_id=guild_id,
+                            guild_name=guild_name,
+                            is_bot=True,
+                            is_command=False,
+                            command_type=None
+                        )
+
+                        if not success:
+                            logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                    except Exception as e:
+                        logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                     return
 
                 # Get messages for the channel for today
@@ -418,23 +702,117 @@ async def on_message(message):
 
                 if not messages:
                     await processing_msg.delete()
-                    await message.channel.send(f"No messages found in this channel for today ({today.strftime('%Y-%m-%d')}).")
+                    error_msg = f"No messages found in this channel for today ({today.strftime('%Y-%m-%d')})."
+                    bot_response = await message.channel.send(error_msg)
+
+                    # Store the error message in the database
+                    try:
+                        # Get guild and channel information
+                        guild_id = str(message.guild.id) if message.guild else None
+                        guild_name = message.guild.name if message.guild else None
+                        channel_id = str(message.channel.id)
+                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                        # Store the bot's response in the database
+                        success = database.store_message(
+                            message_id=str(bot_response.id),
+                            author_id=str(client.user.id),
+                            author_name=str(client.user),
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            content=error_msg,
+                            created_at=bot_response.created_at,
+                            guild_id=guild_id,
+                            guild_name=guild_name,
+                            is_bot=True,
+                            is_command=False,
+                            command_type=None
+                        )
+
+                        if not success:
+                            logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                    except Exception as e:
+                        logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                     logger.info(f"No messages found for /sum-day command in channel {channel_name}")
                     return
 
                 # Call the LLM API for summarization
                 summary = await call_llm_for_summary(messages, channel_name, today)
 
-                # Send the summary
-                await message.channel.send(summary)
+                # Split the summary if it's too long
+                summary_parts = await split_long_message(summary)
+
+                # Send each part of the summary and store in database
+                for part in summary_parts:
+                    # Send the message to the channel
+                    bot_response = await message.channel.send(part)
+
+                    # Store the bot's response in the database
+                    try:
+                        # Get guild and channel information
+                        guild_id = str(message.guild.id) if message.guild else None
+                        guild_name = message.guild.name if message.guild else None
+                        channel_id = str(message.channel.id)
+                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                        # Store the bot's response in the database
+                        success = database.store_message(
+                            message_id=str(bot_response.id),
+                            author_id=str(client.user.id),
+                            author_name=str(client.user),
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            content=part,
+                            created_at=bot_response.created_at,
+                            guild_id=guild_id,
+                            guild_name=guild_name,
+                            is_bot=True,
+                            is_command=False,
+                            command_type=None
+                        )
+
+                        if not success:
+                            logger.warning(f"Failed to store bot response {bot_response.id} in database")
+                    except Exception as e:
+                        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
 
                 # Delete the processing message
                 await processing_msg.delete()
 
-                logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)}")
+                logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
             except Exception as e:
                 logger.error(f"Error processing /sum-day command: {str(e)}", exc_info=True)
-                await message.channel.send("Sorry, an error occurred while generating the summary. Please try again later.")
+                error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
+                bot_response = await message.channel.send(error_msg)
+
+                # Store the error message in the database
+                try:
+                    # Get guild and channel information
+                    guild_id = str(message.guild.id) if message.guild else None
+                    guild_name = message.guild.name if message.guild else None
+                    channel_id = str(message.channel.id)
+                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
+
+                    # Store the bot's response in the database
+                    success = database.store_message(
+                        message_id=str(bot_response.id),
+                        author_id=str(client.user.id),
+                        author_name=str(client.user),
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        content=error_msg,
+                        created_at=bot_response.created_at,
+                        guild_id=guild_id,
+                        guild_name=guild_name,
+                        is_bot=True,
+                        is_command=False,
+                        command_type=None
+                    )
+
+                    if not success:
+                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
+                except Exception as e:
+                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                 try:
                     await processing_msg.delete()
                 except:

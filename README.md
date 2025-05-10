@@ -7,6 +7,7 @@ A simple Discord bot built with discord.py.
 - Responds to `$hello` command with a greeting
 - Processes `/bot <query>` commands and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
+- Automatically splits long messages into multiple parts to handle Discord's 2000 character limit
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - Only responds in the #bot-talk channel
 - Stores all messages in a SQLite database for logging and analysis
@@ -60,20 +61,27 @@ To use the message content intent, you need to enable it in the Discord Develope
 ### Channel Summarization
 
 - `/sum-day`: Summarizes all messages in the current channel for the current day
-  - The bot retrieves all non-bot, non-command messages from the channel
+  - The bot retrieves all messages from the channel (including bot responses) except command messages
   - Sends them to the AI model for summarization
   - Returns a formatted summary with the main topics and key points discussed
 
 ## Database
 
-The bot stores all messages in a SQLite database located in the `data/` directory. This allows for:
+The bot stores all messages in a SQLite database located in the `data/` directory, including:
+- User messages
+- Bot responses to commands
+- Error messages
+- Rate limit notifications
 
-- Message history tracking
+This comprehensive message storage allows for:
+
+- Complete conversation history tracking
 - User activity analysis
 - Command usage statistics
 - Channel summarization functionality
+- Debugging and troubleshooting
 
-The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages.
+The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages. Each message is stored with metadata including author information, timestamps, and whether it's a command or bot response.
 
 ### Database Utilities
 
@@ -98,7 +106,14 @@ If you encounter database-related errors:
 
 ## Changelog
 
-### 2025-05-10
+### 2023-05-15
+- Fixed issue where bot responses to `/bot` commands were not being stored in the database
+- Now storing all bot responses in the database, including error messages and rate limit notifications
+- Modified `/sum-day` command to include bot responses in the summary
+- Improved error handling and logging for database operations
+
+### 2023-05-10
+- Added message splitting functionality to handle responses that exceed Discord's 2000 character limit
 - Fixed an `UnboundLocalError` in the `/sum-day` command that was causing database access issues
 - Improved error handling for database operations
 - Added additional database troubleshooting information to the README
