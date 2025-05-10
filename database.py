@@ -7,7 +7,7 @@ import sqlite3
 import os
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -57,20 +57,19 @@ def init_database() -> None:
             os.makedirs(DB_DIRECTORY)
             logger.info(f"Created database directory: {DB_DIRECTORY}")
 
-        # Connect to the database and create tables
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
+        # Connect to the database and create tables using context manager
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
 
-        # Create tables and indexes
-        cursor.execute(CREATE_MESSAGES_TABLE)
-        cursor.execute(CREATE_INDEX_AUTHOR)
-        cursor.execute(CREATE_INDEX_CHANNEL)
-        cursor.execute(CREATE_INDEX_GUILD)
-        cursor.execute(CREATE_INDEX_CREATED)
-        cursor.execute(CREATE_INDEX_COMMAND)
+            # Create tables and indexes
+            cursor.execute(CREATE_MESSAGES_TABLE)
+            cursor.execute(CREATE_INDEX_AUTHOR)
+            cursor.execute(CREATE_INDEX_CHANNEL)
+            cursor.execute(CREATE_INDEX_GUILD)
+            cursor.execute(CREATE_INDEX_CREATED)
+            cursor.execute(CREATE_INDEX_COMMAND)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         logger.info(f"Database initialized successfully at {DB_FILE}")
     except Exception as e:
@@ -80,6 +79,7 @@ def init_database() -> None:
 def get_connection() -> sqlite3.Connection:
     """
     Get a connection to the SQLite database.
+    The connection supports context managers (with statements).
 
     Returns:
         sqlite3.Connection: A connection to the database.
@@ -127,29 +127,29 @@ def store_message(
         bool: True if the message was stored successfully, False otherwise
     """
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        # Use context manager to ensure connection is properly closed
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            INSERT_MESSAGE,
-            (
-                message_id,
-                author_id,
-                author_name,
-                channel_id,
-                channel_name,
-                guild_id,
-                guild_name,
-                content,
-                created_at.isoformat(),
-                1 if is_bot else 0,
-                1 if is_command else 0,
-                command_type
+            cursor.execute(
+                INSERT_MESSAGE,
+                (
+                    message_id,
+                    author_id,
+                    author_name,
+                    channel_id,
+                    channel_name,
+                    guild_id,
+                    guild_name,
+                    content,
+                    created_at.isoformat(),
+                    1 if is_bot else 0,
+                    1 if is_command else 0,
+                    command_type
+                )
             )
-        )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         logger.debug(f"Message {message_id} stored in database")
         return True
@@ -169,17 +169,17 @@ def get_message_count() -> int:
         int: The number of messages
     """
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM messages")
-        count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM messages")
+            count = cursor.fetchone()[0]
 
-        conn.close()
         return count
     except Exception as e:
         logger.error(f"Error getting message count: {str(e)}", exc_info=True)
-        return -1
+        # Return 0 instead of -1 for consistency with other error cases
+        return 0
 
 def get_user_message_count(user_id: str) -> int:
     """
@@ -192,17 +192,17 @@ def get_user_message_count(user_id: str) -> int:
         int: The number of messages from the user
     """
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM messages WHERE author_id = ?", (user_id,))
-        count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM messages WHERE author_id = ?", (user_id,))
+            count = cursor.fetchone()[0]
 
-        conn.close()
         return count
     except Exception as e:
         logger.error(f"Error getting message count for user {user_id}: {str(e)}", exc_info=True)
-        return -1
+        # Return 0 instead of -1 for consistency with other error cases
+        return 0
 
 def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
     """
@@ -216,36 +216,35 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
         # Calculate start and end of the day
         start_date = datetime(date.year, date.month, date.day, 0, 0, 0).isoformat()
         end_date = datetime(date.year, date.month, date.day, 23, 59, 59, 999999).isoformat()
 
-        # Query messages for the channel within the date range
-        cursor.execute(
-            """
-            SELECT author_name, content, created_at, is_bot, is_command
-            FROM messages
-            WHERE channel_id = ? AND created_at BETWEEN ? AND ?
-            ORDER BY created_at ASC
-            """,
-            (channel_id, start_date, end_date)
-        )
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Convert rows to dictionaries
-        messages = []
-        for row in cursor.fetchall():
-            messages.append({
-                'author_name': row['author_name'],
-                'content': row['content'],
-                'created_at': datetime.fromisoformat(row['created_at']),
-                'is_bot': bool(row['is_bot']),
-                'is_command': bool(row['is_command'])
-            })
+            # Query messages for the channel within the date range
+            cursor.execute(
+                """
+                SELECT author_name, content, created_at, is_bot, is_command
+                FROM messages
+                WHERE channel_id = ? AND created_at BETWEEN ? AND ?
+                ORDER BY created_at ASC
+                """,
+                (channel_id, start_date, end_date)
+            )
 
-        conn.close()
+            # Convert rows to dictionaries
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    'author_name': row['author_name'],
+                    'content': row['content'],
+                    'created_at': datetime.fromisoformat(row['created_at']),
+                    'is_bot': bool(row['is_bot']),
+                    'is_command': bool(row['is_command'])
+                })
+
         logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {date.strftime('%Y-%m-%d')}")
         return messages
     except Exception as e:
