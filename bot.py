@@ -355,7 +355,7 @@ async def on_ready():
         # Check if bot-talk channel exists
         bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
         if not bot_talk_exists:
-            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. Bot will not respond to any messages in this guild.')
+            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
 
 @client.event
 async def on_guild_join(guild):
@@ -364,7 +364,7 @@ async def on_guild_join(guild):
     # Check if bot-talk channel exists
     bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
     if not bot_talk_exists:
-        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. Bot will not respond to any messages in this guild.')
+        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
 
 @client.event
 async def on_guild_remove(guild):
@@ -443,9 +443,17 @@ async def on_message(message):
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
-    # Only respond in the #bot-talk channel
-    if hasattr(message.channel, 'name') and message.channel.name != 'bot-talk':
-        logger.debug(f"Ignoring message in channel #{message.channel.name} - bot only responds in #bot-talk")
+    # Check if this is a command
+    is_bot_command = message.content.startswith('/bot ')
+    is_sum_day_command = message.content.startswith('/sum-day')
+
+    # Only process /bot command in the #bot-talk channel
+    if is_bot_command and hasattr(message.channel, 'name') and message.channel.name != 'bot-talk':
+        logger.debug(f"Ignoring /bot command in channel #{message.channel.name} - /bot only works in #bot-talk")
+        return
+
+    # If not a command we recognize, ignore
+    if not is_bot_command and not is_sum_day_command:
         return
 
     # Process commands
