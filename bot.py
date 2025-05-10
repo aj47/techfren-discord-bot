@@ -407,10 +407,7 @@ async def on_message(message):
         is_command = False
         command_type = None
 
-        if message.content.startswith('$hello'):
-            is_command = True
-            command_type = "$hello"
-        elif message.content.startswith('/bot '):
+        if message.content.startswith('/bot '):
             is_command = True
             command_type = "/bot"
         elif message.content.startswith('/sum-day'):
@@ -453,46 +450,8 @@ async def on_message(message):
 
     # Process commands
     try:
-        # Handle $hello command
-        if message.content.startswith('$hello'):
-            logger.info(f"Executing command: $hello - Requested by {message.author}")
-
-            # Send the message to the channel
-            bot_response = await message.channel.send('Hello!')
-
-            # Store the bot's response in the database
-            try:
-                # Get guild and channel information
-                guild_id = str(message.guild.id) if message.guild else None
-                guild_name = message.guild.name if message.guild else None
-                channel_id = str(message.channel.id)
-                channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                # Store the bot's response in the database
-                success = database.store_message(
-                    message_id=str(bot_response.id),
-                    author_id=str(client.user.id),
-                    author_name=str(client.user),
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    content='Hello!',
-                    created_at=bot_response.created_at,
-                    guild_id=guild_id,
-                    guild_name=guild_name,
-                    is_bot=True,
-                    is_command=False,
-                    command_type=None
-                )
-
-                if not success:
-                    logger.warning(f"Failed to store bot response {bot_response.id} in database")
-            except Exception as e:
-                logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
-
-            logger.info(f"Command executed successfully: $hello")
-
         # Handle /bot command for LLM queries
-        elif message.content.startswith('/bot '):
+        if message.content.startswith('/bot '):
             # Extract the query (everything after "/bot ")
             query = message.content[5:].strip()
 

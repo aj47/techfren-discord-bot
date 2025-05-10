@@ -4,7 +4,6 @@ A simple Discord bot built with discord.py.
 
 ## Features
 
-- Responds to `$hello` command with a greeting
 - Processes `/bot <query>` commands and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
 - Automatically splits long messages into multiple parts to handle Discord's 2000 character limit
@@ -55,7 +54,6 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 ### Basic Commands
 
-- `$hello`: A simple greeting command that responds with "Hello!"
 - `/bot <query>`: Sends your query to an AI model via OpenRouter and returns the response
 
 ### Channel Summarization
@@ -105,6 +103,10 @@ If you encounter database-related errors:
 4. Check the logs for detailed error messages
 
 ## Changelog
+
+### 2023-05-20
+- Removed the `$hello` command feature
+- Simplified command handling in the bot
 
 ### 2023-05-15
 - Fixed issue where bot responses to `/bot` commands were not being stored in the database
