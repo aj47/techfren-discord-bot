@@ -6,6 +6,9 @@ A simple Discord bot built with discord.py.
 
 - Processes `/bot <query>` commands and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
+- Automatically generates daily summaries for all active channels at a scheduled time
+- Stores summaries in a dedicated database table and optionally posts them to a reports channel
+- Automatically cleans up old message records after summarization to manage database size
 - Automatically splits long messages into multiple parts to handle Discord's 2000 character limit
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - `/bot` command only responds in the #bot-talk channel
@@ -30,8 +33,21 @@ A simple Discord bot built with discord.py.
    ```
 5. Create a `config.py` file with your Discord bot token and OpenRouter API key:
    ```python
+   # Required settings
    token = "YOUR_DISCORD_BOT_TOKEN"
    openrouter = "YOUR_OPENROUTER_API_KEY"
+
+   # Optional settings
+   llm_model = "x-ai/grok-3-mini-beta"  # Default model to use
+
+   # Rate limiting settings
+   rate_limit_seconds = 10  # Time between allowed requests per user
+   max_requests_per_minute = 6  # Maximum requests per user per minute
+
+   # Automated summarization settings
+   summary_hour = 0  # Hour of the day to run summarization (UTC, 0-23)
+   summary_minute = 0  # Minute of the hour to run summarization (0-59)
+   reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
    ```
    You can get an OpenRouter API key by signing up at [OpenRouter.ai](https://openrouter.ai/)
 6. Run the bot:
@@ -65,23 +81,62 @@ To use the message content intent, you need to enable it in the Discord Develope
   - Sends them to the AI model for summarization
   - Returns a formatted summary with the main topics and key points discussed
 
+### Automated Daily Summarization
+
+The bot automatically generates summaries for all active channels once per day:
+
+- Runs at a configurable time (default: midnight UTC)
+- Summarizes messages from the past 24 hours for each active channel
+- Stores summaries in a dedicated database table with metadata including:
+  - Channel information
+  - Message count
+  - Active users
+  - Date
+  - Summary text
+- Optionally posts summaries to a designated reports channel
+- Deletes messages older than 24 hours after successful summarization to manage database size
+
+To configure the automated summarization:
+
+```python
+# In config.py
+summary_hour = 0  # Hour of the day to run summarization (UTC, 0-23)
+summary_minute = 0  # Minute of the hour to run summarization (0-59)
+reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
+```
+
 ## Database
 
-The bot stores all messages in a SQLite database located in the `data/` directory, including:
+The bot uses a SQLite database located in the `data/` directory with the following tables:
+
+### Messages Table
+Stores all messages processed by the bot, including:
 - User messages
 - Bot responses to commands
 - Error messages
 - Rate limit notifications
 
-This comprehensive message storage allows for:
+Each message is stored with metadata including author information, timestamps, and whether it's a command or bot response.
+
+### Channel Summaries Table
+Stores the daily automated summaries for each channel, including:
+- Channel information (ID, name, guild)
+- Date of the summary
+- Summary text
+- Message count
+- Active users count and list
+- Metadata (start/end times, summary type)
+
+This comprehensive database structure allows for:
 
 - Complete conversation history tracking
 - User activity analysis
 - Command usage statistics
 - Channel summarization functionality
+- Historical summary access
 - Debugging and troubleshooting
 
-The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages. Each message is stored with metadata including author information, timestamps, and whether it's a command or bot response.
+The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages and summaries.
 
 ### Database Utilities
 
@@ -93,6 +148,18 @@ python db_utils.py list -n 20
 
 # Show message statistics
 python db_utils.py stats
+
+# List channel summaries
+python db_utils.py summaries -n 10
+
+# Filter summaries by channel name
+python db_utils.py summaries -c general
+
+# Filter summaries by date
+python db_utils.py summaries -d 2023-05-30
+
+# View a specific summary in full
+python db_utils.py view-summary 1
 ```
 
 ### Troubleshooting
@@ -105,6 +172,14 @@ If you encounter database-related errors:
 4. Check the logs for detailed error messages
 
 ## Changelog
+
+### 2023-05-30
+- Added automated daily channel summarization feature
+- Created a new channel_summaries table in the database
+- Implemented scheduled task to run summarization at a configurable time
+- Added functionality to delete old messages after summarization
+- Added optional feature to post summaries to a designated reports channel
+- Updated documentation with new configuration options
 
 ### 2023-05-25
 - Modified the `/sum-day` command to work in any channel (not just #bot-talk)
