@@ -113,7 +113,24 @@ The bot uses a libSQL database (transitioned from SQLite) to store messages, sum
 
 This ensures that anyone setting up the bot from scratch will have the correct database structure.
 
-To initialize or reset the database according to `setup.sql`, you would typically run the SQL commands within that file against your libSQL database instance. The `init_database()` function in `database.py` attempts to create tables if they don't exist, but `setup.sql` serves as the canonical reference for the full schema.
+### Database Configuration
+
+By default, the bot uses a local libSQL database file. However, it now also supports connecting to a remote [Turso](https://turso.tech/) database for improved performance, reliability, and scalability.
+
+To configure a Turso database connection:
+
+1. Create an account on [Turso](https://turso.tech/)
+2. Create a database and obtain your database URL and authentication token
+3. Add them to the `keys.json` file:
+
+```json
+"turso_db": {
+  "url": "libsql://your-database-name.turso.io",
+  "auth_token": "your-auth-token"
+}
+```
+
+The bot will automatically connect to the Turso database when available, and fall back to a local file if the connection fails or credentials are not provided.
 
 ## API Key Management
 

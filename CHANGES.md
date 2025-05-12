@@ -5,6 +5,8 @@
 - Migrated from SQLite to libSQL for better performance and scalability
 - Adapted database connection logic in `database.py` and `db_utils.py`
 - Changed database file from `discord_messages.db` to `discord_messages.turso`
+- Added support for remote Turso database connections via URL and authentication token
+- Implemented failover logic to use local file if Turso connection fails
 
 ## API Key Management
 

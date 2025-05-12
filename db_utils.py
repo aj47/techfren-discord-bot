@@ -15,13 +15,40 @@ import libsql_client as libsql
 # Database constants
 DB_DIRECTORY = "data"
 DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.turso")
+DB_URL = None
+DB_AUTH_TOKEN = None
+
+# Load Turso DB credentials
+try:
+    with open('keys.json', 'r') as f:
+        keys_data = json.load(f)
+        if 'turso_db' in keys_data:
+            DB_URL = keys_data['turso_db']['url']
+            DB_AUTH_TOKEN = keys_data['turso_db']['auth_token']
+            print("Loaded Turso DB credentials")
+except Exception as e:
+    print(f"Could not load Turso DB credentials: {e}")
 
 def get_connection() -> libsql.Connection:
-    """Get a connection to the libSQL database."""
+    """Get a connection to the libSQL database, using Turso if configured."""
+    # If Turso credentials are available, use them
+    if DB_URL and DB_AUTH_TOKEN:
+        print("Connecting to Turso database using URL")
+        try:
+            conn = libsql.connect(
+                url=DB_URL,
+                auth_token=DB_AUTH_TOKEN
+            )
+            return conn
+        except Exception as e:
+            print(f"Failed to connect to Turso database: {e}")
+            print("Falling back to local database file")
+    
+    # Otherwise, use local file
     if not os.path.exists(DB_FILE):
-        print(f"Error: Database file not found at {DB_FILE}")
-        sys.exit(1)
-
+        print(f"Database file not found at {DB_FILE}, creating directory")
+        os.makedirs(DB_DIRECTORY, exist_ok=True)
+    
     conn = libsql.connect(DB_FILE)
     return conn
 
