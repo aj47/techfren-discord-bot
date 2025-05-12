@@ -487,7 +487,7 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
 
         # Send each part of the summary
         for part in summary_parts:
-            await reports_channel.send(part)
+            await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
         logger.info(f"Posted summary for channel {channel_name} to reports channel")
 
@@ -758,7 +758,7 @@ async def on_message(message):
                 # Send each part of the response and store in database
                 for part in message_parts:
                     # Send the message to the channel
-                    bot_response = await message.channel.send(part)
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                     # Store the bot's response in the database
                     try:
@@ -973,7 +973,7 @@ async def on_message(message):
                 # Send each part of the summary and store in database
                 for part in summary_parts:
                     # Send the message to the channel
-                    bot_response = await message.channel.send(part)
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                     # Store the bot's response in the database
                     try:
