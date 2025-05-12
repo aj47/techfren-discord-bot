@@ -8,6 +8,7 @@ import time
 import sqlite3
 import json
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from openai import OpenAI
@@ -147,6 +148,8 @@ async def call_llm_api(query):
         model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
 
         # Make the API request
+        # Sanitize input to remove @everyone and @here mentions
+        sanitized_query = re.sub(r'@everyone|@here', '', query)
         completion = openai_client.chat.completions.create(
             extra_headers={
                 "HTTP-Referer": "https://techfren.net",  # Optional site URL
@@ -611,10 +614,21 @@ async def on_message(message):
         is_command = False
         command_type = None
 
+        # Add input validation
         if message.content.startswith('/bot '):
+            query = message.content[5:].strip()
+            if not query:  # Basic validation
+                await message.channel.send("Please provide a query after `/bot`.", allowed_mentions=discord.AllowedMentions.none())
+                return  # Early return
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("You do not have permission to use this command.", allowed_mentions=discord.AllowedMentions.none())
+                return
             is_command = True
             command_type = "/bot"
         elif message.content.startswith('/sum-day'):
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("You do not have permission to use this command.", allowed_mentions=discord.AllowedMentions.none())
+                return
             is_command = True
             command_type = "/sum-day"
 
@@ -669,7 +683,7 @@ async def on_message(message):
 
             if not query:
                 error_msg = "Please provide a query after `/bot`."
-                bot_response = await message.channel.send(error_msg)
+                bot_response = await message.channel.send(error_msg, allowed_mentions=discord.AllowedMentions.none())
 
                 # Store the error message in the database
                 try:
@@ -758,7 +772,7 @@ async def on_message(message):
                 # Send each part of the response and store in database
                 for part in message_parts:
                     # Send the message to the channel
-                    bot_response = await message.channel.send(part)
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                     # Store the bot's response in the database
                     try:
@@ -795,8 +809,8 @@ async def on_message(message):
                 logger.info(f"Command executed successfully: /bot - Response length: {len(response)} - Split into {len(message_parts)} parts")
             except Exception as e:
                 logger.error(f"Error processing /bot command: {str(e)}", exc_info=True)
-                error_msg = "Sorry, an error occurred while processing your request. Please try again later."
-                bot_response = await message.channel.send(error_msg)
+                error_msg = "An error occurred. Please try again later."
+                bot_response = await message.channel.send(error_msg, allowed_mentions=discord.AllowedMentions.none())
 
                 # Store the error message in the database
                 try:
@@ -973,7 +987,7 @@ async def on_message(message):
                 # Send each part of the summary and store in database
                 for part in summary_parts:
                     # Send the message to the channel
-                    bot_response = await message.channel.send(part)
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                     # Store the bot's response in the database
                     try:
