@@ -1,0 +1,15 @@
+{
+    "openrouter_api_keys": [
+        "your-api-key-1",
+        "your-api-key-2",
+        "your-api-key-3"
+    ],
+    "firecrawl_api_keys": [
+        "YOUR_FIRECRAWL_API_KEY_1",
+        "YOUR_FIRECRAWL_API_KEY_2"
+    ],
+    "turso_db": {
+        "url": "libsql://YOUR-DATABASE-NAME.turso.io",
+        "auth_token": "YOUR_TURSO_AUTH_TOKEN"
+    }
+}
