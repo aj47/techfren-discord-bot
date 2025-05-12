@@ -4,26 +4,25 @@ Provides command-line tools for querying and managing the database.
 """
 
 import argparse
-import sqlite3
 import os
 import sys
 import json
 from datetime import datetime
 from tabulate import tabulate
 from typing import List, Dict, Any, Optional
+import libsql_client as libsql
 
 # Database constants
 DB_DIRECTORY = "data"
-DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.db")
+DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.turso")
 
-def get_connection() -> sqlite3.Connection:
-    """Get a connection to the SQLite database."""
+def get_connection() -> libsql.Connection:
+    """Get a connection to the libSQL database."""
     if not os.path.exists(DB_FILE):
         print(f"Error: Database file not found at {DB_FILE}")
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
+    conn = libsql.connect(DB_FILE)
     return conn
 
 def list_recent_messages(limit: int = 10) -> None:

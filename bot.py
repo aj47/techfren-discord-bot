@@ -5,13 +5,39 @@ from discord.ext import tasks
 import logging
 import os
 import time
-import sqlite3
 import json
 import asyncio
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from openai import OpenAI
 import database
+from firecrawl import FirecrawlApp  # Added Firecrawl import
+
+# Add API key rotator logic
+class APIKeyRotator:
+    def __init__(self, keys_file):
+        with open(keys_file, 'r') as f:
+            self.all_keys = json.load(f)
+        self.indices = {key_type: 0 for key_type in self.all_keys}
+
+    def get_key(self, key_type: str):
+        if key_type not in self.all_keys or not self.all_keys[key_type]:
+            logger.error(f"No API keys found for type: {key_type}")
+            return None
+        keys = self.all_keys[key_type]
+        key = keys[self.indices[key_type]]
+        return key
+
+    def rotate_key(self, key_type: str):
+        if key_type not in self.all_keys or not self.all_keys[key_type]:
+            logger.error(f"Cannot rotate keys for type: {key_type}, no keys available.")
+            return
+        keys = self.all_keys[key_type]
+        self.indices[key_type] = (self.indices[key_type] + 1) % len(keys)
+        logger.info(f"Rotated API key for {key_type}. New index: {self.indices[key_type]}")
+
+# Initialize API key rotator
+api_key_rotator = APIKeyRotator('keys.json')
 
 # Set up logging
 log_directory = "logs"
@@ -133,14 +159,15 @@ async def call_llm_api(query):
         import config
 
         # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        current_openai_key = api_key_rotator.get_key('openrouter_api_keys')
+        if not current_openai_key:
+            logger.error("OpenRouter API key not available.")
             return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
         # Initialize the OpenAI client with OpenRouter base URL
         openai_client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter
+            api_key=current_openai_key
         )
 
         # Get the model from config or use default
@@ -174,422 +201,86 @@ async def call_llm_api(query):
 
     except Exception as e:
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
+        if "rate limit" in str(e).lower() or "insufficient_quota" in str(e).lower():
+            logger.info("OpenAI rate limit detected. Rotating key.")
+            await handle_openai_rate_limit()
         return "Sorry, I encountered an error while processing your request. Please try again later."
 
-async def call_llm_for_summary(messages, channel_name, date):
-    """
-    Call the LLM API to summarize a list of messages from a channel
-
-    Args:
-        messages (list): List of message dictionaries to e
-        channel_name (str): Name of the channel
-        date (datetime): Date of the messages
-
-    Returns:
-        str: The LLM's summary or an error message
-    """
-    try:
-        # Filter out command messages but include bot responses
-        filtered_messages = [
-            msg for msg in messages
-            if not msg['is_command']
-        ]
-
-        if not filtered_messages:
-            return f"No messages found in #{channel_name} for {date.strftime('%Y-%m-%d')}."
-
-        # Prepare the messages for summarization
-        formatted_messages = []
-        for msg in filtered_messages:
-            time_str = msg['created_at'].strftime('%H:%M:%S')
-            formatted_messages.append(f"[{time_str}] {msg['author_name']}: {msg['content']}")
-
-        # Join the messages with newlines
-        messages_text = "\n".join(formatted_messages)
-
-        # Create the prompt for the LLM
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel on {date.strftime('%Y-%m-%d')}:
-
-{messages_text}
-
-Provide a concise summary of the main topics discussed, key points made, and any conclusions reached.
-Format the summary in a clear, readable way with bullet points for main topics.
-"""
-
-        logger.info(f"Calling LLM API for channel summary: #{channel_name} on {date.strftime('%Y-%m-%d')}")
-
-        # Import config here to ensure it's loaded
-        import config
-
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
-            return "Error: OpenRouter API key is missing. Please contact the bot administrator."
-
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
-
-        # Make the API request with a higher token limit for summaries
-        completion = openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": "https://techfren.net",
-                "X-Title": "TechFren Discord Bot",
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Provide clear, concise summaries that capture the main points of discussions."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=1500,  # Increased token limit for summaries
-            temperature=0.5   # Lower temperature for more focused summaries
-        )
-
-        # Extract the response
-        summary = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
-
-        # Add a header to the summary
-        final_summary = f"**Summary of #{channel_name} on {date.strftime('%Y-%m-%d')}**\n\n{summary}"
-        return final_summary
-
-    except Exception as e:
-        logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while generating the summary. Please try again later."
-
-def check_rate_limit(user_id):
-    """
-    Check if a user has exceeded the rate limit
-
-    Args:
-        user_id (str): The Discord user ID
-
-    Returns:
-        tuple: (is_rate_limited, seconds_to_wait, reason)
-    """
-    global last_cleanup_time
-    current_time = time.time()
-
-    # Use lock for thread safety
-    with rate_limit_lock:
-        # Periodically clean up old rate limit data to prevent memory leaks
-        if current_time - last_cleanup_time > CLEANUP_INTERVAL:
-            cleanup_rate_limit_data(current_time)
-            last_cleanup_time = current_time
-
-        # Check cooldown between requests
-        if user_id in user_last_request:
-            time_since_last = current_time - user_last_request[user_id]
-            if time_since_last < RATE_LIMIT_SECONDS:
-                return True, RATE_LIMIT_SECONDS - time_since_last, "cooldown"
-
-        # Check requests per minute
-        minute_ago = current_time - 60
-        recent_requests = [t for t in user_request_count[user_id] if t > minute_ago]
-
-        if len(recent_requests) >= MAX_REQUESTS_PER_MINUTE:
-            oldest = min(recent_requests)
-            time_until_reset = oldest + 60 - current_time
-            return True, time_until_reset, "max_per_minute"
-
-        # Update tracking
-        user_last_request[user_id] = current_time
-
-        # Clean up old timestamps and add the new one (avoid duplicates)
-        user_request_count[user_id] = recent_requests + [current_time]
-
-    return False, 0, None
-
-def cleanup_rate_limit_data(current_time):
-    """
-    Clean up old rate limit data to prevent memory leaks
-
-    Args:
-        current_time (float): The current time
-    """
-    # This function is called from within check_rate_limit which already holds the lock
-    # No need to acquire the lock again
-
-    # Remove users who haven't made a request in the last hour
-    inactive_threshold = current_time - 3600
-
-    # Clean up user_last_request
-    inactive_users = [user_id for user_id, last_time in user_last_request.items()
-                     if last_time < inactive_threshold]
-    for user_id in inactive_users:
-        del user_last_request[user_id]
-        if user_id in user_request_count:
-            del user_request_count[user_id]
-
-    if inactive_users:
-        logger.debug(f"Cleaned up rate limit data for {len(inactive_users)} inactive users")
-
-# Daily automated summarization task
-@tasks.loop(hours=24)
-async def daily_channel_summarization():
-    """
-    Task that runs once per day to:
-    1. Retrieve messages from the past 24 hours
-    2. Generate summaries for each active channel
-    3. Store the summaries in the database
-    4. Delete old messages
-    """
-    try:
-        logger.info("Starting daily automated channel summarization")
-
-        # Get the current time and 24 hours ago
-        now = datetime.now()
-        yesterday = now - timedelta(hours=24)
-
-        # Get active channels from the past 24 hours
-        active_channels = database.get_active_channels(hours=24)
-
-        if not active_channels:
-            logger.info("No active channels found in the past 24 hours. Skipping summarization.")
-            return
-
-        logger.info(f"Found {len(active_channels)} active channels to summarize")
-
-        # Get messages for each channel
-        messages_by_channel = database.get_messages_for_time_range(yesterday, now)
-
-        # Track successful summaries for reporting
-        successful_summaries = 0
-        total_messages_processed = 0
-
-        # Process each active channel
-        for channel_data in active_channels:
-            channel_id = channel_data['channel_id']
-            channel_name = channel_data['channel_name']
-
-            # Skip if no messages found for this channel
-            if channel_id not in messages_by_channel:
-                logger.warning(f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active")
-                continue
-
-            channel_messages = messages_by_channel[channel_id]['messages']
-
-            # Skip if no messages (shouldn't happen but just in case)
-            if not channel_messages:
-                continue
-
-            # Get guild information
-            guild_id = channel_data['guild_id']
-            guild_name = channel_data['guild_name']
-
-            # Format messages for summarization
-            formatted_messages = []
-            for msg in channel_messages:
-                if not msg.get('is_command', False):  # Skip command messages
-                    formatted_messages.append({
-                        'author_name': msg['author_name'],
-                        'content': msg['content'],
-                        'created_at': msg['created_at'],
-                        'is_bot': msg.get('is_bot', False),
-                        'is_command': False
-                    })
-
-            # Skip if no non-command messages
-            if not formatted_messages:
-                logger.info(f"No non-command messages found for channel {channel_name}. Skipping summarization.")
-                continue
-
-            # Get unique active users
-            active_users = list(set(msg['author_name'] for msg in formatted_messages))
-
-            # Generate summary using the existing function
-            try:
-                summary_text = await call_llm_for_summary(formatted_messages, channel_name, yesterday)
-
-                # Store the summary in the database
-                metadata = {
-                    'start_time': yesterday.isoformat(),
-                    'end_time': now.isoformat(),
-                    'summary_type': 'automated_daily'
-                }
-
-                success = database.store_channel_summary(
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    date=yesterday,
-                    summary_text=summary_text,
-                    message_count=len(formatted_messages),
-                    active_users=active_users,
-                    guild_id=guild_id,
-                    guild_name=guild_name,
-                    metadata=metadata
-                )
-
-                if success:
-                    successful_summaries += 1
-                    total_messages_processed += len(formatted_messages)
-                    logger.info(f"Successfully generated and stored summary for channel {channel_name}")
-
-                    # Optionally post to a reports channel if configured
-                    await post_summary_to_reports_channel(channel_id, channel_name, yesterday, summary_text)
-
-            except Exception as e:
-                logger.error(f"Error generating summary for channel {channel_name}: {str(e)}", exc_info=True)
-
-        # Delete old messages (older than 24 hours) after successful summarization
-        if successful_summaries > 0:
-            try:
-                # Calculate cutoff time (24 hours ago)
-                cutoff_time = now - timedelta(hours=24)
-                deleted_count = database.delete_messages_older_than(cutoff_time)
-                logger.info(f"Deleted {deleted_count} messages older than {cutoff_time}")
-            except Exception as e:
-                logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
-
-        logger.info(f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages.")
-
-    except Exception as e:
-        logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
-
-async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
-    """
-    Post a summary to a designated reports channel if configured
-
-    Args:
-        _ (str): ID of the summarized channel (unused)
-        channel_name (str): Name of the summarized channel
-        __ (datetime): Date of the summary (unused)
-        summary_text (str): The summary text
-    """
-    try:
-        # Import config to check if reports channel is configured
-        import config
-
-        # Check if reports channel is configured
-        if not hasattr(config, 'reports_channel_id') or not config.reports_channel_id:
-            # No reports channel configured, skip posting
-            return
-
-        # Get the reports channel
-        reports_channel = client.get_channel(int(config.reports_channel_id))
-        if not reports_channel:
-            logger.warning(f"Reports channel with ID {config.reports_channel_id} not found")
-            return
-
-        # Split the summary if it's too long
-        summary_parts = await split_long_message(summary_text)
-
-        # Send each part of the summary
-        for part in summary_parts:
-            await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-
-        logger.info(f"Posted summary for channel {channel_name} to reports channel")
-
-    except Exception as e:
-        logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
-        # Don't raise the exception - this is an optional feature
-
-# Configure when the daily task should run (default: midnight UTC)
-@daily_channel_summarization.before_loop
-async def before_daily_summarization():
-    """Wait until a specific time to start the daily summarization task"""
-    try:
-        # Import config to check for custom summarization time
-        import config
-
-        # Get the hour and minute for summarization from config or use default (0:00 UTC)
-        summary_hour = getattr(config, 'summary_hour', 0)
-        summary_minute = getattr(config, 'summary_minute', 0)
-
-        # Log the scheduled time
-        logger.info(f"Daily summarization scheduled for {summary_hour:02d}:{summary_minute:02d} UTC")
-
-        # Wait until the bot is ready
-        await client.wait_until_ready()
-
-        # Calculate the time to wait
-        now = datetime.now(timezone.utc)
-        future = datetime(now.year, now.month, now.day, summary_hour, summary_minute, tzinfo=timezone.utc)
-
-        # If the time has already passed today, schedule for tomorrow
-        if now.hour > summary_hour or (now.hour == summary_hour and now.minute >= summary_minute):
-            future += timedelta(days=1)
-
-        # Wait until the scheduled time
-        seconds_to_wait = (future - now).total_seconds()
-        logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first daily summarization")
-        await asyncio.sleep(seconds_to_wait)
-
-    except Exception as e:
-        logger.error(f"Error in before_daily_summarization: {str(e)}", exc_info=True)
-        # Default to waiting 60 seconds before starting
-        await asyncio.sleep(60)
-
-@client.event
-async def on_ready():
-    logger.info(f'Bot has successfully connected as {client.user}')
-    logger.info(f'Bot ID: {client.user.id}')
-    logger.info(f'Connected to {len(client.guilds)} guilds')
-
-    # Initialize the database - critical for bot operation
-    try:
-        database.init_database()
-        message_count = database.get_message_count()
-        logger.info(f'Database initialized successfully. Current message count: {message_count}')
-    except Exception as e:
-        logger.critical(f'Failed to initialize database: {str(e)}', exc_info=True)
-        logger.critical('Database initialization is required for bot operation. Shutting down.')
-        await client.close()
-        return
-
-    # Start the daily summarization task if not already running
-    if not daily_channel_summarization.is_running():
-        daily_channel_summarization.start()
-        logger.info("Started daily channel summarization task")
-
-    # Log details about each connected guild
-    for guild in client.guilds:
-        logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
-        # Check if bot-talk channel exists
-        bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
-        if not bot_talk_exists:
-            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
-
-@client.event
-async def on_guild_join(guild):
-    """Log when the bot joins a new guild"""
-    logger.info(f'Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
-    # Check if bot-talk channel exists
-    bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
-    if not bot_talk_exists:
-        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
-
-@client.event
-async def on_guild_remove(guild):
-    """Log when the bot is removed from a guild"""
-    logger.info(f'Bot removed from guild: {guild.name} (ID: {guild.id})')
-
-@client.event
-async def on_error(event, *args, **kwargs):
-    """Log Discord API errors"""
-    logger.error(f'Discord error in {event}', exc_info=True)
-    # Log additional context if available
-    if args:
-        logger.error(f'Error context args: {args}')
-    if kwargs:
-        logger.error(f'Error context kwargs: {kwargs}')
+# Handle rate limit response
+async def handle_openai_rate_limit():
+    api_key_rotator.rotate_key('openrouter_api_keys')
+
+def extract_urls(text: str) -> list[str]:
+    """Extracts URLs from a given text string."""
+    import re
+    # Basic URL regex, can be improved for more complex cases
+    url_pattern = re.compile(r'https?://[\S]+')
+    urls = url_pattern.findall(text)
+    return urls
 
 @client.event
 async def on_message(message):
     # Ignore messages from the bot itself
     if message.author == client.user:
         return
+
+    # --- Begin Firecrawl Integration ---
+    urls = extract_urls(message.content)
+    if urls:
+        firecrawl_api_key = api_key_rotator.get_key('firecrawl_api_keys')
+        if not firecrawl_api_key:
+            logger.error("Firecrawl API key not available.")
+        else:
+            app = FirecrawlApp(api_key=firecrawl_api_key)
+            for url in urls:
+                try:
+                    logger.info(f"Processing URL with Firecrawl: {url}")
+                    existing_entry = database.get_scraped_link(url)
+                    
+                    # Scrape the URL for content
+                    scraped_data = None
+                    try:
+                        scraped_data = app.scrape_url(url)
+                    except Exception as e:
+                        logger.error(f"Firecrawl scrape_url failed for {url}: {e}")
+                        if "rate limit" in str(e).lower() or "limit" in str(e).lower() or "quota" in str(e).lower():
+                            api_key_rotator.rotate_key('firecrawl_api_keys')
+                            firecrawl_api_key = api_key_rotator.get_key('firecrawl_api_keys')
+                            if firecrawl_api_key:
+                                app = FirecrawlApp(api_key=firecrawl_api_key)  # Re-initialize with new key
+                                logger.info(f"Retrying Firecrawl scrape for {url} with new key.")
+                                try:
+                                    scraped_data = app.scrape_url(url)
+                                except Exception as e_retry:
+                                    logger.error(f"Firecrawl scrape_url retry failed for {url}: {e_retry}")
+                            else:
+                                logger.error("No more Firecrawl API keys to try after rate limit.")
+                        
+
+                    if scraped_data and scraped_data.get('content'):
+                        content_to_store = scraped_data.get('content')  # Or markdown, depending on preference
+                        
+                        if existing_entry:
+                            logger.info(f"Updating existing entry for URL: {url}")
+                            updated_content = existing_entry['content'] + "\n\n--- Updated Content ---\n\n" + content_to_store
+                            database.update_scraped_link(url, updated_content, json.dumps(scraped_data.get('metadata', {})))
+                            await message.channel.send(f"Information for {url} has been updated with new content.")
+                        else:
+                            logger.info(f"Creating new entry for URL: {url}")
+                            database.store_scraped_link(url, content_to_store, json.dumps(scraped_data.get('metadata', {})))
+                            await message.channel.send(f"Information for {url} has been scraped and stored.")
+                    elif scraped_data and not scraped_data.get('content'):
+                        logger.warning(f"Firecrawl returned no content for {url}, metadata: {scraped_data.get('metadata')}")
+                    else:
+                        logger.warning(f"Firecrawl returned no data for {url}")
+
+                except Exception as e:
+                    logger.error(f"Error processing URL {url} with Firecrawl: {e}")
+                    if "rate limit" in str(e).lower() or "limit" in str(e).lower() or "quota" in str(e).lower():
+                        api_key_rotator.rotate_key('firecrawl_api_keys')
+                        logger.info("Rotated Firecrawl API key due to rate limit during processing.")
+                    await message.channel.send(f"Sorry, I encountered an error trying to process the link: {url}")
+    # --- End Firecrawl Integration ---
 
     # Log message details - safely handle DMs and different channel types
     guild_name = message.guild.name if message.guild else "DM"
@@ -670,35 +361,6 @@ async def on_message(message):
             if not query:
                 error_msg = "Please provide a query after `/bot`."
                 bot_response = await message.channel.send(error_msg)
-
-                # Store the error message in the database
-                try:
-                    # Get guild and channel information
-                    guild_id = str(message.guild.id) if message.guild else None
-                    guild_name = message.guild.name if message.guild else None
-                    channel_id = str(message.channel.id)
-                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                    # Store the bot's response in the database
-                    success = database.store_message(
-                        message_id=str(bot_response.id),
-                        author_id=str(client.user.id),
-                        author_name=str(client.user),
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        content=error_msg,
-                        created_at=bot_response.created_at,
-                        guild_id=guild_id,
-                        guild_name=guild_name,
-                        is_bot=True,
-                        is_command=False,
-                        command_type=None
-                    )
-
-                    if not success:
-                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                except Exception as e:
-                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
                 return
 
             logger.info(f"Executing command: /bot - Requested by {message.author}")
@@ -712,37 +374,6 @@ async def on_message(message):
                 else:  # max_per_minute
                     error_msg = f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
                     bot_response = await message.channel.send(error_msg)
-
-                # Store the error message in the database
-                try:
-                    # Get guild and channel information
-                    guild_id = str(message.guild.id) if message.guild else None
-                    guild_name = message.guild.name if message.guild else None
-                    channel_id = str(message.channel.id)
-                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                    # Store the bot's response in the database
-                    success = database.store_message(
-                        message_id=str(bot_response.id),
-                        author_id=str(client.user.id),
-                        author_name=str(client.user),
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        content=error_msg,
-                        created_at=bot_response.created_at,
-                        guild_id=guild_id,
-                        guild_name=guild_name,
-                        is_bot=True,
-                        is_command=False,
-                        command_type=None
-                    )
-
-                    if not success:
-                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                except Exception as e:
-                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
-
-                logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
                 return
 
             # Let the user know we're processing their request
@@ -755,39 +386,9 @@ async def on_message(message):
                 # Split the response if it's too long
                 message_parts = await split_long_message(response)
 
-                # Send each part of the response and store in database
+                # Send each part of the response
                 for part in message_parts:
-                    # Send the message to the channel
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-
-                    # Store the bot's response in the database
-                    try:
-                        # Get guild and channel information
-                        guild_id = str(message.guild.id) if message.guild else None
-                        guild_name = message.guild.name if message.guild else None
-                        channel_id = str(message.channel.id)
-                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                        # Store the bot's response in the database
-                        success = database.store_message(
-                            message_id=str(bot_response.id),
-                            author_id=str(client.user.id),
-                            author_name=str(client.user),
-                            channel_id=channel_id,
-                            channel_name=channel_name,
-                            content=part,
-                            created_at=bot_response.created_at,
-                            guild_id=guild_id,
-                            guild_name=guild_name,
-                            is_bot=True,
-                            is_command=False,
-                            command_type=None
-                        )
-
-                        if not success:
-                            logger.warning(f"Failed to store bot response {bot_response.id} in database")
-                    except Exception as e:
-                        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+                    await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                 # Delete the processing message
                 await processing_msg.delete()
@@ -796,36 +397,7 @@ async def on_message(message):
             except Exception as e:
                 logger.error(f"Error processing /bot command: {str(e)}", exc_info=True)
                 error_msg = "Sorry, an error occurred while processing your request. Please try again later."
-                bot_response = await message.channel.send(error_msg)
-
-                # Store the error message in the database
-                try:
-                    # Get guild and channel information
-                    guild_id = str(message.guild.id) if message.guild else None
-                    guild_name = message.guild.name if message.guild else None
-                    channel_id = str(message.channel.id)
-                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                    # Store the bot's response in the database
-                    success = database.store_message(
-                        message_id=str(bot_response.id),
-                        author_id=str(client.user.id),
-                        author_name=str(client.user),
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        content=error_msg,
-                        created_at=bot_response.created_at,
-                        guild_id=guild_id,
-                        guild_name=guild_name,
-                        is_bot=True,
-                        is_command=False,
-                        command_type=None
-                    )
-
-                    if not success:
-                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                except Exception as e:
-                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
+                await message.channel.send(error_msg)
                 try:
                     await processing_msg.delete()
                 except:
@@ -844,37 +416,6 @@ async def on_message(message):
                 else:  # max_per_minute
                     error_msg = f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
                     bot_response = await message.channel.send(error_msg)
-
-                # Store the error message in the database
-                try:
-                    # Get guild and channel information
-                    guild_id = str(message.guild.id) if message.guild else None
-                    guild_name = message.guild.name if message.guild else None
-                    channel_id = str(message.channel.id)
-                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                    # Store the bot's response in the database
-                    success = database.store_message(
-                        message_id=str(bot_response.id),
-                        author_id=str(client.user.id),
-                        author_name=str(client.user),
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        content=error_msg,
-                        created_at=bot_response.created_at,
-                        guild_id=guild_id,
-                        guild_name=guild_name,
-                        is_bot=True,
-                        is_command=False,
-                        command_type=None
-                    )
-
-                    if not success:
-                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                except Exception as e:
-                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
-
-                logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
                 return
 
             # Let the user know we're processing their request
@@ -893,36 +434,7 @@ async def on_message(message):
                     logger.error("Database module not properly imported or initialized")
                     await processing_msg.delete()
                     error_msg = "Sorry, an error occurred while accessing the database. Please try again later."
-                    bot_response = await message.channel.send(error_msg)
-
-                    # Store the error message in the database
-                    try:
-                        # Get guild and channel information
-                        guild_id = str(message.guild.id) if message.guild else None
-                        guild_name = message.guild.name if message.guild else None
-                        channel_id = str(message.channel.id)
-                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                        # Store the bot's response in the database
-                        success = database.store_message(
-                            message_id=str(bot_response.id),
-                            author_id=str(client.user.id),
-                            author_name=str(client.user),
-                            channel_id=channel_id,
-                            channel_name=channel_name,
-                            content=error_msg,
-                            created_at=bot_response.created_at,
-                            guild_id=guild_id,
-                            guild_name=guild_name,
-                            is_bot=True,
-                            is_command=False,
-                            command_type=None
-                        )
-
-                        if not success:
-                            logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                    except Exception as e:
-                        logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
+                    await message.channel.send(error_msg)
                     return
 
                 # Get messages for the channel for today
@@ -931,37 +443,7 @@ async def on_message(message):
                 if not messages:
                     await processing_msg.delete()
                     error_msg = f"No messages found in this channel for today ({today.strftime('%Y-%m-%d')})."
-                    bot_response = await message.channel.send(error_msg)
-
-                    # Store the error message in the database
-                    try:
-                        # Get guild and channel information
-                        guild_id = str(message.guild.id) if message.guild else None
-                        guild_name = message.guild.name if message.guild else None
-                        channel_id = str(message.channel.id)
-                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                        # Store the bot's response in the database
-                        success = database.store_message(
-                            message_id=str(bot_response.id),
-                            author_id=str(client.user.id),
-                            author_name=str(client.user),
-                            channel_id=channel_id,
-                            channel_name=channel_name,
-                            content=error_msg,
-                            created_at=bot_response.created_at,
-                            guild_id=guild_id,
-                            guild_name=guild_name,
-                            is_bot=True,
-                            is_command=False,
-                            command_type=None
-                        )
-
-                        if not success:
-                            logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                    except Exception as e:
-                        logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
-                    logger.info(f"No messages found for /sum-day command in channel {channel_name}")
+                    await message.channel.send(error_msg)
                     return
 
                 # Call the LLM API for summarization
@@ -970,39 +452,9 @@ async def on_message(message):
                 # Split the summary if it's too long
                 summary_parts = await split_long_message(summary)
 
-                # Send each part of the summary and store in database
+                # Send each part of the summary
                 for part in summary_parts:
-                    # Send the message to the channel
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-
-                    # Store the bot's response in the database
-                    try:
-                        # Get guild and channel information
-                        guild_id = str(message.guild.id) if message.guild else None
-                        guild_name = message.guild.name if message.guild else None
-                        channel_id = str(message.channel.id)
-                        channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                        # Store the bot's response in the database
-                        success = database.store_message(
-                            message_id=str(bot_response.id),
-                            author_id=str(client.user.id),
-                            author_name=str(client.user),
-                            channel_id=channel_id,
-                            channel_name=channel_name,
-                            content=part,
-                            created_at=bot_response.created_at,
-                            guild_id=guild_id,
-                            guild_name=guild_name,
-                            is_bot=True,
-                            is_command=False,
-                            command_type=None
-                        )
-
-                        if not success:
-                            logger.warning(f"Failed to store bot response {bot_response.id} in database")
-                    except Exception as e:
-                        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+                    await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
                 # Delete the processing message
                 await processing_msg.delete()
@@ -1011,36 +463,7 @@ async def on_message(message):
             except Exception as e:
                 logger.error(f"Error processing /sum-day command: {str(e)}", exc_info=True)
                 error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-                bot_response = await message.channel.send(error_msg)
-
-                # Store the error message in the database
-                try:
-                    # Get guild and channel information
-                    guild_id = str(message.guild.id) if message.guild else None
-                    guild_name = message.guild.name if message.guild else None
-                    channel_id = str(message.channel.id)
-                    channel_name = message.channel.name if hasattr(message.channel, 'name') else "Direct Message"
-
-                    # Store the bot's response in the database
-                    success = database.store_message(
-                        message_id=str(bot_response.id),
-                        author_id=str(client.user.id),
-                        author_name=str(client.user),
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        content=error_msg,
-                        created_at=bot_response.created_at,
-                        guild_id=guild_id,
-                        guild_name=guild_name,
-                        is_bot=True,
-                        is_command=False,
-                        command_type=None
-                    )
-
-                    if not success:
-                        logger.warning(f"Failed to store bot error response {bot_response.id} in database")
-                except Exception as e:
-                    logger.error(f"Error storing bot error response in database: {str(e)}", exc_info=True)
+                await message.channel.send(error_msg)
                 try:
                     await processing_msg.delete()
                 except:
@@ -1049,54 +472,6 @@ async def on_message(message):
         logger.error(f"Error processing message: {e}", exc_info=True)
         # Optionally notify about the error in the channel
         # await message.channel.send("Sorry, an error occurred while processing your command.")
-
-def validate_config(config):
-    """
-    Validate the configuration file
-
-    Args:
-        config: The config module
-
-    Returns:
-        bool: True if the configuration is valid
-
-    Raises:
-        ValueError: If the configuration is invalid
-    """
-    global RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
-
-    # Check Discord token
-    if not hasattr(config, 'token') or not config.token:
-        logger.error("Discord token not found in config.py or is empty")
-        raise ValueError("Bot token is missing or empty")
-
-    if not isinstance(config.token, str) or len(config.token) < 50:
-        logger.warning("Discord token appears to be invalid (too short)")
-
-    # Check OpenRouter API key
-    if not hasattr(config, 'openrouter') or not config.openrouter:
-        logger.error("OpenRouter API key not found in config.py or is empty")
-        raise ValueError("OpenRouter API key is missing or empty")
-
-    if not isinstance(config.openrouter, str) or len(config.openrouter) < 20:
-        logger.warning("OpenRouter API key appears to be invalid (too short)")
-
-    # Check optional rate limiting configuration
-    if hasattr(config, 'rate_limit_seconds'):
-        try:
-            RATE_LIMIT_SECONDS = int(config.rate_limit_seconds)
-            logger.info(f"Using custom rate limit seconds: {RATE_LIMIT_SECONDS}")
-        except (ValueError, TypeError):
-            logger.warning("Invalid rate_limit_seconds in config, using default")
-
-    if hasattr(config, 'max_requests_per_minute'):
-        try:
-            MAX_REQUESTS_PER_MINUTE = int(config.max_requests_per_minute)
-            logger.info(f"Using custom max requests per minute: {MAX_REQUESTS_PER_MINUTE}")
-        except (ValueError, TypeError):
-            logger.warning("Invalid max_requests_per_minute in config, using default")
-
-    return True
 
 try:
     logger.info("Starting bot...")

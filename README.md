@@ -13,7 +13,7 @@ A simple Discord bot built with discord.py.
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - `/bot` command only responds in the #bot-talk channel
 - `/sum-day` command works in any channel
-- Stores all messages in a SQLite database for logging and analysis
+- Stores all messages in a libSQL database for logging and analysis
 
 ## Setup
 
@@ -31,26 +31,26 @@ A simple Discord bot built with discord.py.
    ```
    uv pip install -r requirements.txt
    ```
-5. Create a `config.py` file with your Discord bot token and OpenRouter API key:
+5. Create a `config.py` file (you can copy `config.sample.py`). This file is primarily for the Discord bot token and other bot-specific configurations. API keys for external services are now managed in `keys.json`.
    ```python
    # Required settings
    token = "YOUR_DISCORD_BOT_TOKEN"
-   openrouter = "YOUR_OPENROUTER_API_KEY"
 
-   # Optional settings
-   llm_model = "x-ai/grok-3-mini-beta"  # Default model to use
+   # Optional settings for bot behavior
+   llm_model = "x-ai/grok-3-mini-beta"  # Default model to use for OpenRouter
 
-   # Rate limiting settings
-   rate_limit_seconds = 10  # Time between allowed requests per user
-   max_requests_per_minute = 6  # Maximum requests per user per minute
+   # Rate limiting settings for bot commands (distinct from API rate limits)
+   rate_limit_seconds = 10  # Time between allowed requests per user for bot commands
+   max_requests_per_minute = 6  # Maximum requests per user per minute for bot commands
 
    # Automated summarization settings
    summary_hour = 0  # Hour of the day to run summarization (UTC, 0-23)
    summary_minute = 0  # Minute of the hour to run summarization (0-59)
    reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
    ```
-   You can get an OpenRouter API key by signing up at [OpenRouter.ai](https://openrouter.ai/)
-6. Run the bot:
+6. Create a `keys.json` file with your API keys as described in the "API Key Management" section.
+7. Initialize the database. The `init_database()` function in `database.py` will be called when the bot starts, creating tables if they don't exist. For a fresh setup, ensure your libSQL instance is running and accessible, and the `DB_FILE` path in `database.py` (e.g., `data/discord_messages.turso`) is appropriate for your setup. You might need to manually create the `data` directory or adjust the path.
+8. Run the bot:
    ```
    python bot.py
    ```
@@ -105,9 +105,47 @@ summary_minute = 0  # Minute of the hour to run summarization (0-59)
 reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
 ```
 
+## Database Management
+
+The bot uses a libSQL database (transitioned from SQLite) to store messages, summaries, and scraped link information. The database schema is defined by the SQL statements in `setup.sql`.
+
+**Important: If you make changes to the database schema (e.g., in `database.py` by adding new tables or altering existing ones), you MUST update the `setup.sql` file accordingly.**
+
+This ensures that anyone setting up the bot from scratch will have the correct database structure.
+
+To initialize or reset the database according to `setup.sql`, you would typically run the SQL commands within that file against your libSQL database instance. The `init_database()` function in `database.py` attempts to create tables if they don't exist, but `setup.sql` serves as the canonical reference for the full schema.
+
+## API Key Management
+
+API keys for services like OpenRouter and Firecrawl are managed in the `keys.json` file. This file should be structured as follows:
+
+```json
+{
+    "openrouter_api_keys": [
+        "YOUR_OPENROUTER_API_KEY_1",
+        "YOUR_OPENROUTER_API_KEY_2"
+    ],
+    "firecrawl_api_keys": [
+        "YOUR_FIRECRAWL_API_KEY_1",
+        "YOUR_FIRECRAWL_API_KEY_2"
+    ]
+}
+```
+
+The bot implements an API key rotator. If a rate limit error is encountered with the current key for a service, it will automatically switch to the next available key in the list for that service. Ensure you provide valid keys in `keys.json`.
+
+## Firecrawl Integration
+
+When a message contains a URL, the bot will attempt to:
+1. Check if the URL has been previously scraped and stored in the `scraped_links` table.
+2. Use the Firecrawl API to scrape the content of the URL.
+3. If the URL is new, a new entry is created in the database with the scraped content and metadata.
+4. If the URL already exists, the existing entry's content is appended with the newly scraped information, and its metadata is updated.
+5. The Firecrawl API key is also subject to rotation in case of rate limits.
+
 ## Database
 
-The bot uses a SQLite database located in the `data/` directory with the following tables:
+The bot uses a libSQL database located in the `data/` directory with the following tables:
 
 ### Messages Table
 Stores all messages processed by the bot, including:

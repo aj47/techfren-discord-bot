@@ -1,9 +1,9 @@
 """
 Database module for the Discord bot.
-Handles SQLite database operations for storing messages and channel summaries.
+Handles libSQL database operations for storing messages and channel summaries.
 """
 
-import sqlite3
+import libsql_client as libsql
 import os
 import logging
 import json
@@ -15,7 +15,7 @@ logger = logging.getLogger('discord_bot.database')
 
 # Database constants
 DB_DIRECTORY = "data"
-DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.db")
+DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.turso")
 
 # SQL statements
 CREATE_MESSAGES_TABLE = """
@@ -52,6 +52,41 @@ CREATE TABLE IF NOT EXISTS channel_summaries (
 );
 """
 
+CREATE_SCRAPED_LINKS_TABLE = """
+CREATE TABLE IF NOT EXISTS scraped_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    content TEXT,
+    metadata TEXT, -- JSON string for additional metadata from Firecrawl
+    first_scraped_at TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP NOT NULL
+);
+"""
+
+CREATE_FRONTEND_ENTRIES_TABLE = """
+CREATE TABLE IF NOT EXISTS frontend_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT CHECK(status IN ('proprietary', 'opensource', 'freemium', 'unknown')),
+    github_url TEXT,
+    website_url TEXT,
+    rating REAL CHECK(rating >= 0 AND rating <= 10),
+    rating_source TEXT,
+    discord_submitter TEXT,
+    discord_submitter_id TEXT,
+    category TEXT,
+    tags TEXT, -- JSON array of tags
+    logo_url TEXT,
+    repository_stars INTEGER,
+    pricing_info TEXT,
+    notes TEXT,
+    related_urls TEXT, -- JSON array of related URLs
+    created_at TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP NOT NULL
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -59,6 +94,11 @@ CREATE_INDEX_CREATED = "CREATE INDEX IF NOT EXISTS idx_created_at ON messages (c
 CREATE_INDEX_COMMAND = "CREATE INDEX IF NOT EXISTS idx_is_command ON messages (is_command);"
 CREATE_INDEX_SUMMARY_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_summary_channel_id ON channel_summaries (channel_id);"
 CREATE_INDEX_SUMMARY_DATE = "CREATE INDEX IF NOT EXISTS idx_summary_date ON channel_summaries (date);"
+CREATE_INDEX_SCRAPED_URL = "CREATE INDEX IF NOT EXISTS idx_scraped_url ON scraped_links (url);"
+CREATE_INDEX_FRONTEND_NAME = "CREATE INDEX IF NOT EXISTS idx_frontend_entries_name ON frontend_entries (name);"
+CREATE_INDEX_FRONTEND_STATUS = "CREATE INDEX IF NOT EXISTS idx_frontend_entries_status ON frontend_entries (status);"
+CREATE_INDEX_FRONTEND_CATEGORY = "CREATE INDEX IF NOT EXISTS idx_frontend_entries_category ON frontend_entries (category);"
+CREATE_INDEX_FRONTEND_SUBMITTER = "CREATE INDEX IF NOT EXISTS idx_frontend_entries_submitter_id ON frontend_entries (discord_submitter_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -75,6 +115,33 @@ INSERT INTO channel_summaries (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
+INSERT_SCRAPED_LINK = """
+INSERT INTO scraped_links (url, content, metadata, first_scraped_at, last_updated_at)
+VALUES (?, ?, ?, ?, ?);
+"""
+
+INSERT_FRONTEND_ENTRY = """
+INSERT INTO frontend_entries (
+    name, description, status, github_url, website_url, rating, rating_source,
+    discord_submitter, discord_submitter_id, category, tags, logo_url,
+    repository_stars, pricing_info, notes, related_urls, created_at, last_updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"""
+
+UPDATE_SCRAPED_LINK = """
+UPDATE scraped_links
+SET content = ?, metadata = ?, last_updated_at = ?
+WHERE url = ?;
+"""
+
+UPDATE_FRONTEND_ENTRY = """
+UPDATE frontend_entries
+SET description = ?, status = ?, github_url = ?, website_url = ?, rating = ?,
+    rating_source = ?, category = ?, tags = ?, logo_url = ?, repository_stars = ?,
+    pricing_info = ?, notes = ?, related_urls = ?, last_updated_at = ?
+WHERE id = ?;
+"""
+
 def init_database() -> None:
     """
     Initialize the database by creating the necessary directory and tables.
@@ -86,12 +153,14 @@ def init_database() -> None:
             logger.info(f"Created database directory: {DB_DIRECTORY}")
 
         # Connect to the database and create tables using context manager
-        with sqlite3.connect(DB_FILE) as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             # Create tables and indexes
             cursor.execute(CREATE_MESSAGES_TABLE)
             cursor.execute(CREATE_CHANNEL_SUMMARIES_TABLE)
+            cursor.execute(CREATE_SCRAPED_LINKS_TABLE)
+            cursor.execute(CREATE_FRONTEND_ENTRIES_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -104,6 +173,15 @@ def init_database() -> None:
             cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
             cursor.execute(CREATE_INDEX_SUMMARY_DATE)
 
+            # Create index for scraped_links table
+            cursor.execute(CREATE_INDEX_SCRAPED_URL)
+
+            # Create indexes for frontend_entries table
+            cursor.execute(CREATE_INDEX_FRONTEND_NAME)
+            cursor.execute(CREATE_INDEX_FRONTEND_STATUS)
+            cursor.execute(CREATE_INDEX_FRONTEND_CATEGORY)
+            cursor.execute(CREATE_INDEX_FRONTEND_SUBMITTER)
+
             conn.commit()
 
         logger.info(f"Database initialized successfully at {DB_FILE}")
@@ -111,21 +189,14 @@ def init_database() -> None:
         logger.error(f"Error initializing database: {str(e)}", exc_info=True)
         raise
 
-def get_connection() -> sqlite3.Connection:
-    """
-    Get a connection to the SQLite database.
-    The connection supports context managers (with statements).
+def get_connection() -> libsql.Connection:
+    """Get a connection to the libSQL database."""
+    if not os.path.exists(DB_FILE):
+        print(f"Error: Database file not found at {DB_FILE}")
+        sys.exit(1)
 
-    Returns:
-        sqlite3.Connection: A connection to the database.
-    """
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row  # This enables column access by name
-        return conn
-    except Exception as e:
-        logger.error(f"Error connecting to database: {str(e)}", exc_info=True)
-        raise
+    conn = libsql.connect(DB_FILE)
+    return conn
 
 def store_message(
     message_id: str,
@@ -188,7 +259,7 @@ def store_message(
 
         logger.debug(f"Message {message_id} stored in database")
         return True
-    except sqlite3.IntegrityError:
+    except libsql.IntegrityError:
         # This could happen if we try to insert a message with the same ID twice
         logger.warning(f"Message {message_id} already exists in database")
         return False
@@ -504,3 +575,203 @@ def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting active channels for the last {hours} hours: {str(e)}", exc_info=True)
         return []
+
+def store_scraped_link(url: str, content: str, metadata: Optional[str] = None) -> bool:
+    """Store a new scraped link in the database."""
+    now = datetime.now().isoformat()
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(INSERT_SCRAPED_LINK, (url, content, metadata, now, now))
+            conn.commit()
+        logger.info(f"Stored new scraped link: {url}")
+        return True
+    except libsql.IntegrityError:
+        logger.warning(f"Scraped link {url} already exists. Use update_scraped_link to modify.")
+        return False
+    except Exception as e:
+        logger.error(f"Error storing scraped link {url}: {e}", exc_info=True)
+        return False
+
+def get_scraped_link(url: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a scraped link from the database by URL."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, url, content, metadata, first_scraped_at, last_updated_at FROM scraped_links WHERE url = ?", (url,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0], 'url': row[1], 'content': row[2], 
+                    'metadata': row[3], 'first_scraped_at': row[4], 
+                    'last_updated_at': row[5]
+                }
+    except Exception as e:
+        logger.error(f"Error retrieving scraped link {url}: {e}", exc_info=True)
+    return None
+
+def update_scraped_link(url: str, content: str, metadata: Optional[str] = None) -> bool:
+    """Update an existing scraped link's content and metadata."""
+    now = datetime.now().isoformat()
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(UPDATE_SCRAPED_LINK, (content, metadata, now, url))
+            conn.commit()
+        logger.info(f"Updated scraped link: {url}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating scraped link {url}: {e}", exc_info=True)
+        return False
+
+def store_frontend_entry(
+    name: str,
+    description: str = None,
+    status: str = "unknown",
+    github_url: str = None,
+    website_url: str = None,
+    rating: float = None,
+    rating_source: str = None,
+    discord_submitter: str = None,
+    discord_submitter_id: str = None,
+    category: str = None,
+    tags: List[str] = None,
+    logo_url: str = None,
+    repository_stars: int = None,
+    pricing_info: str = None,
+    notes: str = None,
+    related_urls: List[str] = None
+) -> bool:
+    """Store a new frontend entry in the database."""
+    now = datetime.now().isoformat()
+    
+    # Convert lists to JSON strings
+    tags_json = json.dumps(tags) if tags else None
+    related_urls_json = json.dumps(related_urls) if related_urls else None
+    
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                INSERT_FRONTEND_ENTRY,
+                (
+                    name, description, status, github_url, website_url, rating, rating_source,
+                    discord_submitter, discord_submitter_id, category, tags_json, logo_url,
+                    repository_stars, pricing_info, notes, related_urls_json, now, now
+                )
+            )
+            conn.commit()
+        logger.info(f"Stored new frontend entry: {name}")
+        return True
+    except Exception as e:
+        logger.error(f"Error storing frontend entry {name}: {e}", exc_info=True)
+        return False
+
+def get_frontend_entry(entry_id: int) -> Optional[Dict[str, Any]]:
+    """Get a frontend entry by ID."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM frontend_entries WHERE id = ?", (entry_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+                
+            # Convert JSON strings back to lists
+            entry = dict(zip([column[0] for column in cursor.description], row))
+            if entry['tags']:
+                entry['tags'] = json.loads(entry['tags'])
+            if entry['related_urls']:
+                entry['related_urls'] = json.loads(entry['related_urls'])
+                
+            return entry
+    except Exception as e:
+        logger.error(f"Error getting frontend entry {entry_id}: {e}", exc_info=True)
+        return None
+
+def get_frontend_entries_by_name(name: str) -> List[Dict[str, Any]]:
+    """Get frontend entries that match or partially match the given name."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM frontend_entries WHERE name LIKE ?", (f"%{name}%",))
+            rows = cursor.fetchall()
+            
+            entries = []
+            column_names = [column[0] for column in cursor.description]
+            
+            for row in rows:
+                entry = dict(zip(column_names, row))
+                if entry['tags']:
+                    entry['tags'] = json.loads(entry['tags'])
+                if entry['related_urls']:
+                    entry['related_urls'] = json.loads(entry['related_urls'])
+                entries.append(entry)
+                
+            return entries
+    except Exception as e:
+        logger.error(f"Error getting frontend entries for name {name}: {e}", exc_info=True)
+        return []
+
+def update_frontend_entry(
+    entry_id: int,
+    description: str = None,
+    status: str = None,
+    github_url: str = None,
+    website_url: str = None,
+    rating: float = None,
+    rating_source: str = None,
+    category: str = None,
+    tags: List[str] = None,
+    logo_url: str = None,
+    repository_stars: int = None,
+    pricing_info: str = None,
+    notes: str = None,
+    related_urls: List[str] = None
+) -> bool:
+    """Update an existing frontend entry."""
+    try:
+        # First, get the current entry to preserve any values not being updated
+        current_entry = get_frontend_entry(entry_id)
+        if not current_entry:
+            logger.error(f"Cannot update frontend entry {entry_id}: entry not found")
+            return False
+            
+        # Use current values for any parameters that weren't specified
+        description = description if description is not None else current_entry.get('description')
+        status = status if status is not None else current_entry.get('status')
+        github_url = github_url if github_url is not None else current_entry.get('github_url')
+        website_url = website_url if website_url is not None else current_entry.get('website_url')
+        rating = rating if rating is not None else current_entry.get('rating')
+        rating_source = rating_source if rating_source is not None else current_entry.get('rating_source')
+        category = category if category is not None else current_entry.get('category')
+        tags = tags if tags is not None else current_entry.get('tags')
+        logo_url = logo_url if logo_url is not None else current_entry.get('logo_url')
+        repository_stars = repository_stars if repository_stars is not None else current_entry.get('repository_stars')
+        pricing_info = pricing_info if pricing_info is not None else current_entry.get('pricing_info')
+        notes = notes if notes is not None else current_entry.get('notes')
+        related_urls = related_urls if related_urls is not None else current_entry.get('related_urls')
+        
+        # Convert lists to JSON strings
+        tags_json = json.dumps(tags) if tags else None
+        related_urls_json = json.dumps(related_urls) if related_urls else None
+        
+        now = datetime.now().isoformat()
+        
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                UPDATE_FRONTEND_ENTRY,
+                (
+                    description, status, github_url, website_url, rating, rating_source,
+                    category, tags_json, logo_url, repository_stars, pricing_info,
+                    notes, related_urls_json, now, entry_id
+                )
+            )
+            conn.commit()
+            
+        logger.info(f"Updated frontend entry {entry_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating frontend entry {entry_id}: {e}", exc_info=True)
+        return False

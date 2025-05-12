@@ -2,3 +2,5 @@ discord.py
 openai
 tabulate
 pynacl
+firecrawl-py
+libsql-client
