@@ -104,9 +104,11 @@ async def on_message(message):
         is_command = False
         command_type = None
 
-        if message.content.startswith('/bot '):
+        bot_mention = f'<@{client.user.id}>'
+        bot_mention_alt = f'<@!{client.user.id}>'
+        if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
             is_command = True
-            command_type = "/bot"
+            command_type = "mention"
         elif message.content.startswith('/sum-day'):
             is_command = True
             command_type = "/sum-day"
