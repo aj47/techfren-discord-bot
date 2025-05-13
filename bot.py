@@ -141,21 +141,23 @@ async def on_message(message):
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
     # Check if this is a command
-    is_bot_command = message.content.startswith('/bot ')
+    bot_mention = f'<@{client.user.id}>'
+    bot_mention_alt = f'<@!{client.user.id}>'
+    is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
     is_sum_day_command = message.content.startswith('/sum-day')
 
-    # Only process /bot command in the #bot-talk channel
-    if is_bot_command and hasattr(message.channel, 'name') and message.channel.name != 'bot-talk':
-        logger.debug(f"Ignoring /bot command in channel #{message.channel.name} - /bot only works in #bot-talk")
+    # Only process mention command in the #bot-talk channel
+    if is_mention_command and hasattr(message.channel, 'name') and message.channel.name != 'bot-talk':
+        logger.debug(f"Ignoring mention command in channel #{message.channel.name} - mention commands only work in #bot-talk")
         return
 
     # If not a command we recognize, ignore
-    if not is_bot_command and not is_sum_day_command:
+    if not is_mention_command and not is_sum_day_command:
         return
 
     # Process commands
     try:
-        if is_bot_command:
+        if is_mention_command:
             await handle_bot_command(message, client.user)
         elif is_sum_day_command:
             await handle_sum_day_command(message, client.user)

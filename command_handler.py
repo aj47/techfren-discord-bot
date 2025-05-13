@@ -7,16 +7,18 @@ from message_utils import split_long_message
 from datetime import datetime
 
 async def handle_bot_command(message, client_user):
-    """Handles the /bot command."""
-    query = message.content[5:].strip()
+    """Handles the mention command."""
+    bot_mention = f'<@{client_user.id}>'
+    bot_mention_alt = f'<@!{client_user.id}>'
+    query = message.content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
 
     if not query:
-        error_msg = "Please provide a query after `/bot`."
+        error_msg = "Please provide a query after mentioning the bot."
         bot_response = await message.channel.send(error_msg)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         return
 
-    logger.info(f"Executing command: /bot - Requested by {message.author}")
+    logger.info(f"Executing mention command - Requested by {message.author}")
 
     is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
     if is_limited:
@@ -37,9 +39,9 @@ async def handle_bot_command(message, client_user):
             await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
         
         await processing_msg.delete()
-        logger.info(f"Command executed successfully: /bot - Response length: {len(response)} - Split into {len(message_parts)} parts")
+        logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
     except Exception as e:
-        logger.error(f"Error processing /bot command: {str(e)}", exc_info=True)
+        logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
         error_msg = "Sorry, an error occurred while processing your request. Please try again later."
         bot_response = await message.channel.send(error_msg)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
