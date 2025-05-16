@@ -251,14 +251,18 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        # Calculate start and end of the day
-        start_date = datetime(date.year, date.month, date.day, 0, 0, 0).isoformat()
-        end_date = datetime(date.year, date.month, date.day, 23, 59, 59, 999999).isoformat()
+        # Calculate start and end of the local day
+        start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0)
+        end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999)
+        
+        # Convert to UTC for database query (local is UTC-5)
+        start_date_utc = (start_date_local + timedelta(hours=5)).isoformat()
+        end_date_utc = (end_date_local + timedelta(hours=5)).isoformat()
 
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Query messages for the channel within the date range
+            # Query messages for the channel within the UTC date range
             cursor.execute(
                 """
                 SELECT author_name, content, created_at, is_bot, is_command
@@ -266,7 +270,7 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                 WHERE channel_id = ? AND created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
                 """,
-                (channel_id, start_date, end_date)
+                (channel_id, start_date_utc, end_date_utc)
             )
 
             # Convert rows to dictionaries

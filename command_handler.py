@@ -93,9 +93,15 @@ async def handle_sum_day_command(message, client_user):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
         summary_parts = await split_long_message(summary)
 
-        for part in summary_parts:
-            bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+        if message.guild:
+            thread = await message.create_thread(name="Daily Summary")
+            for part in summary_parts:
+                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
+                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+        else:
+            for part in summary_parts:
+                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
             
         await processing_msg.delete()
         logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
