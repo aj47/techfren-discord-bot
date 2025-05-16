@@ -4,7 +4,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api, call_llm_for_summary
 from message_utils import split_long_message
-from datetime import datetime
+from datetime import datetime, timedelta
 
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
@@ -107,6 +107,71 @@ async def handle_sum_day_command(message, client_user):
         logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing /sum-day command: {str(e)}", exc_info=True)
+        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
+        bot_response = await message.channel.send(error_msg)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        try:
+            await processing_msg.delete()
+        except discord.NotFound: # Message might have been deleted already
+            pass
+        except Exception as del_e:
+            logger.warning(f"Could not delete processing message: {del_e}")
+
+async def handle_sum_week_command(message, client_user):
+    """Handles the /sum-week command."""
+    logger.info(f"Executing command: /sum-week - Requested by {message.author}")
+
+    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
+    if is_limited:
+        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
+            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+        bot_response = await message.channel.send(error_msg)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
+        return
+
+    processing_msg = await message.channel.send("Generating weekly channel summary, please wait... This may take a moment.")
+    try:
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())
+        channel_id_str = str(message.channel.id)
+        channel_name_str = message.channel.name
+
+        if not database: # Should not happen if bot initialized correctly
+            logger.error("Database module not available in handle_sum_week_command")
+            await processing_msg.delete()
+            error_msg = "Sorry, a critical error occurred (database unavailable). Please try again later."
+            bot_response = await message.channel.send(error_msg)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+            return
+
+        messages_for_summary = database.get_channel_messages_for_week(channel_id_str, week_start)
+
+        if not messages_for_summary:
+            await processing_msg.delete()
+            error_msg = f"No messages found in this channel for the current week ({week_start.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')})."
+            bot_response = await message.channel.send(error_msg)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+            logger.info(f"No messages found for /sum-week command in channel {channel_name_str}")
+            return
+
+        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, week_start)
+        summary_parts = await split_long_message(summary)
+
+        if message.guild:
+            thread = await message.create_thread(name="Weekly Summary")
+            for part in summary_parts:
+                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
+                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+        else:
+            for part in summary_parts:
+                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            
+        await processing_msg.delete()
+        logger.info(f"Command executed successfully: /sum-week - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
+    except Exception as e:
+        logger.error(f"Error processing /sum-week command: {str(e)}", exc_info=True)
         error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
         bot_response = await message.channel.send(error_msg)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
