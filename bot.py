@@ -148,13 +148,14 @@ async def on_message(message):
     is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
     is_sum_day_command = message.content.startswith('/sum-day')
 
-    # Only process mention command in the #bot-talk channel
-    if is_mention_command and hasattr(message.channel, 'name') and message.channel.name != 'bot-talk':
-        logger.debug(f"Ignoring mention command in channel #{message.channel.name} - mention commands only work in #bot-talk")
+    # Process mention commands in any channel
+    if is_mention_command:
+        logger.debug(f"Processing mention command in channel #{message.channel.name}")
+        await handle_bot_command(message, client.user)
         return
 
     # If not a command we recognize, ignore
-    if not is_mention_command and not is_sum_day_command:
+    if not is_sum_day_command:
         return
 
     # Process commands

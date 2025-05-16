@@ -44,3 +44,4 @@ data/
 *.swp
 *.swo
 discord-bot.pem
+.aider*
