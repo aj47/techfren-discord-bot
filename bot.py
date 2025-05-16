@@ -96,7 +96,9 @@ async def on_message(message):
     else:
         channel_name = "Unknown Channel"
 
-    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {message.author} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
+    # Use display_name to show user's server nickname when available
+    author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
+    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
     # Store message in database
     try:

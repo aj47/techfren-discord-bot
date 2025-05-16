@@ -45,3 +45,4 @@ data/
 *.swo
 discord-bot.pem
 .aider*
+.DS_Store
