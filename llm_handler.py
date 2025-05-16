@@ -39,7 +39,8 @@ async def call_llm_api(query):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts"
+                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts \
+                    users can use the function /sum-day to summarize the messages received today. there will be more features coming in the future"
                 },
                 {
                     "role": "user",
