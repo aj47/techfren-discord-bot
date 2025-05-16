@@ -290,6 +290,56 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
         logger.error(f"Error getting messages for channel {channel_id} on {date.strftime('%Y-%m-%d')}: {str(e)}", exc_info=True)
         return []
 
+def get_channel_messages_for_week(channel_id: str, start_date: datetime) -> List[Dict[str, Any]]:
+    """
+    Get all messages from a specific channel for the current week.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        start_date (datetime): The start date of the week
+
+    Returns:
+        List[Dict[str, Any]]: A list of messages as dictionaries
+    """
+    try:
+        # Calculate end of the week
+        end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
+        
+        # Convert to UTC for database query (local is UTC-5)
+        start_date_utc = (start_date + timedelta(hours=5)).isoformat()
+        end_date_utc = (end_date + timedelta(hours=5)).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Query messages for the channel within the UTC date range
+            cursor.execute(
+                """
+                SELECT author_name, content, created_at, is_bot, is_command
+                FROM messages
+                WHERE channel_id = ? AND created_at BETWEEN ? AND ?
+                ORDER BY created_at ASC
+                """,
+                (channel_id, start_date_utc, end_date_utc)
+            )
+
+            # Convert rows to dictionaries
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    'author_name': row['author_name'],
+                    'content': row['content'],
+                    'created_at': datetime.fromisoformat(row['created_at']),
+                    'is_bot': bool(row['is_bot']),
+                    'is_command': bool(row['is_command'])
+                })
+
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the week starting {start_date.strftime('%Y-%m-%d')}")
+        return messages
+    except Exception as e:
+        logger.error(f"Error getting messages for channel {channel_id} for the week starting {start_date.strftime('%Y-%m-%d')}: {str(e)}", exc_info=True)
+        return []
+
 def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dict[str, List[Dict[str, Any]]]:
     """
     Get all messages from all channels within a specific time range, grouped by channel.
