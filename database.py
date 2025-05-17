@@ -7,7 +7,7 @@ import sqlite3
 import os
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Set
 
 # Set up logging
@@ -239,25 +239,24 @@ def get_user_message_count(user_id: str) -> int:
         # Return 0 instead of -1 for consistency with other error cases
         return 0
 
-def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
+def get_channel_messages_for_timeframe(channel_id: str, start_date: datetime, end_date: datetime, timeframe_desc: str) -> List[Dict[str, Any]]:
     """
-    Get all messages from a specific channel for a specific day.
+    Get all messages from a specific channel for a specific timeframe.
 
     Args:
         channel_id (str): The Discord channel ID
-        date (datetime): The date to get messages for
+        start_date (datetime): The start date of the timeframe
+        end_date (datetime): The end date of the timeframe
+        timeframe_desc (str): Description of the timeframe for logging purposes
 
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        # Calculate start and end of the local day
-        start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0)
-        end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999)
-        
-        # Convert to UTC for database query (local is UTC-5)
-        start_date_utc = (start_date_local + timedelta(hours=5)).isoformat()
-        end_date_utc = (end_date_local + timedelta(hours=5)).isoformat()
+        # Use proper timezone objects instead of fixed offset
+        # This handles daylight saving time changes correctly
+        start_date_utc = start_date.astimezone(timezone.utc).isoformat()
+        end_date_utc = end_date.astimezone(timezone.utc).isoformat()
 
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -284,11 +283,56 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'is_command': bool(row['is_command'])
                 })
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {date.strftime('%Y-%m-%d')}")
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {timeframe_desc}")
         return messages
     except Exception as e:
-        logger.error(f"Error getting messages for channel {channel_id} on {date.strftime('%Y-%m-%d')}: {str(e)}", exc_info=True)
+        logger.error(f"Error getting messages for channel {channel_id} for {timeframe_desc}: {str(e)}", exc_info=True)
         return []
+
+def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
+    """
+    Get all messages from a specific channel for a specific day.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        date (datetime): The date to get messages for
+
+    Returns:
+        List[Dict[str, Any]]: A list of messages as dictionaries
+    """
+    # Get the timezone from the input date or use local timezone
+    tz = date.tzinfo or datetime.now().astimezone().tzinfo
+
+    # Calculate start and end of the local day with timezone information
+    start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0, tzinfo=tz)
+    end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999, tzinfo=tz)
+
+    timeframe_desc = f"{date.strftime('%Y-%m-%d')}"
+    return get_channel_messages_for_timeframe(channel_id, start_date_local, end_date_local, timeframe_desc)
+
+def get_channel_messages_for_week(channel_id: str, start_date: datetime) -> List[Dict[str, Any]]:
+    """
+    Get all messages from a specific channel for the current week.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        start_date (datetime): The start date of the week
+
+    Returns:
+        List[Dict[str, Any]]: A list of messages as dictionaries
+    """
+    # Get the timezone from the input date or use local timezone
+    tz = start_date.tzinfo or datetime.now().astimezone().tzinfo
+
+    # Ensure start_date has timezone information
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=tz)
+
+    # Calculate end of the week
+    end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
+
+    timeframe_desc = f"the week starting {start_date.strftime('%Y-%m-%d')}"
+    return get_channel_messages_for_timeframe(channel_id, start_date, end_date, timeframe_desc)
 
 def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dict[str, List[Dict[str, Any]]]:
     """
