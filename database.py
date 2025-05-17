@@ -7,7 +7,7 @@ import sqlite3
 import os
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Set
 
 # Set up logging
@@ -253,9 +253,10 @@ def get_channel_messages_for_timeframe(channel_id: str, start_date: datetime, en
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        # Convert to UTC for database query (local is UTC-5)
-        start_date_utc = (start_date + timedelta(hours=5)).isoformat()
-        end_date_utc = (end_date + timedelta(hours=5)).isoformat()
+        # Use proper timezone objects instead of fixed offset
+        # This handles daylight saving time changes correctly
+        start_date_utc = start_date.astimezone(timezone.utc).isoformat()
+        end_date_utc = end_date.astimezone(timezone.utc).isoformat()
 
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -299,9 +300,12 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
-    # Calculate start and end of the local day
-    start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0)
-    end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999)
+    # Get the timezone from the input date or use local timezone
+    tz = date.tzinfo or datetime.now().astimezone().tzinfo
+
+    # Calculate start and end of the local day with timezone information
+    start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0, tzinfo=tz)
+    end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999, tzinfo=tz)
 
     timeframe_desc = f"{date.strftime('%Y-%m-%d')}"
     return get_channel_messages_for_timeframe(channel_id, start_date_local, end_date_local, timeframe_desc)
@@ -317,6 +321,13 @@ def get_channel_messages_for_week(channel_id: str, start_date: datetime) -> List
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
+    # Get the timezone from the input date or use local timezone
+    tz = start_date.tzinfo or datetime.now().astimezone().tzinfo
+
+    # Ensure start_date has timezone information
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=tz)
+
     # Calculate end of the week
     end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
 

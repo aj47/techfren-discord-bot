@@ -4,7 +4,7 @@ Test script to verify the refactored functions in database.py
 
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import database
 
 class TestDatabaseRefactoring(unittest.TestCase):
@@ -15,9 +15,11 @@ class TestDatabaseRefactoring(unittest.TestCase):
         """Test that get_channel_messages_for_day calls the helper function with correct parameters"""
         # Setup
         channel_id = "123456789"
-        date = datetime(2023, 5, 15)
-        expected_start = datetime(2023, 5, 15, 0, 0, 0)
-        expected_end = datetime(2023, 5, 15, 23, 59, 59, 999999)
+        # Use a timezone-aware datetime
+        local_tz = datetime.now().astimezone().tzinfo
+        date = datetime(2023, 5, 15, tzinfo=local_tz)
+        expected_start = datetime(2023, 5, 15, 0, 0, 0, tzinfo=local_tz)
+        expected_end = datetime(2023, 5, 15, 23, 59, 59, 999999, tzinfo=local_tz)
         expected_desc = "2023-05-15"
 
         # Call the function
@@ -36,7 +38,9 @@ class TestDatabaseRefactoring(unittest.TestCase):
         """Test that get_channel_messages_for_week calls the helper function with correct parameters"""
         # Setup
         channel_id = "123456789"
-        start_date = datetime(2023, 5, 15)  # A Monday
+        # Use a timezone-aware datetime
+        local_tz = datetime.now().astimezone().tzinfo
+        start_date = datetime(2023, 5, 15, tzinfo=local_tz)  # A Monday
         expected_end = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
         expected_desc = "the week starting 2023-05-15"
 
