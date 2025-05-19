@@ -111,25 +111,6 @@ class TestBotCommands(unittest.TestCase):
             }
         ]
 
-        self.get_channel_messages_for_week_patcher = patch('database.get_channel_messages_for_week')
-        self.mock_get_channel_messages_for_week = self.get_channel_messages_for_week_patcher.start()
-        self.mock_get_channel_messages_for_week.return_value = [
-            {
-                'author_name': 'Test User',
-                'content': 'Test message 1',
-                'created_at': datetime.now(),
-                'is_bot': False,
-                'is_command': False
-            },
-            {
-                'author_name': 'Another User',
-                'content': 'Test message 2',
-                'created_at': datetime.now(),
-                'is_bot': False,
-                'is_command': False
-            }
-        ]
-
     def tearDown(self):
         """Clean up after tests"""
         # Restore original client
@@ -141,7 +122,6 @@ class TestBotCommands(unittest.TestCase):
         self.call_llm_for_summary_patcher.stop()
         self.store_message_patcher.stop()
         self.get_channel_messages_for_day_patcher.stop()
-        self.get_channel_messages_for_week_patcher.stop()
 
     def test_bot_command_in_bot_talk_channel(self):
         """Test /bot command in bot-talk channel"""
@@ -216,48 +196,6 @@ class TestBotCommands(unittest.TestCase):
 
         message = MockMessage(
             content="/sum-day",
-            channel=channel
-        )
-
-        # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
-
-        # Check if the bot responded (should respond in any channel)
-        channel.send.assert_called()
-        self.mock_call_llm_for_summary.assert_called_once()
-
-    def test_sum_week_command_in_bot_talk_channel(self):
-        """Test /sum-week command in bot-talk channel"""
-        # Create mock message in bot-talk channel
-        channel = MagicMock()
-        channel.name = "bot-talk"
-        channel.id = "bot_talk_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/sum-week",
-            channel=channel
-        )
-
-        # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
-
-        # Check if the bot responded
-        channel.send.assert_called()
-        self.mock_call_llm_for_summary.assert_called_once()
-
-    def test_sum_week_command_in_other_channel(self):
-        """Test /sum-week command in a channel other than bot-talk"""
-        # Create mock message in another channel
-        channel = MagicMock()
-        channel.name = "general"
-        channel.id = "general_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/sum-week",
             channel=channel
         )
 
