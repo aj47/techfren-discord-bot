@@ -9,60 +9,48 @@ async def split_long_message(message, max_length=1900):
     Returns:
         list: List of message parts
     """
+    # Quick return for messages that don't need splitting
     if len(message) <= max_length:
         return [message]
 
     parts = []
-    current_part = ""
-
-    # Split by paragraphs first (double newlines)
-    paragraphs = message.split("\n\n")
-
-    for paragraph in paragraphs:
-        # If adding this paragraph would exceed max_length, start a new part
-        if len(current_part) + len(paragraph) + 2 > max_length: # +2 for potential "\n\n"
-            if current_part:
-                parts.append(current_part.strip())
-            current_part = paragraph
-        else:
-            if current_part:
-                current_part += "\n\n" + paragraph
-            else:
-                current_part = paragraph
+    remaining = message
+    
+    while remaining:
+        # Check if the remaining text fits in one part
+        if len(remaining) <= max_length:
+            parts.append(remaining)
+            break
+            
+        # Try to find a good split point
+        # First try paragraph break
+        paragraph_end = remaining.rfind("\n\n", 0, max_length)
         
-        # Inner loop to handle cases where a single paragraph (or the current_part) is too long
-        while len(current_part) > max_length:
-            # Find a good split point (prefer sentence, then word)
-            split_at = -1
-            # Try to split at the last sentence ending before max_length
-            for i in range(min(len(current_part), max_length) -1, -1, -1):
-                if current_part[i] == '.' and (i + 1 < len(current_part) and current_part[i+1] == ' '):
-                    split_at = i + 1 # Include the period, split after space
-                    break
-            
-            if split_at == -1: # If no sentence found, try to split at the last space
-                for i in range(min(len(current_part), max_length) -1, -1, -1):
-                    if current_part[i] == ' ':
-                        split_at = i
-                        break
-            
-            if split_at == -1: # If no space found, force split at max_length
-                split_at = max_length
-
-            parts.append(current_part[:split_at].strip())
-            current_part = current_part[split_at:].strip()
-
-
-    # Add the last part if it's not empty
-    if current_part:
-        parts.append(current_part.strip())
-
+        # If paragraph break is found and not too close to the beginning
+        if paragraph_end > max_length // 2:
+            split_at = paragraph_end + 2  # Include the double newline
+        else:
+            # Try sentence ending (period + space)
+            sentence_end = remaining.rfind(". ", 0, max_length)
+            if sentence_end > 0:
+                split_at = sentence_end + 2  # Include the period and space
+            else:
+                # Try any space
+                space = remaining.rfind(" ", max_length // 2, max_length)
+                if space > 0:
+                    split_at = space + 1  # Include the space
+                else:
+                    # Force split at max_length if no natural break point
+                    split_at = max_length
+        
+        # Add the current part and continue with the rest
+        parts.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    
     # Add part indicators if there are multiple parts
     if len(parts) > 1:
-        for i in range(len(parts)):
-            parts[i] = f"[Part {i+1}/{len(parts)}]\n{parts[i]}"
-    elif not parts and message: # Handle case where original message was <= max_length but split logic ran
-        return [message]
-
-
+        total_parts = len(parts)
+        for i in range(total_parts):
+            parts[i] = f"[Part {i+1}/{total_parts}]\n{parts[i]}"
+    
     return parts
