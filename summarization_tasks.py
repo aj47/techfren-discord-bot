@@ -6,6 +6,7 @@ import database
 from logging_config import logger
 from llm_handler import call_llm_for_summary
 from message_utils import split_long_message
+from error_handler import handle_background_task_error, ErrorCategory
 import config # Assuming config.py is accessible
 
 # This variable will be set by the main bot script
@@ -110,7 +111,30 @@ async def daily_channel_summarization():
                     logger.info(f"Successfully generated and stored summary for channel {channel_name}")
                     await post_summary_to_reports_channel(channel_id, channel_name, yesterday, summary_text)
             except Exception as e:
-                logger.error(f"Error generating summary for channel {channel_name}: {str(e)}", exc_info=True)
+                # Use the error handler with context about the channel
+                context = {
+                    'channel_id': channel_id,
+                    'channel_name': channel_name,
+                    'guild_id': guild_id,
+                    'guild_name': guild_name,
+                    'message_count': len(formatted_messages)
+                }
+                
+                # Get reports channel for notification if configured
+                reports_channel = None
+                if hasattr(config, 'reports_channel_id') and config.reports_channel_id:
+                    try:
+                        reports_channel = discord_client.get_channel(int(config.reports_channel_id))
+                    except:
+                        pass
+                
+                await handle_background_task_error(
+                    error=e,
+                    task_name=f"channel_summarization_{channel_name}",
+                    context=context,
+                    notify_channel=reports_channel,
+                    client_user=discord_client.user if discord_client else None
+                )
 
         if successful_summaries > 0:
             try:
@@ -118,13 +142,53 @@ async def daily_channel_summarization():
                 deleted_count = database.delete_messages_older_than(cutoff_time)
                 logger.info(f"Deleted {deleted_count} messages older than {cutoff_time}")
             except Exception as e:
-                logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
+                # Use the error handler for database cleanup errors
+                context = {
+                    'cutoff_time': cutoff_time.isoformat(),
+                    'successful_summaries': successful_summaries
+                }
+                
+                # Get reports channel for notification if configured
+                reports_channel = None
+                if hasattr(config, 'reports_channel_id') and config.reports_channel_id:
+                    try:
+                        reports_channel = discord_client.get_channel(int(config.reports_channel_id))
+                    except:
+                        pass
+                
+                await handle_background_task_error(
+                    error=e,
+                    task_name="delete_old_messages",
+                    context=context,
+                    notify_channel=reports_channel,
+                    client_user=discord_client.user if discord_client else None
+                )
 
         logger.info(f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages.")
     except Exception as e:
-        logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
+        # Use the error handler for the overall task
+        context = {
+            'time_range': f"{yesterday.isoformat()} to {now.isoformat()}",
+            'active_channels_count': len(active_channels) if 'active_channels' in locals() else 0
+        }
+        
+        # Get reports channel for notification if configured
+        reports_channel = None
+        if hasattr(config, 'reports_channel_id') and config.reports_channel_id:
+            try:
+                reports_channel = discord_client.get_channel(int(config.reports_channel_id))
+            except:
+                pass
+        
+        await handle_background_task_error(
+            error=e,
+            task_name="daily_channel_summarization",
+            context=context,
+            notify_channel=reports_channel,
+            client_user=discord_client.user if discord_client else None
+        )
 
-async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
+async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text):
     """
     Post a summary to a designated reports channel if configured.
     """
@@ -146,7 +210,22 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
             await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none())
         logger.info(f"Posted summary for channel {channel_name} to reports channel")
     except Exception as e:
-        logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
+        # Use the error handler for posting to reports channel
+        context = {
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'date': date.isoformat(),
+            'reports_channel_id': getattr(config, 'reports_channel_id', None)
+        }
+        
+        await handle_background_task_error(
+            error=e,
+            task_name="post_summary_to_reports",
+            context=context,
+            # Don't notify in the channel since this is already about posting to a channel
+            notify_channel=None,
+            client_user=None
+        )
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
@@ -173,5 +252,20 @@ async def before_daily_summarization():
         logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first daily summarization")
         await asyncio.sleep(seconds_to_wait)
     except Exception as e:
-        logger.error(f"Error in before_daily_summarization: {str(e)}", exc_info=True)
+        # Use the error handler for the before_loop task
+        context = {
+            'summary_hour': getattr(config, 'summary_hour', 0),
+            'summary_minute': getattr(config, 'summary_minute', 0)
+        }
+        
+        # We can't notify in a channel here since we're in the before_loop
+        await handle_background_task_error(
+            error=e,
+            task_name="before_daily_summarization",
+            context=context,
+            notify_channel=None,
+            client_user=None
+        )
+        
+        # Still need to sleep to prevent immediate retry
         await asyncio.sleep(60)

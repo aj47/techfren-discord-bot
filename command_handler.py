@@ -5,6 +5,7 @@ from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api, call_llm_for_summary
 from message_utils import split_long_message
 from datetime import datetime, timedelta
+from error_handler import handle_command_error, ErrorCategory
 
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
@@ -41,16 +42,14 @@ async def handle_bot_command(message, client_user):
         await processing_msg.delete()
         logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
     except Exception as e:
-        logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while processing your request. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        try:
-            await processing_msg.delete()
-        except discord.NotFound: # Message might have been deleted already
-            pass
-        except Exception as del_e:
-            logger.warning(f"Could not delete processing message: {del_e}")
+        await handle_command_error(
+            error=e,
+            message=message,
+            client_user=client_user,
+            command_name="mention",
+            store_response_func=store_bot_response_db,
+            processing_message=processing_msg
+        )
 
 
 async def handle_summary_command(message, client_user, timeframe, get_messages_func, reference_date, thread_name):
@@ -124,16 +123,14 @@ async def handle_summary_command(message, client_user, timeframe, get_messages_f
         await processing_msg.delete()
         logger.info(f"Command executed successfully: /sum-{timeframe} - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
     except Exception as e:
-        logger.error(f"Error processing /sum-{timeframe} command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        try:
-            await processing_msg.delete()
-        except discord.NotFound: # Message might have been deleted already
-            pass
-        except Exception as del_e:
-            logger.warning(f"Could not delete processing message: {del_e}")
+        await handle_command_error(
+            error=e,
+            message=message,
+            client_user=client_user,
+            command_name=f"sum-{timeframe}",
+            store_response_func=store_bot_response_db,
+            processing_message=processing_msg
+        )
 
 async def handle_sum_day_command(message, client_user):
     """Handles the /sum-day command."""

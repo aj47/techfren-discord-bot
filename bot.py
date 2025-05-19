@@ -16,6 +16,7 @@ from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_week_command # Import command handlers
+from error_handler import handle_error, ErrorCategory, categorize_exception # Import error handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -70,13 +71,44 @@ async def on_guild_remove(guild):
 
 @client.event
 async def on_error(event, *args, **kwargs):
-    """Log Discord API errors"""
-    logger.error(f'Discord error in {event}', exc_info=True)
-    # Log additional context if available
-    if args:
-        logger.error(f'Error context args: {args}')
-    if kwargs:
-        logger.error(f'Error context kwargs: {kwargs}')
+    """Handle Discord API errors using the standardized error handler"""
+    error = args[0] if args else None
+    if isinstance(error, Exception):
+        # Create context for logging
+        context = {
+            'event': event
+        }
+        
+        # Add additional context if available
+        if len(args) > 1:
+            # For message events, add message details
+            if isinstance(args[1], discord.Message):
+                message = args[1]
+                context.update({
+                    'message_id': message.id,
+                    'author': str(message.author),
+                    'channel': str(message.channel),
+                    'guild': str(message.guild) if message.guild else 'DM'
+                })
+        
+        # Categorize the error
+        error_category = categorize_exception(error)
+        
+        # Handle the error
+        await handle_error(
+            error=error,
+            error_category=error_category,
+            log_message=f"Discord error in {event}",
+            notify_user=False,  # Don't notify users about internal Discord API errors
+            context=context
+        )
+    else:
+        # Fallback to basic logging if we don't have an exception object
+        logger.error(f'Discord error in {event}', exc_info=True)
+        if args:
+            logger.error(f'Error context args: {args}')
+        if kwargs:
+            logger.error(f'Error context kwargs: {kwargs}')
 
 def identify_command(message, client_user):
     """
@@ -182,7 +214,21 @@ async def on_message(message):
         if not success:
             logger.warning(f"Failed to store message {message.id} in database")
     except Exception as e:
-        logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+        # Use the error handler for database errors
+        context = {
+            'message_id': str(message.id),
+            'author': str(message.author),
+            'channel': channel_name,
+            'guild': guild_name
+        }
+        
+        await handle_error(
+            error=e,
+            error_category=ErrorCategory.DATABASE,
+            log_message="Error storing message in database",
+            notify_user=False,  # Don't notify users about database errors
+            context=context
+        )
 
     # Process command if identified
     if is_command:
