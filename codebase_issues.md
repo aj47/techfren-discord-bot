@@ -22,9 +22,10 @@ This document outlines potential issues and areas for improvement identified in 
 - Inconsistent handling of default values for missing configuration
 - **FIXED**: Implemented consistent default value handling for `reports_channel_id` and added proper validation
 
-### 4. Potential Race Condition
+### 4. Potential Race Condition (FIXED)
 - In `summarization_tasks.py`, the `discord_client` global variable might not be set when tasks try to use it
 - The `set_discord_client` function is called during bot initialization, but tasks might run before it's properly set
+- **FIXED**: Implemented `asyncio.Event` based synchronization with timeouts to ensure tasks wait for client to be ready
 
 ### 5. Inefficient Message Splitting
 - The `split_long_message` function in `message_utils.py` has a complex algorithm that could be simplified
@@ -65,26 +66,31 @@ This document outlines potential issues and areas for improvement identified in 
 - Implement proper default values and validation for all options
 - **COMPLETED**: Added consistent validation and default value handling for `reports_channel_id`
 
-### 4. Add Config Options to Sample
+### 4. Fix Race Condition (COMPLETED)
+- Implement proper client initialization verification in the summarization tasks
+- Ensure tasks don't run before the client is properly initialized
+- **COMPLETED**: Added `asyncio.Event` based synchronization with timeouts to ensure proper client initialization
+
+### 5. Add Config Options to Sample
 - Update `config.sample.py` to include all available configuration options
 - Add comments explaining each option and its default value
 
-### 5. Improve Database Connection Management
+### 6. Improve Database Connection Management
 - Implement connection pooling or retry logic for database operations
 - Add proper error handling for database connection failures
 
-### 6. Standardize Timezone Handling
+### 7. Standardize Timezone Handling
 - Use a consistent approach to timezone handling throughout the codebase
 - Always store and process dates in UTC, converting to local time only for display
 
-### 7. Add Unit Tests
+### 8. Add Unit Tests
 - Develop comprehensive unit tests for critical functionality
 - Implement integration tests for end-to-end command processing
 
-### 8. Make Hardcoded Values Configurable
+### 9. Make Hardcoded Values Configurable
 - Move hardcoded values to the configuration file
 - Create a constants module for values that don't need to be user-configurable
 
-### 9. Improve Documentation
+### 10. Improve Documentation
 - Add docstrings to all functions and classes
 - Create a comprehensive README with setup and usage instructions

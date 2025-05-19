@@ -9,13 +9,20 @@ from message_utils import split_long_message
 from error_handler import handle_background_task_error, ErrorCategory
 import config # Assuming config.py is accessible
 
+import asyncio
+from asyncio import Event
+
 # This variable will be set by the main bot script
 discord_client = None
+# Event to signal when the client is properly set
+client_ready_event = Event()
 
 def set_discord_client(client_instance):
     """Sets the discord client instance for use in this module."""
     global discord_client
     discord_client = client_instance
+    # Signal that the client is ready
+    client_ready_event.set()
 
 @tasks.loop(hours=24)
 async def daily_channel_summarization():
@@ -26,8 +33,16 @@ async def daily_channel_summarization():
     3. Store the summaries in the database
     4. Delete old messages
     """
+    # Wait for the client to be set with a timeout
+    try:
+        # Wait up to 30 seconds for the client to be set
+        await asyncio.wait_for(client_ready_event.wait(), timeout=30)
+    except asyncio.TimeoutError:
+        logger.error("Timed out waiting for Discord client to be set in summarization_tasks. Aborting daily summarization.")
+        return
+        
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Aborting daily summarization.")
+        logger.error("Discord client not set in summarization_tasks even though ready event was triggered. Aborting daily summarization.")
         return
 
     try:
@@ -192,8 +207,16 @@ async def post_summary_to_reports_channel(channel_id, channel_name, date, summar
     """
     Post a summary to a designated reports channel if configured.
     """
+    # Wait for the client to be set with a short timeout
+    try:
+        # Wait up to 5 seconds for the client to be set (shorter since this is called from within the main task)
+        await asyncio.wait_for(client_ready_event.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        logger.error("Timed out waiting for Discord client to be set. Cannot post summary to reports channel.")
+        return
+        
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot post summary to reports channel.")
+        logger.error("Discord client not set even though ready event was triggered. Cannot post summary to reports channel.")
         return
         
     try:
@@ -230,10 +253,21 @@ async def post_summary_to_reports_channel(channel_id, channel_name, date, summar
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
     """Wait until a specific time to start the daily summarization task."""
-    if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot start before_daily_summarization.")
+    # Wait for the client to be set with a timeout (longer for before_loop)
+    try:
+        # Wait up to 60 seconds for the client to be set during startup
+        logger.info("Waiting for Discord client to be set before scheduling daily summarization...")
+        await asyncio.wait_for(client_ready_event.wait(), timeout=60)
+        logger.info("Discord client is now available for summarization tasks.")
+    except asyncio.TimeoutError:
+        logger.error("Timed out waiting for Discord client to be set. Cannot schedule daily summarization properly.")
         # Fallback to prevent loop from erroring out immediately if client isn't ready
         await asyncio.sleep(60) 
+        return
+        
+    if not discord_client:
+        logger.error("Discord client not set even though ready event was triggered. Cannot start before_daily_summarization.")
+        await asyncio.sleep(60)
         return
 
     try:
