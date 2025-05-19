@@ -91,7 +91,7 @@ async def call_llm_for_summary(messages, channel_name, date):
                 time_str = created_at_time.strftime('%H:%M:%S')
             else:
                 time_str = "Unknown Time" # Fallback if created_at is not as expected
-            
+
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
             formatted_messages_text.append(f"[{time_str}] {author_name}: {content}")
@@ -100,12 +100,13 @@ async def call_llm_for_summary(messages, channel_name, date):
         messages_text = "\n".join(formatted_messages_text)
 
         # Create the prompt for the LLM
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel on {date.strftime('%Y-%m-%d')}:
+        prompt = f"""Summarize the following conversation from the #{channel_name} channel on {date.strftime('%Y-%m-%d')}:
 
 {messages_text}
 
-Provide a concise summary of the main topics discussed, key points made, and any conclusions reached.
-Format the summary in a clear, readable way with bullet points for main topics.
+Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
+Highlight all user names/aliases with backticks (e.g., `username`).
+At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation.
 """
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} on {date.strftime('%Y-%m-%d')}")
@@ -134,7 +135,7 @@ Format the summary in a clear, readable way with bullet points for main topics.
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Provide clear, concise summaries that capture the main points of discussions."
+                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation."
                 },
                 {
                     "role": "user",
@@ -149,8 +150,8 @@ Format the summary in a clear, readable way with bullet points for main topics.
         summary = completion.choices[0].message.content
         logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
 
-        # Add a header to the summary
-        final_summary = f"**Summary of #{channel_name} on {date.strftime('%Y-%m-%d')}**\n\n{summary}"
+        # Use the summary as is without adding an introductory paragraph
+        final_summary = f"**#{channel_name} | {date.strftime('%Y-%m-%d')}**\n\n{summary}"
         return final_summary
 
     except Exception as e:
