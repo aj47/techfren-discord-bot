@@ -78,6 +78,56 @@ async def on_error(event, *args, **kwargs):
     if kwargs:
         logger.error(f'Error context kwargs: {kwargs}')
 
+def identify_command(message, client_user):
+    """
+    Identify if a message is a command and what type of command it is.
+    
+    Args:
+        message: The Discord message object
+        client_user: The bot's user object
+        
+    Returns:
+        tuple: (is_command, command_type)
+    """
+    bot_mention = f'<@{client_user.id}>'
+    bot_mention_alt = f'<@!{client_user.id}>'
+    
+    if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
+        return True, "mention"
+    elif message.content.startswith('/sum-day'):
+        return True, "/sum-day"
+    elif message.content.startswith('/sum-week'):
+        return True, "/sum-week"
+    
+    return False, None
+
+async def process_command(message, client_user, command_type):
+    """
+    Process a command based on its type.
+    
+    Args:
+        message: The Discord message object
+        client_user: The bot's user object
+        command_type: The type of command to process
+    """
+    try:
+        if command_type == "mention":
+            logger.debug(f"Processing mention command in channel #{message.channel.name if hasattr(message.channel, 'name') else 'DM'}")
+            await handle_bot_command(message, client_user)
+        elif command_type == "/sum-day":
+            logger.debug(f"Processing /sum-day command in channel #{message.channel.name if hasattr(message.channel, 'name') else 'DM'}")
+            await handle_sum_day_command(message, client_user)
+        elif command_type == "/sum-week":
+            logger.debug(f"Processing /sum-week command in channel #{message.channel.name if hasattr(message.channel, 'name') else 'DM'}")
+            await handle_sum_week_command(message, client_user)
+    except Exception as e:
+        logger.error(f"Error processing {command_type} command: {e}", exc_info=True)
+        # Notify the user about the error
+        try:
+            await message.channel.send("Sorry, an error occurred while processing your command. Please try again later.")
+        except Exception as send_error:
+            logger.error(f"Could not send error message to channel: {send_error}")
+
 @client.event
 async def on_message(message):
     # Ignore messages from the bot itself
@@ -100,24 +150,11 @@ async def on_message(message):
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
     logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
+    # Identify if this is a command
+    is_command, command_type = identify_command(message, client.user)
+
     # Store message in database
     try:
-        # Determine if this is a command and what type
-        is_command = False
-        command_type = None
-
-        bot_mention = f'<@{client.user.id}>'
-        bot_mention_alt = f'<@!{client.user.id}>'
-        if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
-            is_command = True
-            command_type = "mention"
-        elif message.content.startswith('/sum-day'):
-            is_command = True
-            command_type = "/sum-day"
-        elif message.content.startswith('/sum-week'):
-            is_command = True
-            command_type = "/sum-week"
-
         # Store in database
         guild_id = str(message.guild.id) if message.guild else None
         channel_id = str(message.channel.id)
@@ -147,35 +184,9 @@ async def on_message(message):
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
-    # Check if this is a command
-    bot_mention = f'<@{client.user.id}>'
-    bot_mention_alt = f'<@!{client.user.id}>'
-    is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
-    is_sum_day_command = message.content.startswith('/sum-day')
-    is_sum_week_command = message.content.startswith('/sum-week')
-
-    # Process mention commands in any channel
-    if is_mention_command:
-        logger.debug(f"Processing mention command in channel #{message.channel.name}")
-        await handle_bot_command(message, client.user)
-        return
-
-    # If not a command we recognize, ignore
-    if not is_sum_day_command and not is_sum_week_command:
-        return
-
-    # Process commands
-    try:
-        if is_mention_command:
-            await handle_bot_command(message, client.user)
-        elif is_sum_day_command:
-            await handle_sum_day_command(message, client.user)
-        elif is_sum_week_command:
-            await handle_sum_week_command(message, client.user)
-    except Exception as e:
-        logger.error(f"Error processing command in on_message: {e}", exc_info=True)
-        # Optionally notify about the error in the channel if it's a user-facing command error
-        # await message.channel.send("Sorry, an error occurred while processing your command.")
+    # Process command if identified
+    if is_command:
+        await process_command(message, client.user, command_type)
 
 try:
     logger.info("Starting bot...")
