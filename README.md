@@ -6,6 +6,7 @@ A simple Discord bot built with discord.py.
 
 - Processes `/bot <query>` commands and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
+- Summarizes channel conversations with `/sum-week` command to get a summary of the week's messages
 - Automatically generates daily summaries for all active channels at a scheduled time
 - Stores summaries in a dedicated database table and optionally posts them to a reports channel
 - Automatically cleans up old message records after summarization to manage database size
@@ -13,6 +14,7 @@ A simple Discord bot built with discord.py.
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - `/bot` command only responds in the #bot-talk channel
 - `/sum-day` command works in any channel
+- `/sum-week` command works in any channel
 - Stores all messages in a SQLite database for logging and analysis
 
 ## Setup
@@ -76,6 +78,12 @@ To use the message content intent, you need to enable it in the Discord Develope
 ### Channel Summarization
 
 - `/sum-day`: Summarizes all messages in the current channel for the current day
+  - Works in any channel (not restricted to #bot-talk)
+  - The bot retrieves all messages from the channel (including bot responses) except command messages
+  - Sends them to the AI model for summarization
+  - Returns a formatted summary with the main topics and key points discussed
+
+- `/sum-week`: Summarizes all messages in the current channel for the current week
   - Works in any channel (not restricted to #bot-talk)
   - The bot retrieves all messages from the channel (including bot responses) except command messages
   - Sends them to the AI model for summarization
