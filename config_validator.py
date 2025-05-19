@@ -67,13 +67,17 @@ def validate_config(config_module):
         logger.info("No custom llm_model in config.py. Using default model.")
 
     # Check for optional reports channel ID
-    if hasattr(config_module, 'reports_channel_id') and config_module.reports_channel_id:
+    reports_channel_id = getattr(config_module, 'reports_channel_id', None)
+    if reports_channel_id:
         try:
-            int(config_module.reports_channel_id)
-            logger.info(f"Reports channel ID configured: {config_module.reports_channel_id}")
+            int(reports_channel_id)
+            logger.info(f"Reports channel ID configured: {reports_channel_id}")
         except (ValueError, TypeError):
-            logger.warning(f"Invalid reports_channel_id in config: '{config_module.reports_channel_id}'. It should be an integer. Reports will not be posted.")
-            # Optionally, you could set config_module.reports_channel_id = None here if it's invalid
+            logger.warning(f"Invalid reports_channel_id in config: '{reports_channel_id}'. It should be an integer. Reports will not be posted.")
+            # Set to None if invalid
+            config_module.reports_channel_id = None
+    else:
+        logger.info("No reports_channel_id configured. Reports will not be posted.")
             
     # Check for optional summary time
     summary_hour = getattr(config_module, 'summary_hour', 0)
