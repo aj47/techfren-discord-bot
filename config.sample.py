@@ -23,3 +23,7 @@ llm_model = "x-ai/grok-3-mini-beta"
 # Firecrawl API Key (required for link scraping)
 # Get this from Firecrawl: https://firecrawl.dev
 firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
+
+# Apify API Token (required for x.com/twitter.com link scraping)
+# Get this from Apify: https://apify.com
+apify_api_token = "YOUR_APIFY_API_TOKEN"

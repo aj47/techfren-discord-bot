@@ -3,5 +3,6 @@ openai
 tabulate
 pynacl
 firecrawl
+apify-client
 
 # Python 3.9+ required for asyncio.to_thread functionality
