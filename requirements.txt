@@ -3,3 +3,5 @@ openai
 tabulate
 pynacl
 firecrawl
+
+# Python 3.9+ required for asyncio.to_thread functionality

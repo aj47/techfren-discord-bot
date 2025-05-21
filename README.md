@@ -18,16 +18,17 @@ A simple Discord bot built with discord.py.
 ## Setup
 
 1. Clone the repository
-2. Create a virtual environment:
+2. Ensure you have Python 3.9 or later installed (required for asyncio.to_thread functionality)
+3. Create a virtual environment:
    ```
    uv venv
    ```
-3. Activate the virtual environment:
+4. Activate the virtual environment:
    ```
    source .venv/bin/activate  # On Unix/macOS
    .venv\Scripts\activate     # On Windows
    ```
-4. Install dependencies:
+5. Install dependencies:
    ```
    uv pip install -r requirements.txt
    ```

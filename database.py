@@ -7,6 +7,7 @@ import sqlite3
 import os
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Set
 
@@ -228,33 +229,39 @@ async def update_message_with_scraped_data(
         bool: True if the message was updated successfully, False otherwise
     """
     try:
-        # Use context manager to ensure connection is properly closed
-        with get_connection() as conn:
-            cursor = conn.cursor()
+        # Define a synchronous function to run in a thread pool
+        def _update_message_sync():
+            with get_connection() as conn:
+                cursor = conn.cursor()
 
-            # Update the message with scraped data
-            cursor.execute(
-                """
-                UPDATE messages
-                SET scraped_url = ?,
-                    scraped_content_summary = ?,
-                    scraped_content_key_points = ?
-                WHERE id = ?
-                """,
-                (
-                    scraped_url,
-                    scraped_content_summary,
-                    scraped_content_key_points,
-                    message_id
+                # Update the message with scraped data
+                cursor.execute(
+                    """
+                    UPDATE messages
+                    SET scraped_url = ?,
+                        scraped_content_summary = ?,
+                        scraped_content_key_points = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        scraped_url,
+                        scraped_content_summary,
+                        scraped_content_key_points,
+                        message_id
+                    )
                 )
-            )
 
-            # Check if any rows were affected
-            if cursor.rowcount == 0:
-                logger.warning(f"No message found with ID {message_id} to update with scraped data")
-                return False
+                # Check if any rows were affected
+                rows_affected = cursor.rowcount == 0
+                conn.commit()
+                return rows_affected
 
-            conn.commit()
+        # Run the synchronous function in a thread pool to avoid blocking the event loop
+        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+
+        if no_rows_affected:
+            logger.warning(f"No message found with ID {message_id} to update with scraped data")
+            return False
 
         logger.info(f"Message {message_id} updated with scraped data from URL: {scraped_url}")
         return True
