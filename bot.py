@@ -6,22 +6,67 @@ import time
 import sqlite3
 import json
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary # Import LLM functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
 from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command # Import command handlers
+from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
 client = discord.Client(intents=intents)
+
+async def process_url(message_id: str, url: str):
+    """
+    Process a URL found in a message by scraping its content, summarizing it,
+    and updating the message in the database with the scraped data.
+    
+    Args:
+        message_id (str): The ID of the message containing the URL
+        url (str): The URL to process
+    """
+    try:
+        logger.info(f"Processing URL {url} from message {message_id}")
+        
+        # Step 1: Scrape the URL content using Firecrawl
+        markdown_content = await scrape_url_content(url)
+        if not markdown_content:
+            logger.warning(f"Failed to scrape content from URL: {url}")
+            return
+            
+        # Step 2: Summarize the scraped content
+        scraped_data = await summarize_scraped_content(markdown_content, url)
+        if not scraped_data:
+            logger.warning(f"Failed to summarize content from URL: {url}")
+            return
+            
+        # Step 3: Convert key points to JSON string
+        key_points_json = json.dumps(scraped_data.get('key_points', []))
+        
+        # Step 4: Update the message in the database with the scraped data
+        success = await database.update_message_with_scraped_data(
+            message_id,
+            url,
+            scraped_data.get('summary', ''),
+            key_points_json
+        )
+        
+        if success:
+            logger.info(f"Successfully processed URL {url} from message {message_id}")
+        else:
+            logger.warning(f"Failed to update message {message_id} with scraped data")
+            
+    except Exception as e:
+        logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
 
 @client.event
 async def on_ready():
@@ -141,6 +186,20 @@ async def on_message(message):
 
         if not success:
             logger.warning(f"Failed to store message {message.id} in database")
+            
+        # Check for URLs in the message content
+        if not is_command and not message.author.bot and success:
+            # URL regex pattern
+            url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+            urls = re.findall(url_pattern, message.content)
+            
+            if urls:
+                # Process the first URL found
+                url = urls[0]
+                logger.info(f"Found URL in message {message.id}: {url}")
+                
+                # Create a background task to process the URL
+                asyncio.create_task(process_url(message.id, url))
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 

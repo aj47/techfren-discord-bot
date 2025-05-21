@@ -31,6 +31,15 @@ def validate_config(config_module):
     if not isinstance(config_module.openrouter, str) or len(config_module.openrouter) < 20:
         # This is a warning.
         logger.warning("OpenRouter API key in config.py appears to be invalid (too short or not a string).")
+        
+    # Check Firecrawl API key
+    if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
+        logger.error("Firecrawl API key not found in config.py or is empty")
+        raise ValueError("Firecrawl API key is missing or empty in config.py")
+
+    if not isinstance(config_module.firecrawl_api_key, str) or len(config_module.firecrawl_api_key) < 10:
+        # This is a warning.
+        logger.warning("Firecrawl API key in config.py appears to be invalid (too short or not a string).")
 
     # Check optional rate limiting configuration and update the rate_limiter module
     # Default values are set in rate_limiter.py (10 seconds, 6 requests/minute)

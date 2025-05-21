@@ -2,3 +2,4 @@ discord.py
 openai
 tabulate
 pynacl
+firecrawl
