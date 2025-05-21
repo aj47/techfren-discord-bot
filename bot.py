@@ -52,7 +52,7 @@ async def on_ready():
         # Check if bot-talk channel exists
         bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
         if not bot_talk_exists:
-            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
+            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @client.event
 async def on_guild_join(guild):
@@ -61,7 +61,7 @@ async def on_guild_join(guild):
     # Check if bot-talk channel exists
     bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
     if not bot_talk_exists:
-        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. The /bot command will not work in this guild, but /sum-day will still function in all channels.')
+        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @client.event
 async def on_guild_remove(guild):
