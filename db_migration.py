@@ -30,31 +30,29 @@ def migrate_database():
             return False
 
         # Connect to the database
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
 
-        # Check if columns already exist
-        cursor.execute("PRAGMA table_info(messages)")
-        columns = [column[1] for column in cursor.fetchall()]
-        
-        # Add missing columns
-        columns_to_add = []
-        if 'scraped_url' not in columns:
-            columns_to_add.append(("scraped_url", "TEXT"))
-        if 'scraped_content_summary' not in columns:
-            columns_to_add.append(("scraped_content_summary", "TEXT"))
-        if 'scraped_content_key_points' not in columns:
-            columns_to_add.append(("scraped_content_key_points", "TEXT"))
-        
-        # Execute ALTER TABLE statements
-        for column_name, column_type in columns_to_add:
-            logger.info(f"Adding column {column_name} to messages table")
-            cursor.execute(f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}")
-        
-        # Commit changes and close connection
-        conn.commit()
-        conn.close()
-        
+            # Check if columns already exist
+            cursor.execute("PRAGMA table_info(messages)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # Add missing columns
+            columns_to_add = []
+            if 'scraped_url' not in columns:
+                columns_to_add.append(("scraped_url", "TEXT"))
+            if 'scraped_content_summary' not in columns:
+                columns_to_add.append(("scraped_content_summary", "TEXT"))
+            if 'scraped_content_key_points' not in columns:
+                columns_to_add.append(("scraped_content_key_points", "TEXT"))
+            
+            # Execute ALTER TABLE statements
+            for column_name, column_type in columns_to_add:
+                logger.info(f"Adding column {column_name} to messages table")
+                cursor.execute(f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}")
+            
+            # explicit commit is optional; context-manager also commits on success
+            conn.commit()
         if columns_to_add:
             logger.info(f"Successfully added {len(columns_to_add)} columns to messages table")
         else:
