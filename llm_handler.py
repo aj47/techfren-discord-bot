@@ -96,7 +96,31 @@ async def call_llm_for_summary(messages, channel_name, date):
             
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
-            formatted_messages_text.append(f"[{time_str}] {author_name}: {content}")
+            
+            # Check if this message has scraped content from a URL
+            scraped_url = msg.get('scraped_url')
+            scraped_summary = msg.get('scraped_content_summary')
+            scraped_key_points = msg.get('scraped_content_key_points')
+            
+            # Format the message with the basic content
+            message_text = f"[{time_str}] {author_name}: {content}"
+            
+            # If there's scraped content, add it to the message
+            if scraped_url and scraped_summary:
+                message_text += f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
+                
+                # If there are key points, add them too
+                if scraped_key_points:
+                    try:
+                        key_points = json.loads(scraped_key_points)
+                        if key_points and isinstance(key_points, list):
+                            message_text += "\n\nKey points:"
+                            for point in key_points:
+                                message_text += f"\n- {point}"
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse key points JSON: {scraped_key_points}")
+            
+            formatted_messages_text.append(message_text)
 
         # Join the messages with newlines
         messages_text = "\n".join(formatted_messages_text)

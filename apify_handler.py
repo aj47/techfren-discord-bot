@@ -43,9 +43,17 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
             logger.error(f"Could not extract tweet ID from URL: {url}")
             return None
 
+        # Ensure URL is properly formatted
+        if not url.startswith('http'):
+            formatted_url = f"https://{url}"
+        else:
+            formatted_url = url
+            
+        logger.info(f"Using formatted URL: {formatted_url}")
+            
         # Prepare the input for the Twitter Scraper actor
         input_data = {
-            "startUrls": [url],
+            "startUrls": [{"url": formatted_url}],
             "tweetsDesired": 1,
             "addUserInfo": True,
             "proxyConfig": {
@@ -57,7 +65,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
         run = await loop.run_in_executor(
             None,
-            lambda: client.actor("u6ppkMWAx2E2MpEuF").call(input=input_data)
+            lambda: client.actor("u6ppkMWAx2E2MpEuF").call(run_input=input_data)
         )
 
         # Get the dataset items
@@ -103,9 +111,17 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         # Initialize the Apify client
         client = ApifyClient(token=config.apify_api_token)
 
+        # Ensure URL is properly formatted
+        if not url.startswith('http'):
+            formatted_url = f"https://{url}"
+        else:
+            formatted_url = url
+            
+        logger.info(f"Using formatted URL for replies: {formatted_url}")
+            
         # Prepare the input for the Twitter Replies Scraper actor
         input_data = {
-            "postUrls": [url],
+            "postUrls": [formatted_url],
             "resultsLimit": 30
         }
 
@@ -152,6 +168,9 @@ def extract_tweet_id(url: str) -> Optional[str]:
         
         if match:
             return match.group(1)
+        
+        # Log the URL and pattern when no match is found
+        logger.debug(f"No tweet ID found in URL: {url} using pattern: {pattern}")
         
         return None
     except Exception as e:
@@ -326,4 +345,6 @@ async def is_twitter_url(url: str) -> bool:
     Returns:
         bool: True if the URL is from Twitter/X.com, False otherwise
     """
-    return bool(re.search(r'(?:twitter\.com|x\.com)', url))
+    # More specific pattern to match Twitter/X.com domains
+    # This ensures we're matching the domain part of the URL, not just any occurrence of these strings
+    return bool(re.search(r'(?:^https?://(?:www\.)?(?:twitter\.com|x\.com))|(?://(?:www\.)?(?:twitter\.com|x\.com))', url))

@@ -338,7 +338,8 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
             # Query messages for the channel within the UTC date range
             cursor.execute(
                 """
-                SELECT author_name, content, created_at, is_bot, is_command
+                SELECT author_name, content, created_at, is_bot, is_command,
+                       scraped_url, scraped_content_summary, scraped_content_key_points
                 FROM messages
                 WHERE channel_id = ? AND created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
@@ -354,7 +355,10 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'content': row['content'],
                     'created_at': datetime.fromisoformat(row['created_at']),
                     'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command'])
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
         logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {date.strftime('%Y-%m-%d')}")

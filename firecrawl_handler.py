@@ -60,5 +60,19 @@ async def scrape_url_content(url: str) -> Optional[str]:
         return markdown_content
 
     except Exception as e:
-        logger.error(f"Error scraping URL {url}: {str(e)}", exc_info=True)
+        # Provide more detailed error information
+        error_message = str(e)
+        if hasattr(e, 'response') and e.response:
+            status_code = getattr(e.response, 'status_code', 'unknown')
+            error_message = f"HTTP Error {status_code}: {error_message}"
+            
+            # Try to extract more details from the response if available
+            try:
+                response_text = e.response.text
+                if response_text:
+                    error_message += f" - Response: {response_text[:200]}"
+            except:
+                pass
+                
+        logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
         return None

@@ -42,21 +42,38 @@ async def process_url(message_id: str, url: str):
         if await is_twitter_url(url):
             logger.info(f"Detected Twitter/X.com URL: {url}")
             
-            # Check if Apify API token is configured
-            if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
-                scraped_result = await scrape_url_content(url)
-            else:
-                # Use Apify to scrape Twitter/X.com content
-                scraped_result = await scrape_twitter_content(url)
+            # Validate if the URL contains a tweet ID (status)
+            from apify_handler import extract_tweet_id
+            tweet_id = extract_tweet_id(url)
+            if not tweet_id:
+                logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
                 
-                # If Apify scraping fails, fall back to Firecrawl
-                if not scraped_result:
-                    logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
+                if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
+                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+                    scraped_result = {
+                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
+                    }
+                else:
+                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
+                    scraped_result = await scrape_url_content(url)
+            else:
+                # Check if Apify API token is configured
+                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
                     scraped_result = await scrape_url_content(url)
                 else:
-                    # Extract markdown content from the scraped result
-                    markdown_content = scraped_result.get('markdown')
+                    # Use Apify to scrape Twitter/X.com content
+                    scraped_result = await scrape_twitter_content(url)
+                    
+                    # If Apify scraping fails, fall back to Firecrawl
+                    if not scraped_result:
+                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                        scraped_result = await scrape_url_content(url)
+                    else:
+                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+                        # Extract markdown content from the scraped result
+                        markdown_content = scraped_result.get('markdown')
         else:
             # For non-Twitter/X.com URLs, use Firecrawl
             scraped_result = await scrape_url_content(url)
@@ -219,8 +236,8 @@ async def on_message(message):
             
         # Check for URLs in the message content
         if not is_command and not message.author.bot and success:
-            # URL regex pattern
-            url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+            # URL regex pattern - capture the full URL including path and query parameters
+            url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
             urls = re.findall(url_pattern, message.content)
             
             if urls:
