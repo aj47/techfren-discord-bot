@@ -19,3 +19,11 @@ llm_model = "x-ai/grok-3-mini-beta"
 # Uncomment and modify these values to change the default rate limiting
 # rate_limit_seconds = 10  # Time between allowed requests per user
 # max_requests_per_minute = 6  # Maximum requests per user per minute
+
+# Firecrawl API Key (required for link scraping)
+# Get this from Firecrawl: https://firecrawl.dev
+firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
+
+# Apify API Token (required for x.com/twitter.com link scraping)
+# Get this from Apify: https://apify.com
+apify_api_token = "YOUR_APIFY_API_TOKEN"

@@ -10,6 +10,10 @@ A simple Discord bot built with discord.py.
 - Stores summaries in a dedicated database table and optionally posts them to a reports channel
 - Automatically cleans up old message records after summarization to manage database size
 - Automatically splits long messages into multiple parts to handle Discord's 2000 character limit
+- Processes URLs shared in messages:
+  - Uses Apify to scrape Twitter/X.com URLs, extracting tweet content, video URLs, and replies
+  - Uses Firecrawl for all other URLs
+  - Summarizes content and stores it in the database
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel. While originally envisaged for a dedicated `#bot-talk` channel, the current implementation allows use in all channels.
 - `/sum-day` command works in any channel
@@ -18,27 +22,30 @@ A simple Discord bot built with discord.py.
 ## Setup
 
 1. Clone the repository
-2. Create a virtual environment:
+2. Ensure you have Python 3.9 or later installed (required for asyncio.to_thread functionality)
+3. Create a virtual environment:
    ```
    uv venv
    ```
-3. Activate the virtual environment:
+4. Activate the virtual environment:
    ```
    source .venv/bin/activate  # On Unix/macOS
    .venv\Scripts\activate     # On Windows
    ```
-4. Install dependencies:
+5. Install dependencies:
    ```
    uv pip install -r requirements.txt
    ```
-5. Create a `config.py` file with your Discord bot token and OpenRouter API key:
+5. Create a `config.py` file with your Discord bot token and API keys:
    ```python
    # Required settings
    token = "YOUR_DISCORD_BOT_TOKEN"
    openrouter = "YOUR_OPENROUTER_API_KEY"
+   firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
 
    # Optional settings
    llm_model = "x-ai/grok-3-mini-beta"  # Default model to use
+   apify_api_token = "YOUR_APIFY_API_TOKEN"  # For Twitter/X.com link processing
 
    # Rate limiting settings
    rate_limit_seconds = 10  # Time between allowed requests per user
@@ -49,7 +56,9 @@ A simple Discord bot built with discord.py.
    summary_minute = 0  # Minute of the hour to run summarization (0-59)
    reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
    ```
-   You can get an OpenRouter API key by signing up at [OpenRouter.ai](https://openrouter.ai/)
+   - You can get an OpenRouter API key by signing up at [OpenRouter.ai](https://openrouter.ai/)
+   - You can get a Firecrawl API key by signing up at [Firecrawl.dev](https://firecrawl.dev)
+   - You can get an Apify API token by signing up at [Apify.com](https://apify.com)
 6. Run the bot:
    ```
    python bot.py
@@ -118,6 +127,11 @@ Stores all messages processed by the bot, including:
 
 Each message is stored with metadata including author information, timestamps, and whether it's a command or bot response.
 
+The messages table also includes fields for URL scraping functionality:
+- `scraped_url`: URL extracted from the message
+- `scraped_content_summary`: Summary of the content from the scraped URL
+- `scraped_content_key_points`: Key points extracted from the scraped content
+
 ### Channel Summaries Table
 Stores the daily automated summaries for each channel, including:
 - Channel information (ID, name, guild)
@@ -137,6 +151,16 @@ This comprehensive database structure allows for:
 - Debugging and troubleshooting
 
 The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages and summaries.
+
+### Database Migration
+
+If you encounter database schema-related errors, you may need to run the database migration script:
+
+```bash
+python db_migration.py
+```
+
+This script will add any missing columns to the database tables that might have been added in newer versions of the bot.
 
 ### Database Utilities
 
@@ -172,6 +196,18 @@ If you encounter database-related errors:
 4. Check the logs for detailed error messages
 
 ## Changelog
+
+### 2025-05-21
+- Added Apify integration for Twitter/X.com URL processing:
+  - Uses Apify API to fetch tweet content and replies
+  - Extracts video URLs from tweets when available
+  - Falls back to Firecrawl if Apify is not configured or fails
+- Added database migration script to handle schema updates
+- Added URL scraping functionality with new database columns:
+  - `scraped_url`
+  - `scraped_content_summary`
+  - `scraped_content_key_points`
+- Fixed issue with missing columns in the messages table
 
 ### 2023-05-30
 - Added automated daily channel summarization feature

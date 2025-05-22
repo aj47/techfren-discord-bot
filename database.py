@@ -7,6 +7,7 @@ import sqlite3
 import os
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Set
 
@@ -31,7 +32,10 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP NOT NULL,
     is_bot INTEGER NOT NULL,
     is_command INTEGER NOT NULL,
-    command_type TEXT
+    command_type TEXT,
+    scraped_url TEXT,
+    scraped_content_summary TEXT,
+    scraped_content_key_points TEXT
 );
 """
 
@@ -63,8 +67,9 @@ CREATE_INDEX_SUMMARY_DATE = "CREATE INDEX IF NOT EXISTS idx_summary_date ON chan
 INSERT_MESSAGE = """
 INSERT INTO messages (
     id, author_id, author_name, channel_id, channel_name,
-    guild_id, guild_name, content, created_at, is_bot, is_command, command_type
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    guild_id, guild_name, content, created_at, is_bot, is_command, command_type,
+    scraped_url, scraped_content_summary, scraped_content_key_points
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 INSERT_CHANNEL_SUMMARY = """
@@ -139,7 +144,10 @@ def store_message(
     guild_name: Optional[str] = None,
     is_bot: bool = False,
     is_command: bool = False,
-    command_type: Optional[str] = None
+    command_type: Optional[str] = None,
+    scraped_url: Optional[str] = None,
+    scraped_content_summary: Optional[str] = None,
+    scraped_content_key_points: Optional[str] = None
 ) -> bool:
     """
     Store a message in the database.
@@ -157,6 +165,9 @@ def store_message(
         is_bot (bool): Whether the message was sent by a bot
         is_command (bool): Whether the message is a command
         command_type (Optional[str]): The type of command (if applicable)
+        scraped_url (Optional[str]): The URL that was scraped from the message (if any)
+        scraped_content_summary (Optional[str]): Summary of the scraped content (if any)
+        scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)
 
     Returns:
         bool: True if the message was stored successfully, False otherwise
@@ -180,7 +191,10 @@ def store_message(
                     created_at.isoformat(),
                     1 if is_bot else 0,
                     1 if is_command else 0,
-                    command_type
+                    command_type,
+                    scraped_url,
+                    scraped_content_summary,
+                    scraped_content_key_points
                 )
             )
 
@@ -194,6 +208,65 @@ def store_message(
         return False
     except Exception as e:
         logger.error(f"Error storing message {message_id}: {str(e)}", exc_info=True)
+        return False
+
+async def update_message_with_scraped_data(
+    message_id: str,
+    scraped_url: str,
+    scraped_content_summary: str,
+    scraped_content_key_points: str
+) -> bool:
+    """
+    Update an existing message with scraped URL data.
+
+    Args:
+        message_id (str): The Discord message ID to update
+        scraped_url (str): The URL that was scraped
+        scraped_content_summary (str): Summary of the scraped content
+        scraped_content_key_points (str): JSON string of key points from scraped content
+
+    Returns:
+        bool: True if the message was updated successfully, False otherwise
+    """
+    try:
+        # Define a synchronous function to run in a thread pool
+        def _update_message_sync():
+            with get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Update the message with scraped data
+                cursor.execute(
+                    """
+                    UPDATE messages
+                    SET scraped_url = ?,
+                        scraped_content_summary = ?,
+                        scraped_content_key_points = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        scraped_url,
+                        scraped_content_summary,
+                        scraped_content_key_points,
+                        message_id
+                    )
+                )
+
+                # Check if any rows were affected
+                rows_affected = cursor.rowcount == 0
+                conn.commit()
+                return rows_affected
+
+        # Run the synchronous function in a thread pool to avoid blocking the event loop
+        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+
+        if no_rows_affected:
+            logger.warning(f"No message found with ID {message_id} to update with scraped data")
+            return False
+
+        logger.info(f"Message {message_id} updated with scraped data from URL: {scraped_url}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
         return False
 
 def get_message_count() -> int:
@@ -265,7 +338,8 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
             # Query messages for the channel within the UTC date range
             cursor.execute(
                 """
-                SELECT author_name, content, created_at, is_bot, is_command
+                SELECT author_name, content, created_at, is_bot, is_command,
+                       scraped_url, scraped_content_summary, scraped_content_key_points
                 FROM messages
                 WHERE channel_id = ? AND created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
@@ -281,7 +355,10 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'content': row['content'],
                     'created_at': datetime.fromisoformat(row['created_at']),
                     'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command'])
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
         logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {date.strftime('%Y-%m-%d')}")

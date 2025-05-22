@@ -6,22 +6,114 @@ import time
 import sqlite3
 import json
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary # Import LLM functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
 from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command # Import command handlers
+from firecrawl_handler import scrape_url_content # Import Firecrawl handler
+from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
 client = discord.Client(intents=intents)
+
+async def process_url(message_id: str, url: str):
+    """
+    Process a URL found in a message by scraping its content, summarizing it,
+    and updating the message in the database with the scraped data.
+    
+    Args:
+        message_id (str): The ID of the message containing the URL
+        url (str): The URL to process
+    """
+    try:
+        logger.info(f"Processing URL {url} from message {message_id}")
+        
+        # Check if the URL is from Twitter/X.com
+        if await is_twitter_url(url):
+            logger.info(f"Detected Twitter/X.com URL: {url}")
+            
+            # Validate if the URL contains a tweet ID (status)
+            from apify_handler import extract_tweet_id
+            tweet_id = extract_tweet_id(url)
+            if not tweet_id:
+                logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
+                
+                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
+                if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
+                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+                    scraped_result = {
+                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
+                    }
+                else:
+                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
+                    scraped_result = await scrape_url_content(url)
+            else:
+                # Check if Apify API token is configured
+                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+                    scraped_result = await scrape_url_content(url)
+                else:
+                    # Use Apify to scrape Twitter/X.com content
+                    scraped_result = await scrape_twitter_content(url)
+                    
+                    # If Apify scraping fails, fall back to Firecrawl
+                    if not scraped_result:
+                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                        scraped_result = await scrape_url_content(url)
+                    else:
+                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+                        # Extract markdown content from the scraped result
+                        markdown_content = scraped_result.get('markdown')
+        else:
+            # For non-Twitter/X.com URLs, use Firecrawl
+            scraped_result = await scrape_url_content(url)
+            markdown_content = scraped_result  # Firecrawl returns markdown directly
+        
+        # Check if scraping was successful
+        if not scraped_result:
+            logger.warning(f"Failed to scrape content from URL: {url}")
+            return
+            
+        # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
+        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
+            markdown_content = scraped_result.get('markdown')
+        else:
+            markdown_content = scraped_result  # Firecrawl returns markdown directly
+            
+        # Step 2: Summarize the scraped content
+        scraped_data = await summarize_scraped_content(markdown_content, url)
+        if not scraped_data:
+            logger.warning(f"Failed to summarize content from URL: {url}")
+            return
+            
+        # Step 3: Convert key points to JSON string
+        key_points_json = json.dumps(scraped_data.get('key_points', []))
+        
+        # Step 4: Update the message in the database with the scraped data
+        success = await database.update_message_with_scraped_data(
+            message_id,
+            url,
+            scraped_data.get('summary', ''),
+            key_points_json
+        )
+        
+        if success:
+            logger.info(f"Successfully processed URL {url} from message {message_id}")
+        else:
+            logger.warning(f"Failed to update message {message_id} with scraped data")
+            
+    except Exception as e:
+        logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
 
 @client.event
 async def on_ready():
@@ -141,6 +233,20 @@ async def on_message(message):
 
         if not success:
             logger.warning(f"Failed to store message {message.id} in database")
+            
+        # Check for URLs in the message content
+        if not is_command and not message.author.bot and success:
+            # URL regex pattern - capture the full URL including path and query parameters
+            url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+            urls = re.findall(url_pattern, message.content)
+            
+            if urls:
+                # Process the first URL found
+                url = urls[0]
+                logger.info(f"Found URL in message {message.id}: {url}")
+                
+                # Create a background task to process the URL
+                asyncio.create_task(process_url(message.id, url))
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
