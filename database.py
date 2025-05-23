@@ -9,7 +9,7 @@ import logging
 import json
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -92,6 +92,12 @@ def init_database() -> None:
 
         # Connect to the database and create tables using context manager
         with sqlite3.connect(DB_FILE) as conn:
+            # Enable foreign keys
+            conn.execute("PRAGMA foreign_keys = ON")
+
+            # Set a shorter timeout for better error reporting
+            conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+
             cursor = conn.cursor()
 
             # Create tables and indexes
@@ -108,6 +114,36 @@ def init_database() -> None:
             # Create indexes for channel_summaries table
             cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
             cursor.execute(CREATE_INDEX_SUMMARY_DATE)
+
+            # Insert a test message to ensure the database is working
+            try:
+                test_message_id = f"test-init-{datetime.now().timestamp()}"
+                cursor.execute(
+                    INSERT_MESSAGE,
+                    (
+                        test_message_id,
+                        "system",
+                        "System",
+                        "system",
+                        "System",
+                        None,
+                        None,
+                        "Database initialization test message",
+                        datetime.now().isoformat(),
+                        1,  # is_bot
+                        0,  # is_command
+                        None,
+                        None,
+                        None,
+                        None
+                    )
+                )
+                logger.info("Successfully inserted test message during database initialization")
+            except sqlite3.IntegrityError:
+                # This is fine, it means the test message already exists
+                logger.info("Test message already exists in database")
+            except Exception as e:
+                logger.warning(f"Failed to insert test message during initialization: {str(e)}")
 
             conn.commit()
 
@@ -127,10 +163,61 @@ def get_connection() -> sqlite3.Connection:
     try:
         conn = sqlite3.connect(DB_FILE)
         conn.row_factory = sqlite3.Row  # This enables column access by name
+
+        # Set a shorter timeout for better error reporting
+        conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
+
         return conn
     except Exception as e:
         logger.error(f"Error connecting to database: {str(e)}", exc_info=True)
         raise
+
+def check_database_connection() -> bool:
+    """
+    Check if the database connection is working properly.
+
+    Returns:
+        bool: True if the connection is working, False otherwise
+    """
+    try:
+        # First check if the database file exists
+        if not os.path.exists(DB_FILE):
+            logger.error(f"Database file does not exist: {DB_FILE}")
+            return False
+
+        # Check if the file is readable and writable
+        if not os.access(DB_FILE, os.R_OK | os.W_OK):
+            logger.error(f"Database file is not readable or writable: {DB_FILE}")
+            return False
+
+        # Check the file size
+        file_size = os.path.getsize(DB_FILE)
+        logger.info(f"Database file size: {file_size} bytes")
+
+        # Try to connect and execute a simple query
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+
+            # Check if the messages table exists and has the expected schema
+            cursor.execute("PRAGMA table_info(messages)")
+            columns = cursor.fetchall()
+            if not columns:
+                logger.error("Messages table does not exist in the database")
+                return False
+
+            # Log the schema
+            column_names = [col['name'] for col in columns]
+            logger.info(f"Messages table columns: {', '.join(column_names)}")
+
+            return result is not None and result[0] == 1
+    except Exception as e:
+        logger.error(f"Database connection check failed: {str(e)}", exc_info=True)
+        return False
 
 def store_message(
     message_id: str,
@@ -312,39 +399,32 @@ def get_user_message_count(user_id: str) -> int:
         # Return 0 instead of -1 for consistency with other error cases
         return 0
 
-def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
+def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """
-    Get all messages from a specific channel for a specific day.
+    Get all messages from a specific channel, regardless of date.
 
     Args:
         channel_id (str): The Discord channel ID
-        date (datetime): The date to get messages for
+        limit (int): Maximum number of messages to return
 
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        # Calculate start and end of the local day
-        start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0)
-        end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999)
-        
-        # Convert to UTC for database query (local is UTC-5)
-        start_date_utc = (start_date_local + timedelta(hours=5)).isoformat()
-        end_date_utc = (end_date_local + timedelta(hours=5)).isoformat()
-
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Query messages for the channel within the UTC date range
+            # Query all messages for the channel
             cursor.execute(
                 """
                 SELECT author_name, content, created_at, is_bot, is_command,
                        scraped_url, scraped_content_summary, scraped_content_key_points
                 FROM messages
-                WHERE channel_id = ? AND created_at BETWEEN ? AND ?
-                ORDER BY created_at ASC
+                WHERE channel_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
                 """,
-                (channel_id, start_date_utc, end_date_utc)
+                (channel_id, limit)
             )
 
             # Convert rows to dictionaries
@@ -361,10 +441,66 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for {date.strftime('%Y-%m-%d')}")
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} (all time)")
         return messages
     except Exception as e:
-        logger.error(f"Error getting messages for channel {channel_id} on {date.strftime('%Y-%m-%d')}: {str(e)}", exc_info=True)
+        logger.error(f"Error getting all messages for channel {channel_id}: {str(e)}", exc_info=True)
+        return []
+
+def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
+    """
+    Get all messages from a specific channel for the past 24 hours from the given date.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        date (datetime): The reference date (will get messages for 24 hours before this date)
+
+    Returns:
+        List[Dict[str, Any]]: A list of messages as dictionaries
+    """
+    try:
+        # Calculate the time range for the past 24 hours
+        # Add a small buffer (1 minute) to ensure we capture very recent messages
+        end_date = date + timedelta(minutes=1)
+        start_date = date - timedelta(hours=24)
+
+        # Convert to ISO format for database query
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Query messages for the channel within the time range
+            cursor.execute(
+                """
+                SELECT author_name, content, created_at, is_bot, is_command,
+                       scraped_url, scraped_content_summary, scraped_content_key_points
+                FROM messages
+                WHERE channel_id = ? AND created_at BETWEEN ? AND ?
+                ORDER BY created_at ASC
+                """,
+                (channel_id, start_date_str, end_date_str)
+            )
+
+            # Convert rows to dictionaries
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    'author_name': row['author_name'],
+                    'content': row['content'],
+                    'created_at': datetime.fromisoformat(row['created_at']),
+                    'is_bot': bool(row['is_bot']),
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points']
+                })
+
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past 24 hours from {date.isoformat()}")
+        return messages
+    except Exception as e:
+        logger.error(f"Error getting messages for channel {channel_id} for the past 24 hours from {date.isoformat()}: {str(e)}", exc_info=True)
         return []
 
 def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dict[str, List[Dict[str, Any]]]:
