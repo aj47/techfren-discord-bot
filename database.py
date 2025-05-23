@@ -10,6 +10,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Set
+from datetime_utils import get_day_boundaries, make_aware
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -252,14 +253,14 @@ async def update_message_with_scraped_data(
                 )
 
                 # Check if any rows were affected
-                rows_affected = cursor.rowcount == 0
+                rows_affected = cursor.rowcount > 0
                 conn.commit()
                 return rows_affected
 
         # Run the synchronous function in a thread pool to avoid blocking the event loop
-        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+        rows_affected = await asyncio.to_thread(_update_message_sync)
 
-        if no_rows_affected:
+        if not rows_affected:
             logger.warning(f"No message found with ID {message_id} to update with scraped data")
             return False
 
@@ -324,13 +325,12 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        # Calculate start and end of the local day
-        start_date_local = datetime(date.year, date.month, date.day, 0, 0, 0)
-        end_date_local = datetime(date.year, date.month, date.day, 23, 59, 59, 999999)
+        # Use proper timezone handling from datetime_utils
+        start_date_utc, end_date_utc = get_day_boundaries(date)
         
-        # Convert to UTC for database query (local is UTC-5)
-        start_date_utc = (start_date_local + timedelta(hours=5)).isoformat()
-        end_date_utc = (end_date_local + timedelta(hours=5)).isoformat()
+        # Convert to ISO format for database query
+        start_date_str = start_date_utc.isoformat()
+        end_date_str = end_date_utc.isoformat()
 
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -344,7 +344,7 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                 WHERE channel_id = ? AND created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
                 """,
-                (channel_id, start_date_utc, end_date_utc)
+                (channel_id, start_date_str, end_date_str)
             )
 
             # Convert rows to dictionaries

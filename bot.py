@@ -58,8 +58,15 @@ async def process_url(message_id: str, url: str):
                     # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
                     scraped_result = await scrape_url_content(url)
             else:
-                # Check if Apify API token is configured
-                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                # Check if Apify API token is configured with proper error handling
+                try:
+                    import config
+                    has_apify_token = hasattr(config, 'apify_api_token') and config.apify_api_token
+                except (ImportError, AttributeError) as e:
+                    logger.warning(f"Error accessing config for Apify token: {e}")
+                    has_apify_token = False
+                
+                if not has_apify_token:
                     logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
                     scraped_result = await scrape_url_content(url)
                 else:
@@ -85,8 +92,17 @@ async def process_url(message_id: str, url: str):
             return
             
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
-        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
-            markdown_content = scraped_result.get('markdown')
+        if await is_twitter_url(url):
+            try:
+                import config
+                has_apify_token = hasattr(config, 'apify_api_token') and config.apify_api_token
+            except (ImportError, AttributeError):
+                has_apify_token = False
+                
+            if has_apify_token:
+                markdown_content = scraped_result.get('markdown')
+            else:
+                markdown_content = scraped_result  # Firecrawl returns markdown directly
         else:
             markdown_content = scraped_result  # Firecrawl returns markdown directly
             

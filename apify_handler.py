@@ -140,7 +140,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
 
         if not dataset_items:
             logger.warning(f"No reply data found for URL: {url}")
-            return []
+            return None  # Changed from [] to None for consistency
 
         # Log success
         logger.info(f"Successfully fetched {len(dataset_items)} replies from URL: {url}")
