@@ -4,7 +4,7 @@ A simple Discord bot built with discord.py.
 
 ## Features
 
-- Processes `/bot <query>` commands and responds with AI-generated answers using OpenRouter API
+- Processes queries via mentions (`@botname <query>`) and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
 - Automatically generates daily summaries for all active channels at a scheduled time
 - Stores summaries in a dedicated database table and optionally posts them to a reports channel
@@ -15,7 +15,7 @@ A simple Discord bot built with discord.py.
   - Uses Firecrawl for all other URLs
   - Summarizes content and stores it in the database
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
-- `/bot` command only responds in the #bot-talk channel
+- Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel. While originally envisaged for a dedicated `#bot-talk` channel, the current implementation allows use in all channels.
 - `/sum-day` command works in any channel
 - Stores all messages in a SQLite database for logging and analysis
 
@@ -80,7 +80,7 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 ### Basic Commands
 
-- `/bot <query>`: Sends your query to an AI model via OpenRouter and returns the response
+- `@botname <query>`: Sends your query to an AI model via OpenRouter and returns the response. This command works in any channel.
 
 ### Channel Summarization
 
@@ -219,7 +219,7 @@ If you encounter database-related errors:
 
 ### 2023-05-25
 - Modified the `/sum-day` command to work in any channel (not just #bot-talk)
-- Kept the `/bot` command restricted to the #bot-talk channel
+- Mention-based queries (`@botname <query>`) are available in all channels.
 - Updated documentation to reflect these changes
 
 ### 2023-05-20
@@ -227,7 +227,7 @@ If you encounter database-related errors:
 - Simplified command handling in the bot
 
 ### 2023-05-15
-- Fixed issue where bot responses to `/bot` commands were not being stored in the database
+- Fixed issue where bot responses to mention-based queries (`@botname <query>`) were not being stored in the database
 - Now storing all bot responses in the database, including error messages and rate limit notifications
 - Modified `/sum-day` command to include bot responses in the summary
 - Improved error handling and logging for database operations

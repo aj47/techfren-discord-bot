@@ -131,8 +131,9 @@ async def call_llm_for_summary(messages, channel_name, date):
 
 {messages_text}
 
-Provide a concise summary of the main topics discussed, key points made, and any conclusions reached.
-Format the summary in a clear, readable way with bullet points for main topics.
+Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
+Highlight all user names/aliases with backticks (e.g., `username`).
+At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation.
 """
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past 24 hours")
@@ -161,7 +162,7 @@ Format the summary in a clear, readable way with bullet points for main topics.
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Provide clear, concise summaries that capture the main points of discussions."
+                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation."
                 },
                 {
                     "role": "user",
