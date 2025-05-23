@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import pytest
 from datetime import datetime
 from logging_config import logger
 from database import init_database, store_message, update_message_with_scraped_data, get_channel_messages_for_day
@@ -12,6 +13,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
+@pytest.mark.asyncio
 async def test_sum_day_with_links():
     """
     Test the sum-day command with messages containing links.
