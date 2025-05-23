@@ -123,8 +123,50 @@ class TestBotCommands(unittest.TestCase):
         self.store_message_patcher.stop()
         self.get_channel_messages_for_day_patcher.stop()
 
+    def test_mention_command_in_any_channel(self):
+        """Test mention command (@botname query) in any channel"""
+        # Create mock message in any channel
+        channel = MagicMock()
+        channel.name = "general"
+        channel.id = "general_channel_id"
+        channel.send = AsyncMock()
+
+        message = MockMessage(
+            content="<@test_bot_id> test query",
+            channel=channel
+        )
+
+        # Process the message
+        import asyncio
+        asyncio.run(bot.on_message(message))
+
+        # Check if the bot responded (should work in any channel)
+        channel.send.assert_called()
+        self.mock_call_llm_api.assert_called_once_with("test query")
+
+    def test_mention_command_alternative_format(self):
+        """Test mention command with alternative format (@!botname query)"""
+        # Create mock message
+        channel = MagicMock()
+        channel.name = "bot-talk"
+        channel.id = "bot_talk_channel_id"
+        channel.send = AsyncMock()
+
+        message = MockMessage(
+            content="<@!test_bot_id> another test query",
+            channel=channel
+        )
+
+        # Process the message
+        import asyncio
+        asyncio.run(bot.on_message(message))
+
+        # Check if the bot responded
+        channel.send.assert_called()
+        self.mock_call_llm_api.assert_called_once_with("another test query")
+
     def test_bot_command_in_bot_talk_channel(self):
-        """Test /bot command in bot-talk channel"""
+        """Test deprecated /bot command - should not work anymore"""
         # Create mock message in bot-talk channel
         channel = MagicMock()
         channel.name = "bot-talk"
@@ -140,12 +182,12 @@ class TestBotCommands(unittest.TestCase):
         import asyncio
         asyncio.run(bot.on_message(message))
 
-        # Check if the bot responded
-        channel.send.assert_called()
-        self.mock_call_llm_api.assert_called_once_with("test query")
+        # Check that the bot did not respond (deprecated command)
+        channel.send.assert_not_called()
+        self.mock_call_llm_api.assert_not_called()
 
     def test_bot_command_in_other_channel(self):
-        """Test /bot command in a channel other than bot-talk"""
+        """Test deprecated /bot command in other channel - should not work"""
         # Create mock message in another channel
         channel = MagicMock()
         channel.name = "general"
