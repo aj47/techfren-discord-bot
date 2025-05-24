@@ -5,5 +5,6 @@ pynacl
 firecrawl
 apify-client
 pytest-asyncio
+python-dotenv
 
 # Python 3.9+ required for asyncio.to_thread functionality
