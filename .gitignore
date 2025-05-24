@@ -25,8 +25,11 @@ var/
 venv/
 ENV/
 
-# Configuration files with sensitive data
-config.py
+# Environment files with sensitive data
+.env
+.env.local
+.env.production
+.env.development
 
 # Log files
 logs/
