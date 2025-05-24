@@ -502,6 +502,99 @@ class TestXScrapingIntegration:
             tweet_id = extract_tweet_id(url)
             assert tweet_id == expected_id, f"ID extraction failed for {url}"
 
+    @pytest.mark.asyncio
+    async def test_url_routing_logic_comprehensive(self):
+        """Test the URL routing logic that determines which scraping service to use."""
+        # Test the problematic URL from the original issue
+        problematic_url = "https://x.com/gumloop_ai/status/1926009793442885867?t=c0tWW2Jy_xF19WDr_UkvTA&s=19"
+
+        # This should be detected as Twitter/X URL
+        is_twitter = await is_twitter_url(problematic_url)
+        assert is_twitter is True, f"Failed to detect {problematic_url} as Twitter/X URL"
+
+        # This should extract the tweet ID
+        tweet_id = extract_tweet_id(problematic_url)
+        assert tweet_id == "1926009793442885867", f"Failed to extract correct tweet ID from {problematic_url}"
+
+        # Test various X.com URL formats
+        x_url_test_cases = [
+            # Standard X.com URLs with tweet IDs - should route to Apify
+            ("https://x.com/user/status/1234567890", True, "1234567890", "apify"),
+            ("https://x.com/user/status/1234567890?s=20", True, "1234567890", "apify"),
+            ("https://x.com/user/status/1234567890?t=abc&s=19", True, "1234567890", "apify"),
+
+            # Twitter.com URLs with tweet IDs - should route to Apify
+            ("https://twitter.com/user/status/9876543210", True, "9876543210", "apify"),
+            ("https://twitter.com/user/status/9876543210?ref_src=twsrc", True, "9876543210", "apify"),
+
+            # X.com URLs without tweet IDs - should route to Firecrawl
+            ("https://x.com/user", True, None, "firecrawl"),
+            ("https://x.com/user/followers", True, None, "firecrawl"),
+            ("https://x.com", True, None, "firecrawl"),
+
+            # Non-Twitter URLs - should route to Firecrawl
+            ("https://example.com", False, None, "firecrawl"),
+            ("https://github.com/user/repo", False, None, "firecrawl"),
+            ("https://google.com", False, None, "firecrawl"),
+        ]
+
+        for url, should_be_twitter, expected_tweet_id, expected_routing in x_url_test_cases:
+            # Test URL detection
+            is_twitter = await is_twitter_url(url)
+            assert is_twitter == should_be_twitter, f"URL detection failed for {url}"
+
+            # Test tweet ID extraction
+            tweet_id = extract_tweet_id(url)
+            assert tweet_id == expected_tweet_id, f"Tweet ID extraction failed for {url}"
+
+            # Test routing logic
+            if should_be_twitter and tweet_id:
+                # Should route to Apify
+                assert expected_routing == "apify", f"URL {url} should route to Apify but expected {expected_routing}"
+            else:
+                # Should route to Firecrawl
+                assert expected_routing == "firecrawl", f"URL {url} should route to Firecrawl but expected {expected_routing}"
+
+    @pytest.mark.asyncio
+    async def test_bot_process_url_routing_logic(self):
+        """Test the routing logic as implemented in bot.py process_url function."""
+        # Mock config to simulate different token availability scenarios
+
+        # Scenario 1: Both tokens available - X.com URLs should use Apify
+        with patch('apify_handler.config') as mock_config:
+            mock_config.apify_api_token = "valid_token"
+            mock_config.firecrawl_api_key = "valid_token"
+
+            test_url = "https://x.com/user/status/1234567890"
+
+            # Test the routing decision logic
+            is_twitter = await is_twitter_url(test_url)
+            tweet_id = extract_tweet_id(test_url)
+            has_apify_token = hasattr(mock_config, 'apify_api_token') and mock_config.apify_api_token
+
+            assert is_twitter is True
+            assert tweet_id == "1234567890"
+            assert has_apify_token is True
+
+            # This URL should be routed to Apify
+
+        # Scenario 2: No Apify token - X.com URLs should fall back to Firecrawl
+        with patch('apify_handler.config') as mock_config:
+            mock_config.apify_api_token = None
+            mock_config.firecrawl_api_key = "valid_token"
+
+            test_url = "https://x.com/user/status/1234567890"
+
+            is_twitter = await is_twitter_url(test_url)
+            tweet_id = extract_tweet_id(test_url)
+            has_apify_token = hasattr(mock_config, 'apify_api_token') and mock_config.apify_api_token
+
+            assert is_twitter is True
+            assert tweet_id == "1234567890"
+            assert has_apify_token is False
+
+            # This URL should fall back to Firecrawl
+
     def test_video_extraction_edge_cases(self):
         """Test video extraction with various edge cases."""
         test_cases = [

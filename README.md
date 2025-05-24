@@ -211,7 +211,70 @@ If you encounter database-related errors:
 3. Avoid importing the database module multiple times in different scopes
 4. Check the logs for detailed error messages
 
+## Testing
+
+The bot includes comprehensive automated tests to ensure URL routing and scraping functionality works correctly.
+
+### Running Tests
+
+**Run all URL routing tests:**
+```bash
+python run_url_routing_tests.py
+```
+
+**Run specific test suites:**
+```bash
+# URL routing logic tests
+python -m pytest test_url_routing_automated.py -v
+
+# X.com/Twitter scraping tests
+python -m pytest test_x_scraping.py -v
+
+# Simple URL routing test
+python test_url_routing.py
+```
+
+**Run tests with coverage:**
+```bash
+python -m pytest test_x_scraping.py -v --cov=apify_handler --cov-report=html
+```
+
+### Test Coverage
+
+The test suite includes:
+
+- **URL Detection Tests**: Verify X.com and Twitter.com URLs are correctly identified
+- **Tweet ID Extraction Tests**: Ensure tweet IDs are properly extracted from URLs
+- **Routing Logic Tests**: Confirm URLs are routed to the correct scraping service (Apify vs Firecrawl)
+- **Edge Case Tests**: Handle malformed URLs, missing tokens, and error scenarios
+- **Regression Tests**: Prevent the original X.com routing issue from reoccurring
+- **Integration Tests**: Test the complete workflow from URL detection to content scraping
+
+### Continuous Integration
+
+The project includes GitHub Actions workflows that automatically run tests on:
+- Push to main/develop branches
+- Pull requests
+- Manual workflow dispatch
+
+Tests run on multiple Python versions (3.9, 3.10, 3.11) to ensure compatibility.
+
+### Test Files
+
+- `test_url_routing_automated.py` - Comprehensive URL routing tests
+- `test_x_scraping.py` - X.com/Twitter scraping functionality tests
+- `test_url_routing.py` - Simple URL routing verification
+- `run_url_routing_tests.py` - Test runner script
+- `.github/workflows/url-routing-tests.yml` - CI/CD workflow
+
 ## Changelog
+
+### 2025-05-24
+- Added comprehensive automated testing for URL routing logic
+- Fixed X.com URL routing issue where URLs were incorrectly falling back to Firecrawl
+- Enhanced logging in bot.py to better trace URL processing flow
+- Added GitHub Actions workflow for continuous testing
+- Created dedicated test suites for URL routing and scraping functionality
 
 ### 2025-05-21
 - Added Apify integration for Twitter/X.com URL processing:
