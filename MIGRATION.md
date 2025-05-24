@@ -52,7 +52,8 @@ uv pip install python-dotenv
 ### Step 3: Remove your old config.py
 
 ```bash
-rm config.py  # The bot now uses the new config.py that loads from environment variables
+### Step 3: Remove your custom config.py file
+rm config.py  # Remove your custom config.py - the bot now uses the new environment-based config.py
 ```
 
 ### Step 4: Test the configuration
