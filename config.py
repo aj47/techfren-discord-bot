@@ -14,11 +14,17 @@ load_dotenv()
 
 # Discord Bot Token (required)
 # Environment variable: DISCORD_BOT_TOKEN
+# Discord Bot Token (required)
+# Environment variable: DISCORD_BOT_TOKEN
 token = os.getenv('DISCORD_BOT_TOKEN')
+if not token:
+    raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
 # OpenRouter API Key (required)
 # Environment variable: OPENROUTER_API_KEY
 openrouter = os.getenv('OPENROUTER_API_KEY')
+if not openrouter:
+    raise ValueError("OPENROUTER_API_KEY environment variable is required")
 
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL
