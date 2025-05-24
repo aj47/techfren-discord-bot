@@ -33,7 +33,11 @@ max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
 
 # Firecrawl API Key (required for link scraping)
 # Environment variable: FIRECRAWL_API_KEY
+# Firecrawl API Key (required for link scraping)
+# Environment variable: FIRECRAWL_API_KEY
 firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
+if not firecrawl_api_key:
+    raise ValueError("FIRECRAWL_API_KEY environment variable is required")
 
 # Apify API Token (optional, for x.com/twitter.com link scraping)
 # Environment variable: APIFY_API_TOKEN
