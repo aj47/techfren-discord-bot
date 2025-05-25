@@ -62,7 +62,7 @@ async def call_llm_api(query):
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while processing your request. Please try again later."
 
-async def call_llm_for_summary(messages, channel_name, date):
+async def call_llm_for_summary(messages, channel_name, date, hours=24):
     """
     Call the LLM API to summarize a list of messages from a channel
 
@@ -70,6 +70,7 @@ async def call_llm_for_summary(messages, channel_name, date):
         messages (list): List of message dictionaries
         channel_name (str): Name of the channel
         date (datetime): Date of the messages
+        hours (int): Number of hours the summary covers (default: 24)
 
     Returns:
         str: The LLM's summary or an error message
@@ -79,11 +80,13 @@ async def call_llm_for_summary(messages, channel_name, date):
         filtered_messages = [
             msg for msg in messages
             if not msg.get('is_command', False) and  # Use .get for safety
-               not (msg.get('content', '').startswith('/sum-day'))  # Explicitly filter out /sum-day commands
+               not (msg.get('content', '').startswith('/sum-day')) and  # Explicitly filter out /sum-day commands
+               not (msg.get('content', '').startswith('/sum-hr'))  # Explicitly filter out /sum-hr commands
         ]
 
         if not filtered_messages:
-            return f"No messages found in #{channel_name} for the past 24 hours."
+            time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+            return f"No messages found in #{channel_name} for the past {time_period}."
 
         # Prepare the messages for summarization
         formatted_messages_text = []
@@ -127,7 +130,8 @@ async def call_llm_for_summary(messages, channel_name, date):
         messages_text = "\n".join(formatted_messages_text)
 
         # Create the prompt for the LLM
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past 24 hours:
+        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
 
 {messages_text}
 
@@ -136,7 +140,7 @@ Highlight all user names/aliases with backticks (e.g., `username`).
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation.
 """
 
-        logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past 24 hours")
+        logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
         # Check if OpenRouter API key exists
         if not hasattr(config, 'openrouter') or not config.openrouter:
@@ -178,7 +182,8 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
 
         # Add a header to the summary
-        final_summary = f"**Summary of #{channel_name} for the past 24 hours**\n\n{summary}"
+        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+        final_summary = f"**Summary of #{channel_name} for the past {time_period}**\n\n{summary}"
         return final_summary
 
     except Exception as e:
