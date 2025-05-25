@@ -8,7 +8,7 @@ import os
 import logging
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
 # Set up logging
@@ -459,14 +459,22 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
+        # Ensure we're working with UTC timezone
+        if date.tzinfo is None:
+            # If naive datetime, assume it's UTC
+            date = date.replace(tzinfo=timezone.utc)
+        elif date.tzinfo != timezone.utc:
+            # Convert to UTC if it's in a different timezone
+            date = date.astimezone(timezone.utc)
+
         # Calculate the time range for the past 24 hours
         # Add a small buffer (1 minute) to ensure we capture very recent messages
         end_date = date + timedelta(minutes=1)
         start_date = date - timedelta(hours=24)
 
-        # Convert to ISO format for database query
-        start_date_str = start_date.isoformat()
-        end_date_str = end_date.isoformat()
+        # Convert to ISO format for database query (remove timezone info for SQLite compatibility)
+        start_date_str = start_date.replace(tzinfo=None).isoformat()
+        end_date_str = end_date.replace(tzinfo=None).isoformat()
 
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -497,7 +505,7 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past 24 hours from {date.isoformat()}")
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past 24 hours from {start_date.isoformat()} to {end_date.isoformat()}")
         return messages
     except Exception as e:
         logger.error(f"Error getting messages for channel {channel_id} for the past 24 hours from {date.isoformat()}: {str(e)}", exc_info=True)

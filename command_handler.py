@@ -5,7 +5,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api, call_llm_for_summary
 from message_utils import split_long_message
-from datetime import datetime
+from datetime import datetime, timezone
 
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
@@ -69,7 +69,7 @@ async def handle_sum_day_command(message, client_user):
 
     processing_msg = await message.channel.send("Generating channel summary, please wait... This may take a moment.")
     try:
-        today = datetime.now()
+        today = datetime.now(timezone.utc)
         channel_id_str = str(message.channel.id)
         channel_name_str = message.channel.name
 
