@@ -32,8 +32,8 @@ async def daily_channel_summarization():
     try:
         logger.info("Starting daily automated channel summarization")
 
-        # Get the current time and 24 hours ago
-        now = datetime.now()
+        # Get the current time and 24 hours ago (in UTC)
+        now = datetime.now(timezone.utc)
         yesterday = now - timedelta(hours=24)
 
         # Get active channels from the past 24 hours
@@ -77,7 +77,7 @@ async def daily_channel_summarization():
                         'content': msg['content'],
                         'created_at': msg['created_at'],
                         'is_bot': msg.get('is_bot', False),
-                        'is_command': False 
+                        'is_command': False
                     })
 
             if not formatted_messages:
@@ -131,7 +131,7 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Cannot post summary to reports channel.")
         return
-        
+
     try:
         if not hasattr(config, 'reports_channel_id') or not config.reports_channel_id:
             return
@@ -154,21 +154,21 @@ async def before_daily_summarization():
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Cannot start before_daily_summarization.")
         # Fallback to prevent loop from erroring out immediately if client isn't ready
-        await asyncio.sleep(60) 
+        await asyncio.sleep(60)
         return
 
     try:
         summary_hour = getattr(config, 'summary_hour', 0)
         summary_minute = getattr(config, 'summary_minute', 0)
         logger.info(f"Daily summarization scheduled for {summary_hour:02d}:{summary_minute:02d} UTC")
-        
+
         await discord_client.wait_until_ready()
-        
+
         now = datetime.now(timezone.utc)
         future = datetime(now.year, now.month, now.day, summary_hour, summary_minute, tzinfo=timezone.utc)
         if now.hour > summary_hour or (now.hour == summary_hour and now.minute >= summary_minute):
             future += timedelta(days=1)
-            
+
         seconds_to_wait = (future - now).total_seconds()
         logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first daily summarization")
         await asyncio.sleep(seconds_to_wait)
