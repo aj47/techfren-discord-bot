@@ -458,6 +458,20 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
+    return get_channel_messages_for_hours(channel_id, date, 24)
+
+def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) -> List[Dict[str, Any]]:
+    """
+    Get all messages from a specific channel for the past specified hours from the given date.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        date (datetime): The reference date (will get messages for specified hours before this date)
+        hours (int): Number of hours to look back
+
+    Returns:
+        List[Dict[str, Any]]: A list of messages as dictionaries
+    """
     try:
         # Ensure we're working with UTC timezone
         if date.tzinfo is None:
@@ -467,10 +481,10 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
             # Convert to UTC if it's in a different timezone
             date = date.astimezone(timezone.utc)
 
-        # Calculate the time range for the past 24 hours
+        # Calculate the time range for the past specified hours
         # Add a small buffer (1 minute) to ensure we capture very recent messages
         end_date = date + timedelta(minutes=1)
-        start_date = date - timedelta(hours=24)
+        start_date = date - timedelta(hours=hours)
 
         # Convert to ISO format for database query (remove timezone info for SQLite compatibility)
         start_date_str = start_date.replace(tzinfo=None).isoformat()
@@ -505,10 +519,10 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
                     'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past 24 hours from {start_date.isoformat()} to {end_date.isoformat()}")
+        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past {hours} hours from {start_date.isoformat()} to {end_date.isoformat()}")
         return messages
     except Exception as e:
-        logger.error(f"Error getting messages for channel {channel_id} for the past 24 hours from {date.isoformat()}: {str(e)}", exc_info=True)
+        logger.error(f"Error getting messages for channel {channel_id} for the past {hours} hours from {date.isoformat()}: {str(e)}", exc_info=True)
         return []
 
 def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dict[str, List[Dict[str, Any]]]:
