@@ -62,7 +62,7 @@ async def call_llm_api(query):
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while processing your request. Please try again later."
 
-async def call_llm_for_summary(messages, channel_name, date):
+async def call_llm_for_summary(messages, channel_name, date, hours=24):
     """
     Call the LLM API to summarize a list of messages from a channel
 
@@ -70,6 +70,7 @@ async def call_llm_for_summary(messages, channel_name, date):
         messages (list): List of message dictionaries
         channel_name (str): Name of the channel
         date (datetime): Date of the messages
+        hours (int): Number of hours the summary covers (default: 24)
 
     Returns:
         str: The LLM's summary or an error message
@@ -78,11 +79,14 @@ async def call_llm_for_summary(messages, channel_name, date):
         # Filter out command messages but include bot responses
         filtered_messages = [
             msg for msg in messages
-            if not msg.get('is_command', False) # Use .get for safety
+            if not msg.get('is_command', False) and  # Use .get for safety
+               not (msg.get('content', '').startswith('/sum-day')) and  # Explicitly filter out /sum-day commands
+               not (msg.get('content', '').startswith('/sum-hr'))  # Explicitly filter out /sum-hr commands
         ]
 
         if not filtered_messages:
-            return f"No messages found in #{channel_name} for {date.strftime('%Y-%m-%d')}."
+            time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+            return f"No messages found in #{channel_name} for the past {time_period}."
 
         # Prepare the messages for summarization
         formatted_messages_text = []
@@ -96,19 +100,19 @@ async def call_llm_for_summary(messages, channel_name, date):
 
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
-            
+
             # Check if this message has scraped content from a URL
             scraped_url = msg.get('scraped_url')
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
-            
+
             # Format the message with the basic content
             message_text = f"[{time_str}] {author_name}: {content}"
-            
+
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
                 message_text += f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
-                
+
                 # If there are key points, add them too
                 if scraped_key_points:
                     try:
@@ -119,14 +123,15 @@ async def call_llm_for_summary(messages, channel_name, date):
                                 message_text += f"\n- {point}"
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse key points JSON: {scraped_key_points}")
-            
+
             formatted_messages_text.append(message_text)
 
         # Join the messages with newlines
         messages_text = "\n".join(formatted_messages_text)
 
         # Create the prompt for the LLM
-        prompt = f"""Summarize the following conversation from the #{channel_name} channel on {date.strftime('%Y-%m-%d')}:
+        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
 
 {messages_text}
 
@@ -135,7 +140,7 @@ Highlight all user names/aliases with backticks (e.g., `username`).
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation.
 """
 
-        logger.info(f"Calling LLM API for channel summary: #{channel_name} on {date.strftime('%Y-%m-%d')}")
+        logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
         # Check if OpenRouter API key exists
         if not hasattr(config, 'openrouter') or not config.openrouter:
@@ -176,8 +181,9 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         summary = completion.choices[0].message.content
         logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
 
-        # Use the summary as is without adding an introductory paragraph
-        final_summary = f"**#{channel_name} | {date.strftime('%Y-%m-%d')}**\n\n{summary}"
+        # Add a header to the summary
+        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+        final_summary = f"**Summary of #{channel_name} for the past {time_period}**\n\n{summary}"
         return final_summary
 
     except Exception as e:
@@ -202,7 +208,7 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
         truncated_content = markdown_content[:max_content_length]
         if len(markdown_content) > max_content_length:
             truncated_content += "\n\n[Content truncated due to length...]"
-        
+
         logger.info(f"Summarizing content from URL: {url}")
 
         # Check if OpenRouter API key exists
@@ -278,10 +284,10 @@ Format your response exactly as follows:
             else:
                 # If no backticks, try to parse the whole response
                 json_str = response_text.strip()
-            
+
             # Parse the JSON
             result = json.loads(json_str)
-            
+
             # Validate the expected structure
             if "summary" not in result or "key_points" not in result:
                 logger.warning(f"LLM response missing required fields: {result}")
@@ -290,13 +296,13 @@ Format your response exactly as follows:
                     result["summary"] = "Summary could not be extracted from the content."
                 if "key_points" not in result:
                     result["key_points"] = ["Key points could not be extracted from the content."]
-            
+
             return result
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from LLM response: {e}", exc_info=True)
             logger.error(f"Raw response: {response_text}")
-            
+
             # Create a fallback response
             return {
                 "summary": "Failed to generate a proper summary from the content.",

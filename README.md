@@ -36,25 +36,41 @@ A simple Discord bot built with discord.py.
    ```
    uv pip install -r requirements.txt
    ```
-5. Create a `config.py` file with your Discord bot token and API keys:
-   ```python
-   # Required settings
-   token = "YOUR_DISCORD_BOT_TOKEN"
-   openrouter = "YOUR_OPENROUTER_API_KEY"
-   firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
+5. Configure the bot using environment variables:
 
-   # Optional settings
-   llm_model = "x-ai/grok-3-mini-beta"  # Default model to use
-   apify_api_token = "YOUR_APIFY_API_TOKEN"  # For Twitter/X.com link processing
+   **Option A: Using .env file (Recommended)**
+   ```bash
+   # Copy the sample environment file
+   cp .env.sample .env
 
-   # Rate limiting settings
-   rate_limit_seconds = 10  # Time between allowed requests per user
-   max_requests_per_minute = 6  # Maximum requests per user per minute
+   # Edit .env with your actual tokens and keys
+   nano .env  # or use your preferred editor
+   ```
 
-   # Automated summarization settings
-   summary_hour = 0  # Hour of the day to run summarization (UTC, 0-23)
-   summary_minute = 0  # Minute of the hour to run summarization (0-59)
-   reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
+   **Option B: Set environment variables directly**
+   ```bash
+   export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
+   export OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY"
+   export FIRECRAWL_API_KEY="YOUR_FIRECRAWL_API_KEY"
+   # ... other variables as needed
+   ```
+
+   **Required environment variables:**
+   ```bash
+   DISCORD_BOT_TOKEN=your_discord_bot_token
+   OPENROUTER_API_KEY=your_openrouter_api_key
+   FIRECRAWL_API_KEY=your_firecrawl_api_key
+   ```
+
+   **Optional environment variables:**
+   ```bash
+   LLM_MODEL=x-ai/grok-3-mini-beta  # Default model to use
+   APIFY_API_TOKEN=your_apify_token  # For Twitter/X.com link processing
+   RATE_LIMIT_SECONDS=10  # Time between allowed requests per user
+   MAX_REQUESTS_PER_MINUTE=6  # Maximum requests per user per minute
+   SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
+   SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
+   REPORTS_CHANNEL_ID=channel_id  # Optional: Channel to post daily summaries
    ```
    - You can get an OpenRouter API key by signing up at [OpenRouter.ai](https://openrouter.ai/)
    - You can get a Firecrawl API key by signing up at [Firecrawl.dev](https://firecrawl.dev)
@@ -107,11 +123,11 @@ The bot automatically generates summaries for all active channels once per day:
 
 To configure the automated summarization:
 
-```python
-# In config.py
-summary_hour = 0  # Hour of the day to run summarization (UTC, 0-23)
-summary_minute = 0  # Minute of the hour to run summarization (0-59)
-reports_channel_id = "CHANNEL_ID"  # Optional: Channel to post daily summaries
+```bash
+# In .env file or environment variables
+SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
+SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
+REPORTS_CHANNEL_ID=CHANNEL_ID  # Optional: Channel to post daily summaries
 ```
 
 ## Database
