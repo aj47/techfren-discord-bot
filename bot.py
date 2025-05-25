@@ -2,14 +2,9 @@
 
 import discord
 from discord.ext import tasks
-import time
-import sqlite3
-import json
 import asyncio
 import re
-import os
 from datetime import datetime, timedelta, timezone
-from collections import defaultdict
 import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
@@ -290,9 +285,7 @@ async def on_message(message):
 
     # Process commands
     try:
-        if is_mention_command:
-            await handle_bot_command(message, client.user)
-        elif is_sum_day_command:
+        if is_sum_day_command:
             await handle_sum_day_command(message, client.user)
         elif is_sum_hr_command:
             await handle_sum_hr_command(message, client.user)
