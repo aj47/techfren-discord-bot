@@ -16,6 +16,19 @@ import config
 # Set up logging
 logger = logging.getLogger('discord_bot.apify_handler')
 
+def _has_apify_token() -> bool:
+    """
+    Check if Apify API token is available in config.
+    
+    Returns:
+        bool: True if the token is available, False otherwise
+    """
+    try:
+        import config
+        return hasattr(config, 'apify_api_token') and config.apify_api_token
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"Error accessing config for Apify token: {e}")
+        return False
 async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
     """
     Fetch a tweet using Apify's Twitter Scraper.
@@ -30,7 +43,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         logger.info(f"Fetching tweet from URL: {url}")
 
         # Check if Apify API token exists
-        if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+        if not _has_apify_token():
             logger.error("Apify API token not found in config.py or is empty")
             return None
 
@@ -104,7 +117,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         logger.info(f"Fetching tweet replies from URL: {url}")
 
         # Check if Apify API token exists
-        if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+        if not _has_apify_token():
             logger.error("Apify API token not found in config.py or is empty")
             return None
 

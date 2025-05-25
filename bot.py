@@ -59,13 +59,9 @@ async def process_url(message_id: str, url: str):
                     # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
                     scraped_result = await scrape_url_content(url)
             else:
-                # Check if Apify API token is configured with proper error handling
-                try:
-                    import config
-                    has_apify_token = hasattr(config, 'apify_api_token') and config.apify_api_token
-                except (ImportError, AttributeError) as e:
-                    logger.warning(f"Error accessing config for Apify token: {e}")
-                    has_apify_token = False
+                # Check if Apify API token is configured
+                from apify_handler import _has_apify_token
+                has_apify_token = _has_apify_token()
                 
                 if not has_apify_token:
                     logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
@@ -94,11 +90,8 @@ async def process_url(message_id: str, url: str):
 
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
         if await is_twitter_url(url):
-            try:
-                import config
-                has_apify_token = hasattr(config, 'apify_api_token') and config.apify_api_token
-            except (ImportError, AttributeError):
-                has_apify_token = False
+            from apify_handler import _has_apify_token
+            has_apify_token = _has_apify_token()
                 
             if has_apify_token:
                 markdown_content = scraped_result.get('markdown')
