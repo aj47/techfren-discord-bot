@@ -1,3 +1,21 @@
+def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
+    """
+    Generate a Discord message link from guild ID, channel ID, and message ID.
+
+    Args:
+        guild_id (str): The Discord guild (server) ID
+        channel_id (str): The Discord channel ID
+        message_id (str): The Discord message ID
+
+    Returns:
+        str: The Discord message link
+    """
+    if guild_id:
+        return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+    else:
+        # For DMs, use @me instead of guild_id
+        return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
+
 async def split_long_message(message, max_length=1900):
     """
     Split a long message into multiple parts to avoid Discord's 2000 character limit
@@ -29,7 +47,7 @@ async def split_long_message(message, max_length=1900):
                 current_part += "\n\n" + paragraph
             else:
                 current_part = paragraph
-        
+
         # Inner loop to handle cases where a single paragraph (or the current_part) is too long
         while len(current_part) > max_length:
             # Find a good split point (prefer sentence, then word)
@@ -39,13 +57,13 @@ async def split_long_message(message, max_length=1900):
                 if current_part[i] == '.' and (i + 1 < len(current_part) and current_part[i+1] == ' '):
                     split_at = i + 1 # Include the period, split after space
                     break
-            
+
             if split_at == -1: # If no sentence found, try to split at the last space
                 for i in range(min(len(current_part), max_length) -1, -1, -1):
                     if current_part[i] == ' ':
                         split_at = i
                         break
-            
+
             if split_at == -1: # If no space found, force split at max_length
                 split_at = max_length
 

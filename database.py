@@ -496,8 +496,9 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
             # Query messages for the channel within the time range
             cursor.execute(
                 """
-                SELECT author_name, content, created_at, is_bot, is_command,
-                       scraped_url, scraped_content_summary, scraped_content_key_points
+                SELECT id, author_name, content, created_at, is_bot, is_command,
+                       scraped_url, scraped_content_summary, scraped_content_key_points,
+                       guild_id
                 FROM messages
                 WHERE channel_id = ? AND created_at BETWEEN ? AND ?
                 ORDER BY created_at ASC
@@ -509,6 +510,7 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
             messages = []
             for row in cursor.fetchall():
                 messages.append({
+                    'id': row['id'],
                     'author_name': row['author_name'],
                     'content': row['content'],
                     'created_at': datetime.fromisoformat(row['created_at']),
@@ -516,7 +518,9 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
                     'is_command': bool(row['is_command']),
                     'scraped_url': row['scraped_url'],
                     'scraped_content_summary': row['scraped_content_summary'],
-                    'scraped_content_key_points': row['scraped_content_key_points']
+                    'scraped_content_key_points': row['scraped_content_key_points'],
+                    'guild_id': row['guild_id'],
+                    'channel_id': channel_id
                 })
 
         logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past {hours} hours from {start_date.isoformat()} to {end_date.isoformat()}")

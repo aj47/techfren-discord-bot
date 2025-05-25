@@ -73,11 +73,14 @@ async def daily_channel_summarization():
             for msg in channel_messages:
                 if not msg.get('is_command', False):
                     formatted_messages.append({
+                        'id': msg.get('id', ''),
                         'author_name': msg['author_name'],
                         'content': msg['content'],
                         'created_at': msg['created_at'],
                         'is_bot': msg.get('is_bot', False),
-                        'is_command': False
+                        'is_command': False,
+                        'guild_id': guild_id,
+                        'channel_id': channel_id
                     })
 
             if not formatted_messages:
