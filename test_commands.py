@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from datetime import datetime
+import asyncio
 import bot
 import database
 
@@ -50,7 +51,7 @@ class MockMessage:
             self.guild.id = "test_guild_id"
             self.guild.name = "Test Guild"
 
-class TestBotCommands(unittest.TestCase):
+class TestBotCommands(unittest.IsolatedAsyncioTestCase):
     """Test case for bot commands"""
 
     def setUp(self):
@@ -123,136 +124,133 @@ class TestBotCommands(unittest.TestCase):
         self.store_message_patcher.stop()
         self.get_channel_messages_for_day_patcher.stop()
 
-    def test_mention_command_in_any_channel(self):
-        """Test mention command (@botname query) in any channel"""
-        # Create mock message in any channel
+    def _create_mention_test_message(self, content, channel_name="general", channel_id=None):
+        """Helper method to create mock message for mention tests"""
         channel = MagicMock()
-        channel.name = "general"
-        channel.id = "general_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="<@test_bot_id> test query",
+        channel.name = channel_name
+        channel.id = channel_id or f"{channel_name}_channel_id"
+        channel.send = AsyncMock(return_value="Mock message response")
+        
+        return MockMessage(
+            content=content,
             channel=channel
+        ), channel
+
+    async def test_mention_command_in_any_channel(self):
+        """Test mention command (@botname query) in any channel"""
+        # Create mock message in any channel using helper method
+        message, channel = self._create_mention_test_message(
+            "<@test_bot_id> test query", 
+            "general", 
+            "general_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check if the bot responded (should work in any channel)
         channel.send.assert_called()
         self.mock_call_llm_api.assert_called_once_with("test query")
+        
+        # Verify the response content uses the LLM response
+        mock_llm_response = self.mock_call_llm_api.return_value
+        self.assertIn(mock_llm_response, str(channel.send.call_args))
 
-    def test_mention_command_alternative_format(self):
+    async def test_mention_command_alternative_format(self):
         """Test mention command with alternative format (@!botname query)"""
-        # Create mock message
-        channel = MagicMock()
-        channel.name = "bot-talk"
-        channel.id = "bot_talk_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="<@!test_bot_id> another test query",
-            channel=channel
+        # Create mock message using helper method
+        message, channel = self._create_mention_test_message(
+            "<@!test_bot_id> another test query", 
+            "bot-talk", 
+            "bot_talk_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check if the bot responded
         channel.send.assert_called()
         self.mock_call_llm_api.assert_called_once_with("another test query")
+        
+        # Verify the response content uses the LLM response
+        mock_llm_response = self.mock_call_llm_api.return_value
+        self.assertIn(mock_llm_response, str(channel.send.call_args))
 
-    def test_bot_command_in_bot_talk_channel(self):
+    async def test_bot_command_in_bot_talk_channel(self):
         """Test deprecated /bot command - should not work anymore"""
         # Create mock message in bot-talk channel
-        channel = MagicMock()
-        channel.name = "bot-talk"
-        channel.id = "bot_talk_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/bot test query",
-            channel=channel
+        message, channel = self._create_mention_test_message(
+            "/bot test query", 
+            "bot-talk", 
+            "bot_talk_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check that the bot did not respond (deprecated command)
         channel.send.assert_not_called()
         self.mock_call_llm_api.assert_not_called()
 
-    def test_bot_command_in_other_channel(self):
+    async def test_bot_command_in_other_channel(self):
         """Test deprecated /bot command in other channel - should not work"""
         # Create mock message in another channel
-        channel = MagicMock()
-        channel.name = "general"
-        channel.id = "general_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/bot test query",
-            channel=channel
+        message, channel = self._create_mention_test_message(
+            "/bot test query", 
+            "general", 
+            "general_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check that the bot did not respond
         channel.send.assert_not_called()
         self.mock_call_llm_api.assert_not_called()
 
-    def test_sum_day_command_in_bot_talk_channel(self):
+    async def test_sum_day_command_in_bot_talk_channel(self):
         """Test /sum-day command in bot-talk channel"""
         # Create mock message in bot-talk channel
-        channel = MagicMock()
-        channel.name = "bot-talk"
-        channel.id = "bot_talk_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/sum-day",
-            channel=channel
+        message, channel = self._create_mention_test_message(
+            "/sum-day", 
+            "bot-talk", 
+            "bot_talk_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check if the bot responded
         channel.send.assert_called()
         self.mock_call_llm_for_summary.assert_called_once()
+        
+        # Verify the response contains summary content
+        mock_summary = self.mock_call_llm_for_summary.return_value
+        self.assertIn(mock_summary, str(channel.send.call_args))
 
-    def test_sum_day_command_in_other_channel(self):
+    async def test_sum_day_command_in_other_channel(self):
         """Test /sum-day command in a channel other than bot-talk"""
         # Create mock message in another channel
-        channel = MagicMock()
-        channel.name = "general"
-        channel.id = "general_channel_id"
-        channel.send = AsyncMock()
-
-        message = MockMessage(
-            content="/sum-day",
-            channel=channel
+        message, channel = self._create_mention_test_message(
+            "/sum-day", 
+            "general", 
+            "general_channel_id"
         )
 
         # Process the message
-        import asyncio
-        asyncio.run(bot.on_message(message))
+        await bot.on_message(message)
 
         # Check if the bot responded (should respond in any channel)
         channel.send.assert_called()
         self.mock_call_llm_for_summary.assert_called_once()
+        
+        # Verify the response contains summary content
+        mock_summary = self.mock_call_llm_for_summary.return_value
+        self.assertIn(mock_summary, str(channel.send.call_args))
 
 def main():
     """Run all tests"""
     logger.info("Starting command tests...")
-    import asyncio
 
     # Create a new event loop
     loop = asyncio.new_event_loop()
