@@ -6,6 +6,7 @@ A simple Discord bot built with discord.py.
 
 - Processes queries via mentions (`@botname <query>`) and responds with AI-generated answers using OpenRouter API
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
+- Summarizes channel conversations with `/sum-hr <hours>` command to get a summary of the past N hours
 - Automatically generates daily summaries for all active channels at a scheduled time
 - Stores summaries in a dedicated database table and optionally posts them to a reports channel
 - Automatically cleans up old message records after summarization to manage database size
@@ -105,6 +106,13 @@ To use the message content intent, you need to enable it in the Discord Develope
   - The bot retrieves all messages from the channel (including bot responses) except command messages
   - Sends them to the AI model for summarization
   - Returns a formatted summary with the main topics and key points discussed
+
+- `/sum-hr <hours>`: Summarizes all messages in the current channel for the past N hours
+  - Usage: `/sum-hr 6` (summarizes past 6 hours), `/sum-hr 12` (summarizes past 12 hours)
+  - Works in any channel (not restricted to #bot-talk)
+  - Flexible time range allows for more granular summaries than daily summaries
+  - Creates a thread with an appropriate name (e.g., "6h Summary", "1h Summary")
+  - Same formatting and features as `/sum-day` command
 
 ### Automated Daily Summarization
 
@@ -212,6 +220,13 @@ If you encounter database-related errors:
 4. Check the logs for detailed error messages
 
 ## Changelog
+
+### 2025-01-25
+- **Documentation Update**: Added missing `/sum-hr <hours>` command documentation to README
+- **Code Cleanup**: Removed unused imports from bot.py (time, sqlite3, json, collections.defaultdict)
+- **Code Cleanup**: Fixed duplicate comments in config.py
+- **Code Cleanup**: Removed unreachable code in command processing logic
+- **Feature Clarification**: The `/sum-hr` command was already implemented but not documented
 
 ### 2025-05-21
 - Added Apify integration for Twitter/X.com URL processing:

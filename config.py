@@ -14,8 +14,6 @@ load_dotenv()
 
 # Discord Bot Token (required)
 # Environment variable: DISCORD_BOT_TOKEN
-# Discord Bot Token (required)
-# Environment variable: DISCORD_BOT_TOKEN
 token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
@@ -37,8 +35,6 @@ llm_model = os.getenv('LLM_MODEL', 'x-ai/grok-3-mini-beta')
 rate_limit_seconds = int(os.getenv('RATE_LIMIT_SECONDS', '10'))
 max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
 
-# Firecrawl API Key (required for link scraping)
-# Environment variable: FIRECRAWL_API_KEY
 # Firecrawl API Key (required for link scraping)
 # Environment variable: FIRECRAWL_API_KEY
 firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
