@@ -9,8 +9,7 @@ import logging
 import json
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List, Set
-from datetime_utils import get_day_boundaries, make_aware
+from typing import Optional, Dict, Any, List
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
