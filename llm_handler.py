@@ -3,6 +3,7 @@ from logging_config import logger
 import config # Assuming config.py is in the same directory or accessible
 import json
 from typing import Optional, Dict, List, Any
+from message_utils import generate_discord_message_link
 
 async def call_llm_api(query):
     """
@@ -100,14 +101,25 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
+            message_id = msg.get('id', '')
+            guild_id = msg.get('guild_id', '')
+            channel_id = msg.get('channel_id', '')
+
+            # Generate Discord message link
+            message_link = ""
+            if message_id and channel_id:
+                message_link = generate_discord_message_link(guild_id, channel_id, message_id)
 
             # Check if this message has scraped content from a URL
             scraped_url = msg.get('scraped_url')
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
-            # Format the message with the basic content
-            message_text = f"[{time_str}] {author_name}: {content}"
+            # Format the message with the basic content and link
+            if message_link:
+                message_text = f"[{time_str}] {author_name}: {content} [Link: {message_link}]"
+            else:
+                message_text = f"[{time_str}] {author_name}: {content}"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
@@ -137,7 +149,8 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
 Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
 Highlight all user names/aliases with backticks (e.g., `username`).
-At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation.
+For each bullet point, include a link to the source message at the end of the bullet point in the format: [Source](link)
+At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link.
 """
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
@@ -166,7 +179,7 @@ At the end, include a section with the top 3 most interesting or notable one-lin
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation."
+                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. For each bullet point, include a link to the source message at the end in the format [Source](link). Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation, each with their source link."
                 },
                 {
                     "role": "user",
