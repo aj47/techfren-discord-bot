@@ -14,7 +14,7 @@ from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_co
 from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command, validate_hours_parameter # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 
@@ -34,7 +34,7 @@ class MockMessage:
             self.content = f"/sum-hr {hours}"
         else:
             self.content = "/sum-day"
-        
+
     async def create_thread(self, name):
         return await self.channel.create_thread(name=name)
 
@@ -43,9 +43,9 @@ class MockMessage:
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command for daily channel summary"""
     await interaction.response.defer()
-    
+
     mock_message = MockMessage(interaction)
-    
+
     # Use existing handler logic
     try:
         await handle_sum_day_command(mock_message, client.user)
@@ -65,21 +65,18 @@ async def sum_day_slash(interaction: discord.Interaction):
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command for hourly channel summary"""
     await interaction.response.defer()
-    
-    # Validate hours parameter
-    if hours <= 0:
-        await interaction.followup.send("❌ Number of hours must be greater than 0.", ephemeral=True)
+
+    # Validate hours parameter using shared validation function
+    is_valid, error_message = validate_hours_parameter(hours)
+    if not is_valid:
+        await interaction.followup.send(f"❌ {error_message}", ephemeral=True)
         return
-    
-    if hours > 168:  # 7 days
-        await interaction.followup.send("❌ Number of hours cannot exceed 168 (7 days).", ephemeral=True)
-        return
-    
+
     mock_message = MockMessage(interaction, command="sum-hr", hours=hours)
-    
-    # Use existing handler logic
+
+    # Use existing handler logic, skip validation since we already validated
     try:
-        await handle_sum_hr_command(mock_message, client.user)
+        await handle_sum_hr_command(mock_message, client.user, skip_validation=True)
         # If no exception, the command succeeded
         try:
             await interaction.followup.send(f"✅ {hours}-hour summary has been generated!", ephemeral=True)
@@ -187,7 +184,7 @@ async def on_ready():
     logger.info(f'Bot has successfully connected as {client.user}')
     logger.info(f'Bot ID: {client.user.id}')
     logger.info(f'Connected to {len(client.guilds)} guilds')
-    
+
     # Sync slash commands
     try:
         synced = await client.tree.sync()
