@@ -1,9 +1,11 @@
 # This example requires the 'message_content' intent.
 
 import discord
-from discord.ext import tasks
+from discord.ext import tasks, commands
 import asyncio
 import re
+import json
+import os
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -20,7 +22,83 @@ from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify 
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
-client = discord.Client(intents=intents)
+client = commands.Bot(command_prefix='!', intents=intents)
+
+# Slash command definitions
+@client.tree.command(name="sum-day", description="Generate a summary of the past 24 hours in this channel")
+async def sum_day_slash(interaction: discord.Interaction):
+    """Slash command for daily channel summary"""
+    await interaction.response.defer()
+    
+    # Create a mock message object for compatibility with existing handler
+    class MockMessage:
+        def __init__(self, interaction):
+            self.author = interaction.user
+            self.channel = interaction.channel
+            self.guild = interaction.guild
+            self.content = "/sum-day"
+            
+        async def create_thread(self, name):
+            return await self.channel.create_thread(name=name)
+    
+    mock_message = MockMessage(interaction)
+    
+    # Use existing handler logic
+    try:
+        await handle_sum_day_command(mock_message, client.user)
+        # If no exception, the command succeeded
+        try:
+            await interaction.followup.send("✅ Daily summary has been generated!", ephemeral=True)
+        except:
+            pass  # Ignore if we can't send the followup
+    except Exception as e:
+        logger.error(f"Error in sum-day slash command: {e}")
+        try:
+            await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
+        except:
+            pass
+
+@client.tree.command(name="sum-hr", description="Generate a summary of the past N hours in this channel")
+async def sum_hr_slash(interaction: discord.Interaction, hours: int):
+    """Slash command for hourly channel summary"""
+    await interaction.response.defer()
+    
+    # Validate hours parameter
+    if hours <= 0:
+        await interaction.followup.send("❌ Number of hours must be greater than 0.", ephemeral=True)
+        return
+    
+    if hours > 168:  # 7 days
+        await interaction.followup.send("❌ Number of hours cannot exceed 168 (7 days).", ephemeral=True)
+        return
+    
+    # Create a mock message object for compatibility with existing handler
+    class MockMessage:
+        def __init__(self, interaction, hours):
+            self.author = interaction.user
+            self.channel = interaction.channel
+            self.guild = interaction.guild
+            self.content = f"/sum-hr {hours}"
+            
+        async def create_thread(self, name):
+            return await self.channel.create_thread(name=name)
+    
+    mock_message = MockMessage(interaction, hours)
+    
+    # Use existing handler logic
+    try:
+        await handle_sum_hr_command(mock_message, client.user)
+        # If no exception, the command succeeded
+        try:
+            await interaction.followup.send(f"✅ {hours}-hour summary has been generated!", ephemeral=True)
+        except:
+            pass  # Ignore if we can't send the followup
+    except Exception as e:
+        logger.error(f"Error in sum-hr slash command: {e}")
+        try:
+            await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
+        except:
+            pass
 
 async def process_url(message_id: str, url: str):
     """
@@ -117,6 +195,13 @@ async def on_ready():
     logger.info(f'Bot has successfully connected as {client.user}')
     logger.info(f'Bot ID: {client.user.id}')
     logger.info(f'Connected to {len(client.guilds)} guilds')
+    
+    # Sync slash commands
+    try:
+        synced = await client.tree.sync()
+        logger.info(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        logger.error(f"Failed to sync commands: {e}")
 
     # Initialize the database - critical for bot operation
     try:
