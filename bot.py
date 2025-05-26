@@ -24,22 +24,25 @@ intents.message_content = True  # This is required to read message content in gu
 
 client = commands.Bot(command_prefix='!', intents=intents)
 
+class MockMessage:
+    """Mock message object for compatibility with existing command handlers"""
+    def __init__(self, interaction, command="sum-day", hours=None):
+        self.author = interaction.user
+        self.channel = interaction.channel
+        self.guild = interaction.guild
+        if command == "sum-hr" and hours is not None:
+            self.content = f"/sum-hr {hours}"
+        else:
+            self.content = "/sum-day"
+        
+    async def create_thread(self, name):
+        return await self.channel.create_thread(name=name)
+
 # Slash command definitions
 @client.tree.command(name="sum-day", description="Generate a summary of the past 24 hours in this channel")
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command for daily channel summary"""
     await interaction.response.defer()
-    
-    # Create a mock message object for compatibility with existing handler
-    class MockMessage:
-        def __init__(self, interaction):
-            self.author = interaction.user
-            self.channel = interaction.channel
-            self.guild = interaction.guild
-            self.content = "/sum-day"
-            
-        async def create_thread(self, name):
-            return await self.channel.create_thread(name=name)
     
     mock_message = MockMessage(interaction)
     
@@ -72,18 +75,7 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         await interaction.followup.send("❌ Number of hours cannot exceed 168 (7 days).", ephemeral=True)
         return
     
-    # Create a mock message object for compatibility with existing handler
-    class MockMessage:
-        def __init__(self, interaction, hours):
-            self.author = interaction.user
-            self.channel = interaction.channel
-            self.guild = interaction.guild
-            self.content = f"/sum-hr {hours}"
-            
-        async def create_thread(self, name):
-            return await self.channel.create_thread(name=name)
-    
-    mock_message = MockMessage(interaction, hours)
+    mock_message = MockMessage(interaction, command="sum-hr", hours=hours)
     
     # Use existing handler logic
     try:
