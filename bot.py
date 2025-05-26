@@ -52,14 +52,14 @@ async def sum_day_slash(interaction: discord.Interaction):
         # If no exception, the command succeeded
         try:
             await interaction.followup.send("✅ Daily summary has been generated!", ephemeral=True)
-        except:
-            pass  # Ignore if we can't send the followup
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send followup message: {e}")
     except Exception as e:
         logger.error(f"Error in sum-day slash command: {e}")
         try:
             await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
-        except:
-            pass
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send error followup message: {e}")
 
 @client.tree.command(name="sum-hr", description="Generate a summary of the past N hours in this channel")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
@@ -83,14 +83,14 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         # If no exception, the command succeeded
         try:
             await interaction.followup.send(f"✅ {hours}-hour summary has been generated!", ephemeral=True)
-        except:
-            pass  # Ignore if we can't send the followup
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send followup message: {e}")
     except Exception as e:
         logger.error(f"Error in sum-hr slash command: {e}")
         try:
             await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
-        except:
-            pass
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send error followup message: {e}")
 
 async def process_url(message_id: str, url: str):
     """
