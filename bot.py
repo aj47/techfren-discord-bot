@@ -1,9 +1,11 @@
 # This example requires the 'message_content' intent.
 
 import discord
-from discord.ext import tasks
+from discord.ext import tasks, commands
 import asyncio
 import re
+import json
+import os
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -12,7 +14,7 @@ from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_co
 from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command, validate_hours_parameter # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 
@@ -20,7 +22,72 @@ from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify 
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
-client = discord.Client(intents=intents)
+client = commands.Bot(command_prefix='!', intents=intents)
+
+class MockMessage:
+    """Mock message object for compatibility with existing command handlers"""
+    def __init__(self, interaction, command="sum-day", hours=None):
+        self.author = interaction.user
+        self.channel = interaction.channel
+        self.guild = interaction.guild
+        if command == "sum-hr" and hours is not None:
+            self.content = f"/sum-hr {hours}"
+        else:
+            self.content = "/sum-day"
+
+    async def create_thread(self, name):
+        return await self.channel.create_thread(name=name)
+
+# Slash command definitions
+@client.tree.command(name="sum-day", description="Generate a summary of the past 24 hours in this channel")
+async def sum_day_slash(interaction: discord.Interaction):
+    """Slash command for daily channel summary"""
+    await interaction.response.defer()
+
+    mock_message = MockMessage(interaction)
+
+    # Use existing handler logic
+    try:
+        await handle_sum_day_command(mock_message, client.user)
+        # If no exception, the command succeeded
+        try:
+            await interaction.followup.send("✅ Daily summary has been generated!", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send followup message: {e}")
+    except Exception as e:
+        logger.error(f"Error in sum-day slash command: {e}")
+        try:
+            await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send error followup message: {e}")
+
+@client.tree.command(name="sum-hr", description="Generate a summary of the past N hours in this channel")
+async def sum_hr_slash(interaction: discord.Interaction, hours: int):
+    """Slash command for hourly channel summary"""
+    await interaction.response.defer()
+
+    # Validate hours parameter using shared validation function
+    is_valid, error_message = validate_hours_parameter(hours)
+    if not is_valid:
+        await interaction.followup.send(f"❌ {error_message}", ephemeral=True)
+        return
+
+    mock_message = MockMessage(interaction, command="sum-hr", hours=hours)
+
+    # Use existing handler logic, skip validation since we already validated
+    try:
+        await handle_sum_hr_command(mock_message, client.user, skip_validation=True)
+        # If no exception, the command succeeded
+        try:
+            await interaction.followup.send(f"✅ {hours}-hour summary has been generated!", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send followup message: {e}")
+    except Exception as e:
+        logger.error(f"Error in sum-hr slash command: {e}")
+        try:
+            await interaction.followup.send("❌ An error occurred while generating the summary.", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send error followup message: {e}")
 
 async def process_url(message_id: str, url: str):
     """
@@ -117,6 +184,13 @@ async def on_ready():
     logger.info(f'Bot has successfully connected as {client.user}')
     logger.info(f'Bot ID: {client.user.id}')
     logger.info(f'Connected to {len(client.guilds)} guilds')
+
+    # Sync slash commands
+    try:
+        synced = await client.tree.sync()
+        logger.info(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        logger.error(f"Failed to sync commands: {e}")
 
     # Initialize the database - critical for bot operation
     try:

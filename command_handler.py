@@ -8,6 +8,24 @@ from message_utils import split_long_message
 from datetime import datetime, timezone
 import re
 
+def validate_hours_parameter(hours):
+    """
+    Validates the hours parameter for sum-hr command.
+
+    Args:
+        hours (int): Number of hours to validate
+
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    if hours <= 0:
+        return False, "Number of hours must be greater than 0."
+
+    if hours > 168:  # 7 days
+        return False, "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
+
+    return True, None
+
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
     bot_mention = f'<@{client_user.id}>'
@@ -173,7 +191,7 @@ async def handle_sum_day_command(message, client_user):
         except Exception as del_e:
             logger.warning(f"Could not delete processing message: {del_e}")
 
-async def handle_sum_hr_command(message, client_user):
+async def handle_sum_hr_command(message, client_user, skip_validation=False):
     """Handles the /sum-hr <num_hours> command."""
     # Parse the hours parameter from the message content
     content = message.content.strip()
@@ -187,18 +205,13 @@ async def handle_sum_hr_command(message, client_user):
 
     hours = int(match.group(1))
 
-    # Validate hours parameter
-    if hours <= 0:
-        error_msg = "Number of hours must be greater than 0."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    if hours > 168:  # 7 days
-        error_msg = "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
+    # Validate hours parameter (skip if called from slash command which already validated)
+    if not skip_validation:
+        is_valid, error_message = validate_hours_parameter(hours)
+        if not is_valid:
+            bot_response = await message.channel.send(error_message)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_message)
+            return
 
     logger.info(f"Executing command: /sum-hr {hours} - Requested by {message.author}")
 
