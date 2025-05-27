@@ -25,10 +25,9 @@ def test_database_init():
     try:
         database.init_database()
         logger.info("Database initialized successfully")
-        return True
     except Exception as e:
         logger.error(f"Database initialization failed: {str(e)}", exc_info=True)
-        return False
+        assert False, f"Database initialization failed: {str(e)}"
 
 def test_message_storage():
     """Test message storage functionality"""
@@ -65,7 +64,7 @@ def test_message_storage():
             logger.info(f"Message {message_id} stored successfully")
         else:
             logger.error(f"Failed to store message {message_id}")
-            return False
+            assert False, f"Failed to store message {message_id}"
 
         # Get message count
         count = database.get_message_count()
@@ -75,10 +74,9 @@ def test_message_storage():
         user_count = database.get_user_message_count(author_id)
         logger.info(f"User message count for {author_id}: {user_count}")
 
-        return True
     except Exception as e:
         logger.error(f"Message storage test failed: {str(e)}", exc_info=True)
-        return False
+        assert False, f"Message storage test failed: {str(e)}"
 
 def main():
     """Run all tests"""
