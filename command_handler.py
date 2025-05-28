@@ -8,6 +8,14 @@ from message_utils import split_long_message
 from datetime import datetime, timezone
 import re
 
+# Import new utilities
+from utils.decorators import rate_limited, database_required, handle_errors
+from utils.message_utils import (
+    safe_delete_message, send_and_store_response, create_thread_with_fallback,
+    send_processing_message, handle_command_error, validate_hours_parameter
+)
+
+@rate_limited
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
     bot_mention = f'<@{client_user.id}>'
@@ -15,58 +23,42 @@ async def handle_bot_command(message, client_user):
     query = message.content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
 
     if not query:
-        error_msg = "Please provide a query after mentioning the bot."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        await handle_command_error(
+            message.channel, 
+            "Please provide a query after mentioning the bot.",
+            client_user, 
+            message.guild
+        )
         return
 
     logger.info(f"Executing mention command - Requested by {message.author}")
 
-    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
-    if is_limited:
-        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
-            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
-        return
-
-    processing_msg = await message.channel.send("Processing your request, please wait...")
+    processing_msg = await send_processing_message(message.channel)
     try:
         response = await call_llm_api(query)
         message_parts = await split_long_message(response)
 
         for part in message_parts:
-            bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            await send_and_store_response(message.channel, part, client_user, message.guild)
 
-        await processing_msg.delete()
+        await safe_delete_message(processing_msg)
         logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while processing your request. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        try:
-            await processing_msg.delete()
-        except discord.NotFound: # Message might have been deleted already
-            pass
-        except Exception as del_e:
-            logger.warning(f"Could not delete processing message: {del_e}")
+        await handle_command_error(
+            message.channel,
+            "Sorry, an error occurred while processing your request. Please try again later.",
+            client_user,
+            message.guild,
+            processing_msg
+        )
 
 
+@rate_limited
+@database_required
 async def handle_sum_day_command(message, client_user):
     """Handles the /sum-day command."""
     logger.info(f"Executing command: /sum-day - Requested by {message.author}")
-
-    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
-    if is_limited:
-        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
-            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
-        return
 
     processing_msg = await message.channel.send("Generating channel summary, please wait... This may take a moment.")
     try:
@@ -149,67 +141,59 @@ async def handle_sum_day_command(message, client_user):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
         summary_parts = await split_long_message(summary)
 
+        # Create a public thread for the summary
         if message.guild:
-            thread = await message.create_thread(name="Daily Summary")
-            for part in summary_parts:
-                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            await create_thread_with_fallback(
+                message.channel, 
+                "24h Summary", 
+                summary_parts, 
+                client_user, 
+                message.guild
+            )
         else:
+            # For DMs, post directly to the channel since threads aren't available
             for part in summary_parts:
-                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+                await send_and_store_response(message.channel, part, client_user, message.guild)
 
-        await processing_msg.delete()
+        await safe_delete_message(processing_msg)
         logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing /sum-day command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        try:
-            await processing_msg.delete()
-        except discord.NotFound: # Message might have been deleted already
-            pass
-        except Exception as del_e:
-            logger.warning(f"Could not delete processing message: {del_e}")
+        await handle_command_error(
+            message.channel,
+            "Sorry, an error occurred while generating the summary. Please try again later.",
+            client_user,
+            message.guild,
+            processing_msg
+        )
 
-async def handle_sum_hr_command(message, client_user):
+@rate_limited
+@database_required
+async def handle_sum_hr_command(message, client_user, skip_validation=False):
     """Handles the /sum-hr <num_hours> command."""
     # Parse the hours parameter from the message content
     content = message.content.strip()
     match = re.match(r'/sum-hr\s+(\d+)', content)
 
     if not match:
-        error_msg = "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)"
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        await handle_command_error(
+            message.channel,
+            "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)",
+            client_user,
+            message.guild
+        )
         return
 
     hours = int(match.group(1))
 
-    # Validate hours parameter
-    if hours <= 0:
-        error_msg = "Number of hours must be greater than 0."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    if hours > 168:  # 7 days
-        error_msg = "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
+    # Validate hours parameter (skip if called from slash command which already validated)
+    if not skip_validation:
+        is_valid, error_message = validate_hours_parameter(hours)
+        if not is_valid:
+            await handle_command_error(message.channel, error_message, client_user, message.guild)
+            return
 
     logger.info(f"Executing command: /sum-hr {hours} - Requested by {message.author}")
-
-    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
-    if is_limited:
-        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
-            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
-        return
 
     processing_msg = await message.channel.send(f"Generating channel summary for the past {hours} hours, please wait... This may take a moment.")
     try:
@@ -247,10 +231,13 @@ async def handle_sum_hr_command(message, client_user):
 
         if not messages_for_summary:
             logger.info(f"No messages found for /sum-hr {hours} command in channel {channel_name_str} for the past {hours} hours")
-            await processing_msg.delete()
-            error_msg = f"No messages found in this channel for the past {hours} hours."
-            bot_response = await message.channel.send(error_msg)
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+            await handle_command_error(
+                message.channel,
+                f"No messages found in this channel for the past {hours} hours.",
+                client_user,
+                message.guild,
+                processing_msg
+            )
             return
 
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, now, hours)
@@ -258,28 +245,28 @@ async def handle_sum_hr_command(message, client_user):
 
         if message.guild:
             thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
-            thread = await message.create_thread(name=thread_name)
-            for part in summary_parts:
-                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            await create_thread_with_fallback(
+                message.channel, 
+                thread_name, 
+                summary_parts, 
+                client_user, 
+                message.guild
+            )
         else:
             for part in summary_parts:
-                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+                await send_and_store_response(message.channel, part, client_user, message.guild)
 
-        await processing_msg.delete()
+        await safe_delete_message(processing_msg)
         logger.info(f"Command executed successfully: /sum-hr {hours} - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing /sum-hr {hours} command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        try:
-            await processing_msg.delete()
-        except discord.NotFound: # Message might have been deleted already
-            pass
-        except Exception as del_e:
-            logger.warning(f"Could not delete processing message: {del_e}")
+        await handle_command_error(
+            message.channel,
+            "Sorry, an error occurred while generating the summary. Please try again later.",
+            client_user,
+            message.guild,
+            processing_msg
+        )
 
 async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, content_to_store):
     """Helper function to store bot's own messages in the database."""
@@ -309,3 +296,4 @@ async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, conten
             logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
     except Exception as e:
         logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+
