@@ -43,7 +43,8 @@ async def call_llm_api(query):
                 {
                     "role": "system",
                     "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
-                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours)."
+                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
+                    Users can also use /search <query> to search the web for information."
                 },
                 {
                     "role": "user",

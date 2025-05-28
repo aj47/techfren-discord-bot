@@ -7,6 +7,7 @@ from llm_handler import call_llm_api, call_llm_for_summary
 from message_utils import split_long_message
 from datetime import datetime, timezone
 import re
+from pollinations_handler import search_web
 
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
@@ -309,3 +310,66 @@ async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, conten
             logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
     except Exception as e:
         logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+
+async def handle_search_command(message, client_user):
+    """Handles the /search command for web search using Pollinations API."""
+    logger.info(f"Executing command: /search - Requested by {message.author}")
+
+    # Extract search query from message content
+    query = message.content.replace('/search', '', 1).strip()
+    if not query:
+        error_msg = "Please provide a search query after the /search command. Example: `/search current news about AI`"
+        bot_response = await message.channel.send(error_msg)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        return
+
+    # Check rate limits
+    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
+    if is_limited:
+        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
+            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+        bot_response = await message.channel.send(error_msg)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
+        return
+
+    # Send processing message
+    processing_msg = await message.channel.send("Searching the web, please wait...")
+    try:
+        # Call the Pollinations API to search the web
+        search_result = await search_web(query)
+        
+        if not search_result:
+            error_msg = "Sorry, an error occurred while searching the web. Please try again later."
+            bot_response = await message.channel.send(error_msg)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+            await processing_msg.delete()
+            return
+            
+        # Mit unserem neuen Ansatz ist das Ergebnis direkt im 'text' Feld
+        response = search_result.get('text', 'No results found.')
+        
+        # Format the response
+        formatted_response = f"**Web Search Results for:** `{query}`\n\n{response}"
+        
+        # Split the response if needed and send to Discord
+        message_parts = await split_long_message(formatted_response)
+        for part in message_parts:
+            bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            
+        # Delete the processing message
+        await processing_msg.delete()
+        logger.info(f"Search command executed successfully - Response length: {len(formatted_response)} - Split into {len(message_parts)} parts")
+        
+    except Exception as e:
+        logger.error(f"Error processing search command: {str(e)}", exc_info=True)
+        error_msg = "Sorry, an error occurred while processing your search. Please try again later."
+        bot_response = await message.channel.send(error_msg)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        try:
+            await processing_msg.delete()
+        except discord.NotFound: # Message might have been deleted already
+            pass
+        except Exception as del_e:
+            logger.warning(f"Could not delete processing message: {del_e}")

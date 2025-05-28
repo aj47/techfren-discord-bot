@@ -14,7 +14,7 @@ from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_co
 from message_utils import split_long_message # Import message utility functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command, handle_search_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 
@@ -224,6 +224,9 @@ async def on_message(message):
         elif message.content.startswith('/sum-hr'):
             is_command = True
             command_type = "/sum-hr"
+        elif message.content.startswith('/search'):
+            is_command = True
+            command_type = "/search"
 
         # Store in database
         guild_id = str(message.guild.id) if message.guild else None
@@ -274,6 +277,7 @@ async def on_message(message):
     is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
+    is_search_command = message.content.startswith('/search')
 
     # Process mention commands in any channel
     if is_mention_command:
@@ -282,7 +286,7 @@ async def on_message(message):
         return
 
     # If not a command we recognize, ignore
-    if not (is_sum_day_command or is_sum_hr_command):
+    if not (is_sum_day_command or is_sum_hr_command or is_search_command):
         return
 
     # Process commands
@@ -291,6 +295,8 @@ async def on_message(message):
             await handle_sum_day_command(message, client.user)
         elif is_sum_hr_command:
             await handle_sum_hr_command(message, client.user)
+        elif is_search_command:
+            await handle_search_command(message, client.user)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
