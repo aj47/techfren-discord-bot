@@ -36,7 +36,7 @@ class MockMessage:
             self.content = "/sum-day"
 
     async def create_thread(self, name):
-        return await self.channel.create_thread(name=name)
+        return await self.channel.create_thread(name=name, type=discord.ChannelType.public_thread)
 
 # Slash command definitions
 @client.tree.command(name="sum-day", description="Generate a summary of the past 24 hours in this channel")
