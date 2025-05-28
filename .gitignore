@@ -49,3 +49,5 @@ data/
 discord-bot.pem
 .aider*
 .DS_Store
+
+# Project specific

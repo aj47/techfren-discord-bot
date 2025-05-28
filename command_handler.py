@@ -149,12 +149,28 @@ async def handle_sum_day_command(message, client_user):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
         summary_parts = await split_long_message(summary)
 
+        # Create a public thread for the summary
         if message.guild:
-            thread = await message.create_thread(name="Daily Summary")
-            for part in summary_parts:
-                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            try:
+                thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
+                thread = await message.create_thread(name=thread_name)
+                for part in summary_parts:
+                    bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            except discord.Forbidden:
+                logger.warning("Bot lacks permission to create threads, posting to channel instead")
+                # Fallback to posting in channel
+                for part in summary_parts:
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            except discord.HTTPException as e:
+                logger.error(f"Failed to create thread: {e}, posting to channel instead")
+                # Fallback to posting in channel
+                for part in summary_parts:
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
         else:
+            # For DMs, post directly to the channel since threads aren't available
             for part in summary_parts:
                 bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
                 await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
@@ -173,7 +189,7 @@ async def handle_sum_day_command(message, client_user):
         except Exception as del_e:
             logger.warning(f"Could not delete processing message: {del_e}")
 
-async def handle_sum_hr_command(message, client_user):
+async def handle_sum_hr_command(message, client_user, skip_validation=False):
     """Handles the /sum-hr <num_hours> command."""
     # Parse the hours parameter from the message content
     content = message.content.strip()
@@ -187,18 +203,13 @@ async def handle_sum_hr_command(message, client_user):
 
     hours = int(match.group(1))
 
-    # Validate hours parameter
-    if hours <= 0:
-        error_msg = "Number of hours must be greater than 0."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    if hours > 168:  # 7 days
-        error_msg = "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
+    # Validate hours parameter (skip if called from slash command which already validated)
+    if not skip_validation:
+        is_valid, error_message = validate_hours_parameter(hours)
+        if not is_valid:
+            bot_response = await message.channel.send(error_message)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_message)
+            return
 
     logger.info(f"Executing command: /sum-hr {hours} - Requested by {message.author}")
 
@@ -309,3 +320,21 @@ async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, conten
             logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
     except Exception as e:
         logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+
+def validate_hours_parameter(hours):
+    """
+    Validates the hours parameter for sum-hr command.
+
+    Args:
+        hours (int): Number of hours to validate
+
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    if hours <= 0:
+        return False, "Number of hours must be greater than 0."
+
+    if hours > 168:  # 7 days
+        return False, "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
+
+    return True, None
