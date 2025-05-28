@@ -152,13 +152,17 @@ async def handle_sum_day_command(message, client_user):
         # Create a public thread for the summary
         if message.guild:
             try:
-                thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
-                thread = await message.create_thread(name=thread_name)
+                thread_name = "24h Summary"  # Fixed: Using a constant since this is for 24 hours
+                # Add debug logging
+                logger.info(f"Attempting to create thread '{thread_name}' in channel #{message.channel.name}")
+                # Create a standalone thread without attaching to a message
+                thread = await message.channel.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
+                logger.info(f"Thread created successfully with ID {thread.id}")
                 for part in summary_parts:
                     bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
                     await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
-            except discord.Forbidden:
-                logger.warning("Bot lacks permission to create threads, posting to channel instead")
+            except discord.Forbidden as e:
+                logger.warning(f"Bot lacks permission to create threads, posting to channel instead: {str(e)}")
                 # Fallback to posting in channel
                 for part in summary_parts:
                     bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
