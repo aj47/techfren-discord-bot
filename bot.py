@@ -6,6 +6,7 @@ import asyncio
 import re
 import os
 import json
+import aiohttp
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -24,6 +25,60 @@ intents.message_content = True  # This is required to read message content in gu
 
 client = discord.Client(intents=intents)
 
+# Cache for failed URLs to prevent repeated processing attempts
+failed_url_cache = {}
+FAILED_URL_CACHE_TIMEOUT = 3600  # 1 hour timeout for failed URLs
+
+def is_url_recently_failed(url: str) -> bool:
+    """Check if a URL has failed recently and should be skipped."""
+    if url in failed_url_cache:
+        failed_time = failed_url_cache[url]
+        if datetime.now().timestamp() - failed_time < FAILED_URL_CACHE_TIMEOUT:
+            return True
+        else:
+            # Remove expired entry
+            del failed_url_cache[url]
+    return False
+
+def mark_url_as_failed(url: str):
+    """Mark a URL as failed to prevent repeated processing."""
+    failed_url_cache[url] = datetime.now().timestamp()
+    logger.debug(f"Marked URL as failed: {url}")
+
+async def retry_with_backoff(func, *args, max_retries=3, base_delay=1.0, **kwargs):
+    """
+    Retry a function with exponential backoff for network errors.
+    
+    Args:
+        func: The async function to retry
+        *args: Arguments to pass to the function
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds for exponential backoff
+        **kwargs: Keyword arguments to pass to the function
+    
+    Returns:
+        The result of the function call, or None if all retries failed
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except (aiohttp.ClientTimeout, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_exception = e
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Network error on attempt {attempt + 1}/{max_retries + 1}: {str(e)}, retrying in {delay}s")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"All {max_retries + 1} attempts failed for network operation: {str(e)}")
+        except Exception as e:
+            # For non-network errors, don't retry
+            logger.error(f"Non-network error occurred: {str(e)}", exc_info=True)
+            return None
+    
+    return None
+
 async def process_url(message_id: str, url: str):
     """
     Process a URL found in a message by scraping its content, summarizing it,
@@ -34,11 +89,16 @@ async def process_url(message_id: str, url: str):
         url (str): The URL to process
     """
     try:
-        logger.info(f"Processing URL {url} from message {message_id}")
+        # Check if this URL has failed recently
+        if is_url_recently_failed(url):
+            logger.debug(f"Skipping URL {url} - recently failed (cached for {FAILED_URL_CACHE_TIMEOUT}s)")
+            return
+            
+        logger.debug(f"Processing URL {url} from message {message_id}")
 
         # Check if the URL is from Twitter/X.com
         if await is_twitter_url(url):
-            logger.info(f"Detected Twitter/X.com URL: {url}")
+            logger.debug(f"Detected Twitter/X.com URL: {url}")
 
             # Validate if the URL contains a tweet ID (status)
             from apify_handler import extract_tweet_id
@@ -48,38 +108,39 @@ async def process_url(message_id: str, url: str):
 
                 # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
                 if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
-                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+                    logger.debug(f"Handling base Twitter/X.com URL with custom response: {url}")
                     scraped_result = {
                         "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
                     }
                 else:
-                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
-                    scraped_result = await scrape_url_content(url)
+                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl with retry
+                    scraped_result = await retry_with_backoff(scrape_url_content, url)
             else:
                 # Check if Apify API token is configured
                 if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
                     logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
-                    scraped_result = await scrape_url_content(url)
+                    scraped_result = await retry_with_backoff(scrape_url_content, url)
                 else:
-                    # Use Apify to scrape Twitter/X.com content
-                    scraped_result = await scrape_twitter_content(url)
+                    # Use Apify to scrape Twitter/X.com content with retry
+                    scraped_result = await retry_with_backoff(scrape_twitter_content, url)
 
-                    # If Apify scraping fails, fall back to Firecrawl
+                    # If Apify scraping fails, fall back to Firecrawl with retry
                     if not scraped_result:
                         logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
-                        scraped_result = await scrape_url_content(url)
+                        scraped_result = await retry_with_backoff(scrape_url_content, url)
                     else:
-                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+                        logger.debug(f"Successfully scraped Twitter/X.com content with Apify: {url}")
                         # Extract markdown content from the scraped result
                         markdown_content = scraped_result.get('markdown')
         else:
-            # For non-Twitter/X.com URLs, use Firecrawl
-            scraped_result = await scrape_url_content(url)
+            # For non-Twitter/X.com URLs, use Firecrawl with retry
+            scraped_result = await retry_with_backoff(scrape_url_content, url)
             markdown_content = scraped_result  # Firecrawl returns markdown directly
 
         # Check if scraping was successful
         if not scraped_result:
-            logger.warning(f"Failed to scrape content from URL: {url}")
+            logger.error(f"Failed to scrape content from URL: {url}")
+            mark_url_as_failed(url)
             return
 
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
@@ -88,10 +149,11 @@ async def process_url(message_id: str, url: str):
         else:
             markdown_content = scraped_result  # Firecrawl returns markdown directly
 
-        # Step 2: Summarize the scraped content
-        scraped_data = await summarize_scraped_content(markdown_content, url)
+        # Step 2: Summarize the scraped content with retry for network issues
+        scraped_data = await retry_with_backoff(summarize_scraped_content, markdown_content, url)
         if not scraped_data:
-            logger.warning(f"Failed to summarize content from URL: {url}")
+            logger.error(f"Failed to summarize content from URL: {url}")
+            mark_url_as_failed(url)
             return
 
         # Step 3: Convert key points to JSON string
@@ -108,10 +170,15 @@ async def process_url(message_id: str, url: str):
         if success:
             logger.info(f"Successfully processed URL {url} from message {message_id}")
         else:
-            logger.warning(f"Failed to update message {message_id} with scraped data")
+            logger.error(f"Failed to update message {message_id} with scraped data")
 
+    except (aiohttp.ClientTimeout, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        logger.error(f"Network timeout/error processing URL {url} from message {message_id}: {str(e)}")
+        # Don't mark as permanently failed for network errors, they might work later
+        logger.debug(f"Not caching URL {url} as failed due to network error - will retry later")
     except Exception as e:
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
+        mark_url_as_failed(url)
 
 @client.event
 async def on_ready():
@@ -155,11 +222,11 @@ async def on_ready():
 
     # Log details about each connected guild
     for guild in client.guilds:
-        logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
+        logger.debug(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
         # Check if bot-talk channel exists
         bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
         if not bot_talk_exists:
-            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
+            logger.debug(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @client.event
 async def on_guild_join(guild):
@@ -168,7 +235,7 @@ async def on_guild_join(guild):
     # Check if bot-talk channel exists
     bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
     if not bot_talk_exists:
-        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
+        logger.debug(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @client.event
 async def on_guild_remove(guild):
@@ -205,7 +272,7 @@ async def on_message(message):
 
     # Use display_name to show user's server nickname when available
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
-    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
+    logger.debug(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
     # Store message in database
     try:
@@ -250,7 +317,7 @@ async def on_message(message):
         )
 
         if not success:
-            logger.warning(f"Failed to store message {message.id} in database")
+            logger.error(f"Failed to store message {message.id} in database")
 
         # Check for URLs in the message content
         if not is_command and not message.author.bot and success:
@@ -261,7 +328,7 @@ async def on_message(message):
             if urls:
                 # Process the first URL found
                 url = urls[0]
-                logger.info(f"Found URL in message {message.id}: {url}")
+                logger.debug(f"Found URL in message {message.id}: {url}")
 
                 # Create a background task to process the URL
                 asyncio.create_task(process_url(message.id, url))
@@ -277,7 +344,7 @@ async def on_message(message):
 
     # Process mention commands in any channel
     if is_mention_command:
-        logger.debug(f"Processing mention command in channel #{message.channel.name}")
+        logger.info(f"Processing mention command in channel #{message.channel.name}")
         await handle_bot_command(message, client.user)
         return
 
@@ -303,9 +370,8 @@ try:
     # Validate configuration using the imported function
     validate_config(config)
 
-    # Log startup (but mask the actual token)
-    token_preview = config.token[:5] + "..." + config.token[-5:] if len(config.token) > 10 else "***masked***"
-    logger.info(f"Bot token loaded: {token_preview}")
+    # Log startup (token completely masked for security)
+    logger.info("Bot token loaded successfully")
     logger.info("Connecting to Discord...")
 
     # Run the bot

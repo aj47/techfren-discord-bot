@@ -8,8 +8,10 @@ import os
 import logging
 import json
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
+from queue import Queue
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -17,6 +19,11 @@ logger = logging.getLogger('discord_bot.database')
 # Database constants
 DB_DIRECTORY = "data"
 DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.db")
+
+# Connection pool for better performance
+_connection_pool = None
+_pool_lock = threading.Lock()
+MAX_POOL_SIZE = 5
 
 # SQL statements
 CREATE_MESSAGES_TABLE = """
@@ -145,23 +152,17 @@ def init_database() -> None:
             except Exception as e:
                 logger.warning(f"Failed to insert test message during initialization: {str(e)}")
 
-            conn.commit()
+
 
         logger.info(f"Database initialized successfully at {DB_FILE}")
     except Exception as e:
         logger.error(f"Error initializing database: {str(e)}", exc_info=True)
         raise
 
-def get_connection() -> sqlite3.Connection:
-    """
-    Get a connection to the SQLite database.
-    The connection supports context managers (with statements).
-
-    Returns:
-        sqlite3.Connection: A connection to the database.
-    """
+def _create_connection() -> sqlite3.Connection:
+    """Create a new database connection with proper configuration."""
     try:
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         conn.row_factory = sqlite3.Row  # This enables column access by name
 
         # Set a shorter timeout for better error reporting
@@ -172,8 +173,97 @@ def get_connection() -> sqlite3.Connection:
 
         return conn
     except Exception as e:
-        logger.error(f"Error connecting to database: {str(e)}", exc_info=True)
+        logger.error(f"Error creating database connection: {str(e)}", exc_info=True)
         raise
+
+def _init_connection_pool():
+    """Initialize the connection pool."""
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = Queue(maxsize=MAX_POOL_SIZE)
+        for _ in range(MAX_POOL_SIZE):
+            _connection_pool.put(_create_connection())
+        logger.info(f"Initialized database connection pool with {MAX_POOL_SIZE} connections")
+
+def get_connection() -> sqlite3.Connection:
+    """
+    Get a connection from the pool or create a new one if pool is empty.
+    The connection supports context managers (with statements).
+
+    Returns:
+        sqlite3.Connection: A connection to the database.
+    """
+    global _connection_pool
+    
+    with _pool_lock:
+        if _connection_pool is None:
+            _init_connection_pool()
+    
+    try:
+        # Try to get a connection from the pool (non-blocking)
+        if not _connection_pool.empty():
+            conn = _connection_pool.get_nowait()
+            # Test the connection
+            try:
+                conn.execute("SELECT 1")
+                return conn
+            except sqlite3.Error:
+                # Connection is stale, create a new one
+                conn.close()
+        
+        # Pool is empty or connection was stale, create new connection
+        return _create_connection()
+    except Exception as e:
+        logger.error(f"Error getting database connection: {str(e)}", exc_info=True)
+        raise
+
+def return_connection(conn: sqlite3.Connection):
+    """Return a connection to the pool."""
+    global _connection_pool
+    
+    if _connection_pool is not None and not _connection_pool.full():
+        try:
+            # Test connection before returning to pool
+            conn.execute("SELECT 1")
+            _connection_pool.put_nowait(conn)
+        except (sqlite3.Error, Exception):
+            # Connection is bad, close it
+            conn.close()
+    else:
+        # Pool is full or doesn't exist, close the connection
+        conn.close()
+
+class PooledConnection:
+    """Context manager for pooled database connections."""
+    
+    def __init__(self):
+        self.conn = None
+    
+    def __enter__(self):
+        self.conn = get_connection()
+        return self.conn
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            if exc_type is None:
+                # No exception, commit the transaction
+                try:
+                    self.conn.commit()
+                except Exception as e:
+                    logger.error(f"Error committing transaction: {e}")
+                    self.conn.rollback()
+            else:
+                # Exception occurred, rollback
+                try:
+                    self.conn.rollback()
+                except Exception as e:
+                    logger.error(f"Error rolling back transaction: {e}")
+            
+            return_connection(self.conn)
+
+def get_pooled_connection():
+    """Get a pooled connection context manager."""
+    return PooledConnection()
 
 def check_database_connection() -> bool:
     """
@@ -198,7 +288,7 @@ def check_database_connection() -> bool:
         logger.info(f"Database file size: {file_size} bytes")
 
         # Try to connect and execute a simple query
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
@@ -260,8 +350,32 @@ def store_message(
         bool: True if the message was stored successfully, False otherwise
     """
     try:
-        # Use context manager to ensure connection is properly closed
-        with get_connection() as conn:
+        # Validate input lengths to prevent database issues
+        MAX_CONTENT_LENGTH = 50000  # 50KB limit for message content
+        MAX_TEXT_FIELD_LENGTH = 1000  # 1KB limit for other text fields
+        
+        if len(content) > MAX_CONTENT_LENGTH:
+            logger.warning(f"Message {message_id} content too long ({len(content)} chars), truncating to {MAX_CONTENT_LENGTH}")
+            content = content[:MAX_CONTENT_LENGTH] + "... [TRUNCATED]"
+        
+        # Validate other text fields
+        if author_name and len(author_name) > MAX_TEXT_FIELD_LENGTH:
+            author_name = author_name[:MAX_TEXT_FIELD_LENGTH]
+        if channel_name and len(channel_name) > MAX_TEXT_FIELD_LENGTH:
+            channel_name = channel_name[:MAX_TEXT_FIELD_LENGTH]
+        if guild_name and len(guild_name) > MAX_TEXT_FIELD_LENGTH:
+            guild_name = guild_name[:MAX_TEXT_FIELD_LENGTH]
+        if command_type and len(command_type) > MAX_TEXT_FIELD_LENGTH:
+            command_type = command_type[:MAX_TEXT_FIELD_LENGTH]
+        if scraped_url and len(scraped_url) > MAX_TEXT_FIELD_LENGTH:
+            scraped_url = scraped_url[:MAX_TEXT_FIELD_LENGTH]
+        if scraped_content_summary and len(scraped_content_summary) > MAX_CONTENT_LENGTH:
+            scraped_content_summary = scraped_content_summary[:MAX_CONTENT_LENGTH]
+        if scraped_content_key_points and len(scraped_content_key_points) > MAX_CONTENT_LENGTH:
+            scraped_content_key_points = scraped_content_key_points[:MAX_CONTENT_LENGTH]
+
+        # Use pooled connection for better performance
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -284,8 +398,6 @@ def store_message(
                     scraped_content_key_points
                 )
             )
-
-            conn.commit()
 
         logger.debug(f"Message {message_id} stored in database")
         return True
@@ -318,7 +430,7 @@ async def update_message_with_scraped_data(
     try:
         # Define a synchronous function to run in a thread pool
         def _update_message_sync():
-            with get_connection() as conn:
+            with get_pooled_connection() as conn:
                 cursor = conn.cursor()
 
                 # Update the message with scraped data
@@ -339,14 +451,13 @@ async def update_message_with_scraped_data(
                 )
 
                 # Check if any rows were affected
-                rows_affected = cursor.rowcount == 0
-                conn.commit()
+                rows_affected = cursor.rowcount > 0
                 return rows_affected
 
         # Run the synchronous function in a thread pool to avoid blocking the event loop
-        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+        rows_affected = await asyncio.to_thread(_update_message_sync)
 
-        if no_rows_affected:
+        if not rows_affected:
             logger.warning(f"No message found with ID {message_id} to update with scraped data")
             return False
 
@@ -364,7 +475,7 @@ def get_message_count() -> int:
         int: The number of messages
     """
     try:
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("SELECT COUNT(*) FROM messages")
@@ -387,7 +498,7 @@ def get_user_message_count(user_id: str) -> int:
         int: The number of messages from the user
     """
     try:
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("SELECT COUNT(*) FROM messages WHERE author_id = ?", (user_id,))
@@ -411,7 +522,7 @@ def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str
         List[Dict[str, Any]]: A list of messages as dictionaries
     """
     try:
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             # Query all messages for the channel
@@ -490,7 +601,7 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
         start_date_str = start_date.replace(tzinfo=None).isoformat()
         end_date_str = end_date.replace(tzinfo=None).isoformat()
 
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             # Query messages for the channel within the time range
@@ -544,7 +655,7 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
         start_date_str = start_time.isoformat()
         end_date_str = end_time.isoformat()
 
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             # Query messages within the time range
@@ -632,7 +743,7 @@ def store_channel_summary(
         # Current timestamp
         created_at = datetime.now().isoformat()
 
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -652,7 +763,7 @@ def store_channel_summary(
                 )
             )
 
-            conn.commit()
+
 
         logger.info(f"Stored summary for channel {channel_name} ({channel_id}) for {date_str}")
         return True
@@ -673,7 +784,7 @@ def delete_messages_older_than(cutoff_time: datetime) -> int:
     try:
         cutoff_time_str = cutoff_time.isoformat()
 
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             # First, count how many messages will be deleted
@@ -689,7 +800,7 @@ def delete_messages_older_than(cutoff_time: datetime) -> int:
                 (cutoff_time_str,)
             )
 
-            conn.commit()
+
 
         logger.info(f"Deleted {count} messages older than {cutoff_time}")
         return count
@@ -711,7 +822,7 @@ def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
         # Calculate the cutoff time
         cutoff_time = (datetime.now() - timedelta(hours=hours)).isoformat()
 
-        with get_connection() as conn:
+        with get_pooled_connection() as conn:
             cursor = conn.cursor()
 
             # Query for active channels
