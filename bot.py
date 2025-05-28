@@ -4,6 +4,8 @@ import discord
 from discord.ext import tasks
 import asyncio
 import re
+import os
+import json
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
