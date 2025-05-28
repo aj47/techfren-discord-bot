@@ -346,7 +346,7 @@ async def handle_search_command(message, client_user):
             await processing_msg.delete()
             return
             
-        # Mit unserem neuen Ansatz ist das Ergebnis direkt im 'text' Feld
+        # With our new approach, the result is directly in the 'text' field
         response = search_result.get('text', 'No results found.')
         
         # Format the response
