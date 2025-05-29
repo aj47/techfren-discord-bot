@@ -87,10 +87,11 @@ async def process_url(message_id: str, url: str):
             return
 
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
-        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
-            markdown_content = scraped_result.get('markdown')
+        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token \
+           and isinstance(scraped_result, dict):
+            markdown_content = scraped_result.get("markdown", "")
         else:
-            markdown_content = scraped_result  # Firecrawl returns markdown directly
+            markdown_content = scraped_result  # Either already a markdown string or fallback value
 
         # Step 2: Summarize the scraped content
         scraped_data = await summarize_scraped_content(markdown_content, url)
@@ -307,65 +308,46 @@ async def on_message(message):
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
 
+# Helper function for slash command handling
+async def _handle_slash_command_wrapper(interaction: discord.Interaction, command_name: str, hours: int = 24):
+    """Unified wrapper for slash command handling with error management."""
+    await interaction.response.defer()
+
+    try:
+        from command_abstraction import (
+            create_context_from_interaction,
+            create_response_sender,
+            create_thread_manager,
+            handle_summary_command
+        )
+
+        context = create_context_from_interaction(interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else ""))
+        response_sender = create_response_sender(interaction)
+        thread_manager = create_thread_manager(interaction)
+
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user)
+
+    except Exception as e:
+        logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
+        try:
+            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
+        except Exception:
+            pass
+
 # Slash Commands
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
-    await interaction.response.defer()
-
-    try:
-        # Use new abstraction layer instead of MockMessage
-        from command_abstraction import (
-            create_context_from_interaction,
-            create_response_sender,
-            create_thread_manager,
-            handle_summary_command
-        )
-        
-        context = create_context_from_interaction(interaction, "/sum-day")
-        response_sender = create_response_sender(interaction)
-        thread_manager = create_thread_manager(interaction)
-        
-        await handle_summary_command(context, response_sender, thread_manager, hours=24)
-
-    except Exception as e:
-        logger.error(f"Error in sum-day slash command: {e}", exc_info=True)
-        try:
-            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
-        except Exception:
-            pass
+    await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    await interaction.response.defer()
+    if hours < 1 or hours > 168:  # Max 1 week
+        await interaction.response.send_message("Please provide a number between 1 and 168 hours.", ephemeral=True)
+        return
 
-    try:
-        # Validate hours parameter
-        if hours < 1 or hours > 168:  # Max 1 week
-            await interaction.followup.send("Please provide a number between 1 and 168 hours.", ephemeral=True)
-            return
-
-        # Use new abstraction layer instead of MockMessage
-        from command_abstraction import (
-            create_context_from_interaction,
-            create_response_sender,
-            create_thread_manager,
-            handle_summary_command
-        )
-        
-        context = create_context_from_interaction(interaction, f"/sum-hr {hours}")
-        response_sender = create_response_sender(interaction)
-        thread_manager = create_thread_manager(interaction)
-        
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours)
-
-    except Exception as e:
-        logger.error(f"Error in sum-hr slash command: {e}", exc_info=True)
-        try:
-            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
-        except Exception:
-            pass
+    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
     logger.info("Starting bot...")

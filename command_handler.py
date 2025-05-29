@@ -5,6 +5,7 @@ from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message
 import re
+from typing import Optional
 
 async def handle_bot_command(message, client_user):
     """Handles the mention command."""
@@ -14,7 +15,10 @@ async def handle_bot_command(message, client_user):
 
     if not query:
         error_msg = "Please provide a query after mentioning the bot."
-        bot_response = await message.channel.send(error_msg)
+        bot_response = await message.channel.send(
+    error_msg,
+    allowed_mentions=discord.AllowedMentions.none()
+)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         return
 
@@ -53,10 +57,30 @@ async def handle_bot_command(message, client_user):
             logger.warning(f"Could not delete processing message: {del_e}")
 
 
-async def handle_sum_day_command(message, client_user):
-    """Handles the /sum-day command using the abstraction layer."""
+# Helper functions for parameter validation
+def _parse_and_validate_hours(content: str) -> Optional[int]:
+    """Parse hours parameter from message content."""
+    match = re.match(r'/sum-hr\s+(\d+)', content.strip())
+    if not match:
+        return None
+
+    hours = int(match.group(1))
+    return hours if hours > 0 else None
+
+def _validate_hours_range(hours: int) -> bool:
+    """Validate that hours is within acceptable range."""
+    return 1 <= hours <= 168  # Max 7 days
+
+# Helper function for error responses
+async def _send_error_response(message, client_user, error_msg: str):
+    """Send error response and store in database."""
+    bot_response = await message.channel.send(error_msg)
+    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+
+# Helper function for message command handling
+async def _handle_message_command_wrapper(message, client_user, command_name: str, hours: int = 24):
+    """Unified wrapper for message command handling with error management."""
     try:
-        # Use the abstraction layer for unified command handling
         from command_abstraction import (
             create_context_from_message,
             create_response_sender,
@@ -68,61 +92,36 @@ async def handle_sum_day_command(message, client_user):
         response_sender = create_response_sender(message)
         thread_manager = create_thread_manager(message)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=24)
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=client_user)
 
     except Exception as e:
-        logger.error(f"Error in handle_sum_day_command: {str(e)}", exc_info=True)
+        logger.error(f"Error in handle_{command_name}_command: {str(e)}", exc_info=True)
         error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        await _send_error_response(message, client_user, error_msg)
+
+async def handle_sum_day_command(message, client_user):
+    """Handles the /sum-day command using the abstraction layer."""
+    await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24)
 
 async def handle_sum_hr_command(message, client_user):
     """Handles the /sum-hr <num_hours> command using the abstraction layer."""
-    # Parse the hours parameter from the message content
-    content = message.content.strip()
-    match = re.match(r'/sum-hr\s+(\d+)', content)
-
-    if not match:
-        error_msg = "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)"
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    hours = int(match.group(1))
-
-    # Validate hours parameter
-    if hours <= 0:
-        error_msg = "Number of hours must be greater than 0."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    if hours > 168:  # 7 days
-        error_msg = "Number of hours cannot exceed 168 (7 days). For longer periods, please use multiple smaller summaries."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-        return
-
-    try:
-        # Use the abstraction layer for unified command handling
-        from command_abstraction import (
-            create_context_from_message,
-            create_response_sender,
-            create_thread_manager,
-            handle_summary_command
+    # Parse and validate hours parameter
+    hours = _parse_and_validate_hours(message.content)
+    if hours is None:
+        await _send_error_response(
+            message, client_user,
+            "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)"
         )
+        return
 
-        context = create_context_from_message(message)
-        response_sender = create_response_sender(message)
-        thread_manager = create_thread_manager(message)
+    if not _validate_hours_range(hours):
+        await _send_error_response(
+            message, client_user,
+            "Number of hours must be between 1 and 168 (7 days)."
+        )
+        return
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours)
-
-    except Exception as e:
-        logger.error(f"Error in handle_sum_hr_command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
-        bot_response = await message.channel.send(error_msg)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+    await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
 
 async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, content_to_store):
     """Helper function to store bot's own messages in the database."""

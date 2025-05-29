@@ -42,11 +42,12 @@ class MessageResponseSender:
         self.channel = channel
     
     async def send(self, content: str, ephemeral: bool = False) -> None:
-        await self.channel.send(content)
+        # `ephemeral` has no meaning for regular messages; we silently ignore it.
+        await self.channel.send(content, allowed_mentions=discord.AllowedMentions.none())
     
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         for part in parts:
-            await self.channel.send(part)
+            await self.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
 
 class InteractionResponseSender:
@@ -124,24 +125,21 @@ def create_response_sender(source: Union[discord.Message, discord.Interaction]) 
 
 def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -> ThreadManager:
     """Create thread manager based on command source."""
-    if isinstance(source, discord.Message):
-        return ThreadManager(source.channel, source.guild)
-    elif isinstance(source, discord.Interaction):
+    if isinstance(source, (discord.Message, discord.Interaction)):
         return ThreadManager(source.channel, source.guild)
     else:
         raise ValueError(f"Unsupported source type: {type(source)}")
 
 
-async def _store_dm_responses(summary_parts: list[str], context: CommandContext) -> None:
+async def _store_dm_responses(summary_parts: list[str], context: CommandContext, bot_user=None) -> None:
     """Store bot responses in database for DM conversations."""
     try:
         import database
         from datetime import datetime
 
-        # Create a mock bot user ID (this should ideally come from the bot instance)
-        # For now, we'll use a placeholder that can be updated when we have access to the bot
-        from discord import Client
-        bot_user_id = Client.user.id if Client.user else "0"
+        # Get bot user ID from the provided bot_user or use a default
+        bot_user_id = str(bot_user.id) if bot_user else "0"
+        bot_user_name = str(bot_user) if bot_user else "TechFren Bot"
 
         for i, part in enumerate(summary_parts):
             # Generate a unique message ID for each part
@@ -150,7 +148,7 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext)
             database.store_message(
                 message_id=message_id,
                 author_id=bot_user_id,
-                author_name="TechFren Bot",
+                author_name=bot_user_name,
                 channel_id=str(context.channel_id),
                 channel_name=context.channel_name or "DM",
                 content=part,
@@ -171,7 +169,8 @@ async def handle_summary_command(
     context: CommandContext,
     response_sender: ResponseSender,
     thread_manager: ThreadManager,
-    hours: int = 24
+    hours: int = 24,
+    bot_user=None
 ) -> None:
     """
     Core logic for summary commands, abstracted from Discord-specific handling.
@@ -254,7 +253,7 @@ async def handle_summary_command(
 
             # Store bot responses in database for DMs
             if context.source_type == 'message' and not context.guild_id:
-                await _store_dm_responses(summary_parts, context)
+                await _store_dm_responses(summary_parts, context, bot_user)
         
         # Store summary in database
         try:
