@@ -5,6 +5,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api, call_llm_for_summary
 from message_utils import split_long_message
+from thread_utils import create_thread_with_fallback
 from datetime import datetime, timezone
 import re
 
@@ -149,38 +150,22 @@ async def handle_sum_day_command(message, client_user):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
         summary_parts = await split_long_message(summary)
 
-        # Create a public thread for the summary
-        if message.guild:
-            try:
-                thread_name = "Daily Summary"  # Consistent naming for 24-hour summaries
-                # Add debug logging
-                logger.info(f"Attempting to create thread '{thread_name}' in channel #{message.channel.name}")
-                # Create a standalone thread without attaching to a message
-                thread = await message.channel.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
-                logger.info(f"Thread created successfully with ID {thread.id}")
-                for part in summary_parts:
-                    bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
-            except discord.Forbidden as e:
-                logger.warning(f"Bot lacks permission to create threads, posting to channel instead: {str(e)}")
-                # Fallback to posting in channel
-                for part in summary_parts:
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
-            except discord.HTTPException as e:
-                logger.error(f"Failed to create thread: {e}, posting to channel instead")
-                # Fallback to posting in channel
-                for part in summary_parts:
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
-        else:
-            # For DMs, post directly to the channel since threads aren't available
-            for part in summary_parts:
-                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+        # Create a public thread for the summary using the utility function
+        thread_name = "Daily Summary"  # Consistent naming for 24-hour summaries
+        success = await create_thread_with_fallback(
+            message.channel, thread_name, summary_parts, 
+            store_bot_response_db, client_user, message.guild
+        )
 
-        await processing_msg.delete()
-        logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
+        if success:
+            await processing_msg.delete()
+            logger.info(f"Command executed successfully: /sum-day - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
+        else:
+            await processing_msg.delete()
+            error_msg = "Sorry, an error occurred while posting the summary."
+            bot_response = await message.channel.send(error_msg)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+
     except Exception as e:
         logger.error(f"Error processing /sum-day command: {str(e)}", exc_info=True)
         error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
@@ -271,38 +256,22 @@ async def handle_sum_hr_command(message, client_user, skip_validation=False):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, now, hours)
         summary_parts = await split_long_message(summary)
 
-        # Create a public thread for the summary
-        if message.guild:
-            try:
-                thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
-                # Add debug logging
-                logger.info(f"Attempting to create thread '{thread_name}' in channel #{message.channel.name}")
-                # Create a standalone thread without attaching to a message
-                thread = await message.channel.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
-                logger.info(f"Thread created successfully with ID {thread.id}")
-                for part in summary_parts:
-                    bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
-            except discord.Forbidden as e:
-                logger.warning(f"Bot lacks permission to create threads, posting to channel instead: {str(e)}")
-                # Fallback to posting in channel
-                for part in summary_parts:
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
-            except discord.HTTPException as e:
-                logger.error(f"Failed to create thread: {e}, posting to channel instead")
-                # Fallback to posting in channel
-                for part in summary_parts:
-                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
-        else:
-            # For DMs, post directly to the channel since threads aren't available
-            for part in summary_parts:
-                bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+        # Create a public thread for the summary using the utility function
+        thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
+        success = await create_thread_with_fallback(
+            message.channel, thread_name, summary_parts, 
+            store_bot_response_db, client_user, message.guild
+        )
 
-        await processing_msg.delete()
-        logger.info(f"Command executed successfully: /sum-hr {hours} - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
+        if success:
+            await processing_msg.delete()
+            logger.info(f"Command executed successfully: /sum-hr {hours} - Summary length: {len(summary)} - Split into {len(summary_parts)} parts")
+        else:
+            await processing_msg.delete()
+            error_msg = "Sorry, an error occurred while posting the summary."
+            bot_response = await message.channel.send(error_msg)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+
     except Exception as e:
         logger.error(f"Error processing /sum-hr {hours} command: {str(e)}", exc_info=True)
         error_msg = "Sorry, an error occurred while generating the summary. Please try again later."

@@ -338,15 +338,15 @@ async def update_message_with_scraped_data(
                     )
                 )
 
-                # Check if any rows were affected
-                rows_affected = cursor.rowcount == 0
+                # Check if any rows were affected - FIXED: was backwards logic
+                rows_affected = cursor.rowcount > 0
                 conn.commit()
                 return rows_affected
 
         # Run the synchronous function in a thread pool to avoid blocking the event loop
-        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+        success = await asyncio.to_thread(_update_message_sync)
 
-        if no_rows_affected:
+        if not success:
             logger.warning(f"No message found with ID {message_id} to update with scraped data")
             return False
 
