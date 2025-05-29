@@ -323,7 +323,8 @@ async def sum_day_slash(interaction: discord.Interaction):
                 self.content = "/sum-day"
 
             async def create_thread(self, name):
-                return await self.channel.create_thread(name=name, message=None)
+                # For slash commands, create a thread without a message
+                return await self.channel.create_thread(name=name, type=discord.ChannelType.public_thread)
 
         mock_message = MockMessage(interaction)
 
@@ -358,7 +359,8 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
                 self.content = f"/sum-hr {hours}"
 
             async def create_thread(self, name):
-                return await self.channel.create_thread(name=name, message=None)
+                # For slash commands, create a thread without a message
+                return await self.channel.create_thread(name=name, type=discord.ChannelType.public_thread)
 
         mock_message = MockMessage(interaction, hours)
 

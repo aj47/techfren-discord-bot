@@ -357,6 +357,8 @@ async def handle_sum_day_command_interaction(message, client_user, interaction):
             for part in summary_parts:
                 bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
                 await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            # Send completion message to the interaction
+            await interaction.followup.send(f"✅ Daily summary completed! Check the thread: {thread.mention}")
         else:
             for part in summary_parts:
                 await interaction.followup.send(part)
@@ -424,6 +426,8 @@ async def handle_sum_hr_command_interaction(message, client_user, interaction):
             for part in summary_parts:
                 bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
                 await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            # Send completion message to the interaction
+            await interaction.followup.send(f"✅ {hours}-hour summary completed! Check the thread: {thread.mention}")
         else:
             for part in summary_parts:
                 await interaction.followup.send(part)
