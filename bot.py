@@ -332,7 +332,7 @@ async def sum_day_slash(interaction: discord.Interaction):
         logger.error(f"Error in sum-day slash command: {e}", exc_info=True)
         try:
             await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
@@ -364,7 +364,7 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         logger.error(f"Error in sum-hr slash command: {e}", exc_info=True)
         try:
             await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 try:

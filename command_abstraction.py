@@ -8,7 +8,6 @@ and interaction-based commands without relying on mocking Discord objects.
 from dataclasses import dataclass
 from typing import Optional, Union, Protocol
 import discord
-from discord.ext import commands
 
 
 @dataclass
@@ -133,6 +132,40 @@ def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -
         raise ValueError(f"Unsupported source type: {type(source)}")
 
 
+async def _store_dm_responses(summary_parts: list[str], context: CommandContext) -> None:
+    """Store bot responses in database for DM conversations."""
+    try:
+        import database
+        from datetime import datetime
+
+        # Create a mock bot user ID (this should ideally come from the bot instance)
+        # For now, we'll use a placeholder that can be updated when we have access to the bot
+        bot_user_id = "bot_placeholder"  # This should be replaced with actual bot user ID
+
+        for i, part in enumerate(summary_parts):
+            # Generate a unique message ID for each part
+            message_id = f"bot_dm_response_{context.user_id}_{datetime.now().timestamp()}_{i}"
+
+            database.store_message(
+                message_id=message_id,
+                author_id=bot_user_id,
+                author_name="TechFren Bot",
+                channel_id=str(context.channel_id),
+                channel_name=context.channel_name or "DM",
+                content=part,
+                created_at=datetime.now(),
+                guild_id=None,  # DMs don't have guilds
+                guild_name=None,
+                is_bot=True,
+                is_command=False,
+                command_type=None
+            )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to store DM response in database: {str(e)}")
+
+
 async def handle_summary_command(
     context: CommandContext,
     response_sender: ResponseSender,
@@ -151,7 +184,8 @@ async def handle_summary_command(
     from datetime import datetime, timezone
     from rate_limiter import check_rate_limit
     from database import check_database_connection
-    from command_handler import call_llm_for_summary, split_long_message
+    from llm_handler import call_llm_for_summary
+    from message_utils import split_long_message
     import database
     import logging
     
@@ -186,10 +220,10 @@ async def handle_summary_command(
             return
         
         # Get messages for the specified time period
-        messages_for_summary = database.get_messages_for_summary(
-            channel_id_str, 
-            hours_back=hours, 
-            current_time=today
+        messages_for_summary = database.get_channel_messages_for_hours(
+            channel_id_str,
+            today,
+            hours
         )
         
         logger.info(f"Found {len(messages_for_summary)} messages for summary in channel {channel_name_str} (past {hours} hours)")
@@ -216,18 +250,26 @@ async def handle_summary_command(
             await response_sender.send(f"Summary posted in thread: {thread.mention}")
         else:
             await response_sender.send_in_parts(summary_parts)
+
+            # Store bot responses in database for DMs
+            if context.source_type == 'message' and not context.guild_id:
+                await _store_dm_responses(summary_parts, context)
         
         # Store summary in database
         try:
-            database.store_summary(
+            # Extract unique users from messages for active_users list
+            active_users = list(set(msg.get('author_name', 'Unknown') for msg in messages_for_summary if not msg.get('is_bot', False)))
+
+            database.store_channel_summary(
                 channel_id=channel_id_str,
-                summary_text=summary,
-                original_message_count=len(messages_for_summary),
-                user_id=str(context.user_id),
-                guild_id=str(context.guild_id) if context.guild_id else None,
                 channel_name=channel_name_str,
+                date=today,
+                summary_text=summary,
+                message_count=len(messages_for_summary),
+                active_users=active_users,
+                guild_id=str(context.guild_id) if context.guild_id else None,
                 guild_name=context.guild_name,
-                hours_summarized=hours
+                metadata={"hours_summarized": hours, "requested_by": str(context.user_id)}
             )
         except Exception as e:
             logger.error(f"Failed to store summary in database: {str(e)}")
