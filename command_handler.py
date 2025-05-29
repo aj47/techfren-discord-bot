@@ -152,7 +152,7 @@ async def handle_sum_day_command(message, client_user):
         # Create a public thread for the summary
         if message.guild:
             try:
-                thread_name = "24h Summary"  # Fixed: Using a constant since this is for 24 hours
+                thread_name = "Daily Summary"  # Consistent naming for 24-hour summaries
                 # Add debug logging
                 logger.info(f"Attempting to create thread '{thread_name}' in channel #{message.channel.name}")
                 # Create a standalone thread without attaching to a message
@@ -271,13 +271,32 @@ async def handle_sum_hr_command(message, client_user, skip_validation=False):
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, now, hours)
         summary_parts = await split_long_message(summary)
 
+        # Create a public thread for the summary
         if message.guild:
-            thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
-            thread = await message.create_thread(name=thread_name)
-            for part in summary_parts:
-                bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            try:
+                thread_name = f"{hours}h Summary" if hours != 1 else "1h Summary"
+                # Add debug logging
+                logger.info(f"Attempting to create thread '{thread_name}' in channel #{message.channel.name}")
+                # Create a standalone thread without attaching to a message
+                thread = await message.channel.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
+                logger.info(f"Thread created successfully with ID {thread.id}")
+                for part in summary_parts:
+                    bot_response = await thread.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+            except discord.Forbidden as e:
+                logger.warning(f"Bot lacks permission to create threads, posting to channel instead: {str(e)}")
+                # Fallback to posting in channel
+                for part in summary_parts:
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            except discord.HTTPException as e:
+                logger.error(f"Failed to create thread: {e}, posting to channel instead")
+                # Fallback to posting in channel
+                for part in summary_parts:
+                    bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
         else:
+            # For DMs, post directly to the channel since threads aren't available
             for part in summary_parts:
                 bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
                 await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
@@ -330,11 +349,18 @@ def validate_hours_parameter(hours):
     Validates the hours parameter for sum-hr command.
 
     Args:
-        hours (int): Number of hours to validate
+        hours: Number of hours to validate (should be int)
 
     Returns:
         tuple: (is_valid: bool, error_message: str or None)
     """
+    # First check if it's actually an integer
+    if not isinstance(hours, int):
+        try:
+            hours = int(hours)
+        except (ValueError, TypeError):
+            return False, "Number of hours must be a valid integer."
+
     if hours <= 0:
         return False, "Number of hours must be greater than 0."
 
