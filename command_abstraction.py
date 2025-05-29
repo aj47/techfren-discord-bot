@@ -140,7 +140,8 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext)
 
         # Create a mock bot user ID (this should ideally come from the bot instance)
         # For now, we'll use a placeholder that can be updated when we have access to the bot
-        bot_user_id = "bot_placeholder"  # This should be replaced with actual bot user ID
+        from discord import Client
+        bot_user_id = Client.user.id if Client.user else "0"
 
         for i, part in enumerate(summary_parts):
             # Generate a unique message ID for each part
