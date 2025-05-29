@@ -6,6 +6,7 @@ import asyncio
 import re
 import os
 import json
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -329,10 +330,8 @@ async def _handle_slash_command_wrapper(interaction: discord.Interaction, comman
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
-        try:
+        with suppress(Exception):
             await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
-        except Exception:
-            pass
 
 # Slash Commands
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
