@@ -1,7 +1,7 @@
 # This example requires the 'message_content' intent.
 
 import discord
-from discord.ext import tasks
+from discord.ext import commands, tasks
 import asyncio
 import re
 import os
@@ -22,7 +22,11 @@ from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify 
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
-client = discord.Client(intents=intents)
+# Use commands.Bot instead of discord.Client to support slash commands
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Keep client reference for backward compatibility
+client = bot
 
 async def process_url(message_id: str, url: str):
     """
@@ -113,12 +117,19 @@ async def process_url(message_id: str, url: str):
     except Exception as e:
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
 
-@client.event
+@bot.event
 async def on_ready():
-    set_discord_client(client) # Set the client instance for summarization tasks
-    logger.info(f'Bot has successfully connected as {client.user}')
-    logger.info(f'Bot ID: {client.user.id}')
-    logger.info(f'Connected to {len(client.guilds)} guilds')
+    set_discord_client(bot) # Set the client instance for summarization tasks
+    logger.info(f'Bot has successfully connected as {bot.user}')
+    logger.info(f'Bot ID: {bot.user.id}')
+    logger.info(f'Connected to {len(bot.guilds)} guilds')
+
+    # Sync slash commands with Discord
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f'Synced {len(synced)} command(s)')
+    except Exception as e:
+        logger.error(f'Failed to sync commands: {e}')
 
     # Initialize the database - critical for bot operation
     try:
@@ -127,7 +138,7 @@ async def on_ready():
         # Check if database connection is working
         if not database.check_database_connection():
             logger.critical('Database connection check failed. Shutting down.')
-            await client.close()
+            await bot.close()
             return
 
         message_count = database.get_message_count()
@@ -154,14 +165,14 @@ async def on_ready():
         logger.info("Started daily channel summarization task")
 
     # Log details about each connected guild
-    for guild in client.guilds:
+    for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
         # Check if bot-talk channel exists
         bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
         if not bot_talk_exists:
             logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
-@client.event
+@bot.event
 async def on_guild_join(guild):
     """Log when the bot joins a new guild"""
     logger.info(f'Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
@@ -170,12 +181,12 @@ async def on_guild_join(guild):
     if not bot_talk_exists:
         logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
-@client.event
+@bot.event
 async def on_guild_remove(guild):
     """Log when the bot is removed from a guild"""
     logger.info(f'Bot removed from guild: {guild.name} (ID: {guild.id})')
 
-@client.event
+@bot.event
 async def on_error(event, *args, **kwargs):
     """Log Discord API errors"""
     logger.error(f'Discord error in {event}', exc_info=True)
@@ -185,10 +196,10 @@ async def on_error(event, *args, **kwargs):
     if kwargs:
         logger.error(f'Error context kwargs: {kwargs}')
 
-@client.event
+@bot.event
 async def on_message(message):
     # Ignore messages from the bot itself
-    if message.author == client.user:
+    if message.author == bot.user:
         return
 
     # Log message details - safely handle DMs and different channel types
@@ -213,8 +224,8 @@ async def on_message(message):
         is_command = False
         command_type = None
 
-        bot_mention = f'<@{client.user.id}>'
-        bot_mention_alt = f'<@!{client.user.id}>'
+        bot_mention = f'<@{bot.user.id}>'
+        bot_mention_alt = f'<@!{bot.user.id}>'
         if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
             is_command = True
             command_type = "mention"
@@ -269,8 +280,8 @@ async def on_message(message):
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
     # Check if this is a command
-    bot_mention = f'<@{client.user.id}>'
-    bot_mention_alt = f'<@!{client.user.id}>'
+    bot_mention = f'<@{bot.user.id}>'
+    bot_mention_alt = f'<@!{bot.user.id}>'
     is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
@@ -278,7 +289,7 @@ async def on_message(message):
     # Process mention commands in any channel
     if is_mention_command:
         logger.debug(f"Processing mention command in channel #{message.channel.name}")
-        await handle_bot_command(message, client.user)
+        await handle_bot_command(message, bot.user)
         return
 
     # If not a command we recognize, ignore
@@ -288,13 +299,79 @@ async def on_message(message):
     # Process commands
     try:
         if is_sum_day_command:
-            await handle_sum_day_command(message, client.user)
+            await handle_sum_day_command(message, bot.user)
         elif is_sum_hr_command:
-            await handle_sum_hr_command(message, client.user)
+            await handle_sum_hr_command(message, bot.user)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
+
+# Slash Commands
+@bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
+async def sum_day_slash(interaction: discord.Interaction):
+    """Slash command version of /sum-day"""
+    await interaction.response.defer()
+
+    try:
+        # Create a mock message object for compatibility with existing handler
+        class MockMessage:
+            def __init__(self, interaction):
+                self.author = interaction.user
+                self.guild = interaction.guild
+                self.channel = interaction.channel
+                self.content = "/sum-day"
+
+            async def create_thread(self, name):
+                return await self.channel.create_thread(name=name, message=None)
+
+        mock_message = MockMessage(interaction)
+
+        # Use existing handler logic but send responses via interaction
+        from command_handler import handle_sum_day_command_interaction
+        await handle_sum_day_command_interaction(mock_message, bot.user, interaction)
+
+    except Exception as e:
+        logger.error(f"Error in sum-day slash command: {e}", exc_info=True)
+        try:
+            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
+        except:
+            pass
+
+@bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
+async def sum_hr_slash(interaction: discord.Interaction, hours: int):
+    """Slash command version of /sum-hr"""
+    await interaction.response.defer()
+
+    try:
+        # Validate hours parameter
+        if hours < 1 or hours > 168:  # Max 1 week
+            await interaction.followup.send("Please provide a number between 1 and 168 hours.", ephemeral=True)
+            return
+
+        # Create a mock message object for compatibility with existing handler
+        class MockMessage:
+            def __init__(self, interaction, hours):
+                self.author = interaction.user
+                self.guild = interaction.guild
+                self.channel = interaction.channel
+                self.content = f"/sum-hr {hours}"
+
+            async def create_thread(self, name):
+                return await self.channel.create_thread(name=name, message=None)
+
+        mock_message = MockMessage(interaction, hours)
+
+        # Use existing handler logic but send responses via interaction
+        from command_handler import handle_sum_hr_command_interaction
+        await handle_sum_hr_command_interaction(mock_message, bot.user, interaction)
+
+    except Exception as e:
+        logger.error(f"Error in sum-hr slash command: {e}", exc_info=True)
+        try:
+            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
+        except:
+            pass
 
 try:
     logger.info("Starting bot...")
@@ -309,7 +386,7 @@ try:
     logger.info("Connecting to Discord...")
 
     # Run the bot
-    client.run(config.token)
+    bot.run(config.token)
 except ImportError:
     logger.critical("Config file not found or token not defined", exc_info=True)
     logger.error("Please create a config.py file with your Discord bot token.")
