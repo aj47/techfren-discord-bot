@@ -346,7 +346,7 @@ async def handle_sum_day_command_interaction(message, client_user, interaction):
 
         if not messages_for_summary:
             logger.info(f"No messages found for /sum-day command in channel {channel_name_str} for the past 24 hours")
-            await interaction.followup.send(f"No messages found in this channel for the past 24 hours.", ephemeral=True)
+            await interaction.followup.send("No messages found in this channel for the past 24 hours.", ephemeral=True)
             return
 
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)

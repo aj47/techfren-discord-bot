@@ -1,7 +1,7 @@
 # This example requires the 'message_content' intent.
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 import asyncio
 import re
 import os
@@ -151,12 +151,12 @@ async def on_ready():
             logger.info(f'Database file size: {os.path.getsize(db_file_path)} bytes')
         else:
             logger.critical(f'Database file does not exist at: {db_file_path}')
-            await client.close()
+            await bot.close()
             return
     except Exception as e:
         logger.critical(f'Failed to initialize database: {str(e)}', exc_info=True)
         logger.critical('Database initialization is required for bot operation. Shutting down.')
-        await client.close()
+        await bot.close()
         return
 
     # Start the daily summarization task if not already running
@@ -314,23 +314,19 @@ async def sum_day_slash(interaction: discord.Interaction):
     await interaction.response.defer()
 
     try:
-        # Create a mock message object for compatibility with existing handler
-        class MockMessage:
-            def __init__(self, interaction):
-                self.author = interaction.user
-                self.guild = interaction.guild
-                self.channel = interaction.channel
-                self.content = "/sum-day"
-
-            async def create_thread(self, name):
-                # For slash commands, create a thread without a message
-                return await self.channel.create_thread(name=name, type=discord.ChannelType.public_thread)
-
-        mock_message = MockMessage(interaction)
-
-        # Use existing handler logic but send responses via interaction
-        from command_handler import handle_sum_day_command_interaction
-        await handle_sum_day_command_interaction(mock_message, bot.user, interaction)
+        # Use new abstraction layer instead of MockMessage
+        from command_abstraction import (
+            create_context_from_interaction,
+            create_response_sender,
+            create_thread_manager,
+            handle_summary_command
+        )
+        
+        context = create_context_from_interaction(interaction, "/sum-day")
+        response_sender = create_response_sender(interaction)
+        thread_manager = create_thread_manager(interaction)
+        
+        await handle_summary_command(context, response_sender, thread_manager, hours=24)
 
     except Exception as e:
         logger.error(f"Error in sum-day slash command: {e}", exc_info=True)
@@ -350,23 +346,19 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
             await interaction.followup.send("Please provide a number between 1 and 168 hours.", ephemeral=True)
             return
 
-        # Create a mock message object for compatibility with existing handler
-        class MockMessage:
-            def __init__(self, interaction, hours):
-                self.author = interaction.user
-                self.guild = interaction.guild
-                self.channel = interaction.channel
-                self.content = f"/sum-hr {hours}"
-
-            async def create_thread(self, name):
-                # For slash commands, create a thread without a message
-                return await self.channel.create_thread(name=name, type=discord.ChannelType.public_thread)
-
-        mock_message = MockMessage(interaction, hours)
-
-        # Use existing handler logic but send responses via interaction
-        from command_handler import handle_sum_hr_command_interaction
-        await handle_sum_hr_command_interaction(mock_message, bot.user, interaction)
+        # Use new abstraction layer instead of MockMessage
+        from command_abstraction import (
+            create_context_from_interaction,
+            create_response_sender,
+            create_thread_manager,
+            handle_summary_command
+        )
+        
+        context = create_context_from_interaction(interaction, f"/sum-hr {hours}")
+        response_sender = create_response_sender(interaction)
+        thread_manager = create_thread_manager(interaction)
+        
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours)
 
     except Exception as e:
         logger.error(f"Error in sum-hr slash command: {e}", exc_info=True)
