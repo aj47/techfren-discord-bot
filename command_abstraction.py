@@ -8,6 +8,7 @@ and interaction-based commands without relying on mocking Discord objects.
 from dataclasses import dataclass
 from typing import Optional, Union, Protocol
 import discord
+import logging
 
 
 @dataclass
@@ -84,7 +85,17 @@ class ThreadManager:
                 name=name, 
                 type=discord.ChannelType.public_thread
             )
-        except Exception:
+        except discord.HTTPException as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create thread '{name}': HTTP {e.status} - {e.text}")
+            return None
+        except discord.Forbidden as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Insufficient permissions to create thread '{name}': {e}")
+            return None
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error creating thread '{name}': {str(e)}", exc_info=True)
             return None
 
 
@@ -134,7 +145,7 @@ def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -
         raise ValueError(f"Unsupported source type: {type(source)}")
 
 
-async def _store_dm_responses(summary_parts: list[str], context: CommandContext, bot_user=None) -> None:
+async def _store_dm_responses(summary_parts: list[str], context: CommandContext, bot_user: Optional[discord.ClientUser] = None) -> None:
     """Store bot responses in database for DM conversations."""
     try:
         import database
@@ -188,7 +199,7 @@ async def handle_summary_command(
     response_sender: ResponseSender,
     thread_manager: ThreadManager,
     hours: int = 24,
-    bot_user=None
+    bot_user: Optional[discord.ClientUser] = None
 ) -> None:
     """
     Core logic for summary commands, abstracted from Discord-specific handling.
@@ -209,11 +220,26 @@ async def handle_summary_command(
     
     logger = logging.getLogger(__name__)
     
+    # Input validation
+    if not isinstance(hours, int) or hours < 1:
+        logger.warning(f"Invalid hours parameter: {hours} (must be positive integer)")
+        await response_sender.send("Invalid hours parameter. Must be a positive number.", ephemeral=True)
+        return
+    
+    import config
+    if hours > config.MAX_SUMMARY_HOURS:
+        logger.warning(f"Hours parameter {hours} exceeds maximum {config.MAX_SUMMARY_HOURS}")
+        error_msg = config.ERROR_MESSAGES['invalid_hours_range']
+        await response_sender.send(error_msg, ephemeral=True)
+        return
+    
     # Rate limiting
     is_limited, wait_time, reason = check_rate_limit(str(context.user_id))
     if is_limited:
-        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
-            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+        if reason == "cooldown":
+            error_msg = config.ERROR_MESSAGES['rate_limit_cooldown'].format(wait_time=wait_time)
+        else:
+            error_msg = config.ERROR_MESSAGES['rate_limit_exceeded'].format(wait_time=wait_time)
         await response_sender.send(error_msg, ephemeral=True)
         logger.info(f"Rate limited user {context.user_name} ({reason}): wait time {wait_time:.1f}s")
         return
@@ -229,12 +255,12 @@ async def handle_summary_command(
         # Database checks
         if not database:
             logger.error("Database module not available in handle_summary_command")
-            await response_sender.send("Sorry, a critical error occurred (database unavailable). Please try again later.", ephemeral=True)
+            await response_sender.send(config.ERROR_MESSAGES['database_unavailable'], ephemeral=True)
             return
         
         if not check_database_connection():
             logger.error("Database connection check failed in handle_summary_command")
-            await response_sender.send("Sorry, a database connection error occurred. Please try again later.", ephemeral=True)
+            await response_sender.send(config.ERROR_MESSAGES['database_error'], ephemeral=True)
             return
         
         # Get messages for the specified time period
@@ -248,7 +274,8 @@ async def handle_summary_command(
         
         if not messages_for_summary:
             logger.info(f"No messages found for summary command in channel {channel_name_str} for the past {hours} hours")
-            await response_sender.send(f"No messages found in this channel for the past {hours} hours." if hours != 24 else "No messages found in this channel for the past 24 hours.", ephemeral=True)
+            error_msg = config.ERROR_MESSAGES['no_messages_found'].format(hours=hours)
+            await response_sender.send(error_msg, ephemeral=True)
             return
         
         # Generate summary

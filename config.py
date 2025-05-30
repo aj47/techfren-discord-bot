@@ -68,5 +68,8 @@ ERROR_MESSAGES = {
     'large_summary_warning': "⚠️ Large summary requested ({hours} hours). This may take longer to process.",
     'no_query': "Please provide a query after mentioning the bot.",
     'rate_limit_cooldown': "Please wait {wait_time:.1f} seconds before making another request.",
-    'rate_limit_exceeded': "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+    'rate_limit_exceeded': "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.",
+    'database_unavailable': "Sorry, a critical error occurred (database unavailable). Please try again later.",
+    'database_error': "Sorry, a database connection error occurred. Please try again later.",
+    'no_messages_found': "No messages found in this channel for the past {hours} hours."
 }
