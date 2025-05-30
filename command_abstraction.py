@@ -147,24 +147,31 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext,
         bot_user_id = str(bot_user.id)
         bot_user_name = str(bot_user)
 
+        # Use transaction for multiple database operations
+        messages_to_store = []
+        base_timestamp = datetime.now()
+        
         for i, part in enumerate(summary_parts):
             # Generate a unique message ID for each part
-            message_id = f"bot_dm_response_{context.user_id}_{datetime.now().timestamp()}_{i}"
-
-            database.store_message(
-                message_id=message_id,
-                author_id=bot_user_id,
-                author_name=bot_user_name,
-                channel_id=str(context.channel_id),
-                channel_name=context.channel_name or "DM",
-                content=part,
-                created_at=datetime.now(),
-                guild_id=None,  # DMs don't have guilds
-                guild_name=None,
-                is_bot=True,
-                is_command=False,
-                command_type=None
-            )
+            message_id = f"bot_dm_response_{context.user_id}_{base_timestamp.timestamp()}_{i}"
+            
+            messages_to_store.append({
+                'message_id': message_id,
+                'author_id': bot_user_id,
+                'author_name': bot_user_name,
+                'channel_id': str(context.channel_id),
+                'channel_name': context.channel_name or "DM",
+                'content': part,
+                'created_at': base_timestamp,
+                'guild_id': None,  # DMs don't have guilds
+                'guild_name': None,
+                'is_bot': True,
+                'is_command': False,
+                'command_type': None
+            })
+        
+        # Store all messages in a single transaction
+        await database.store_messages_batch(messages_to_store)
     except (ValueError, TypeError) as e:
         import logging
         logger = logging.getLogger(__name__)

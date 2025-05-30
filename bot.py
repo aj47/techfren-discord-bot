@@ -6,7 +6,7 @@ import asyncio
 import re
 import os
 import json
-from typing import Callable, Optional
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module

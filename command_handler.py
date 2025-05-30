@@ -7,7 +7,7 @@ from message_utils import split_long_message
 import re
 from typing import Optional
 
-async def handle_bot_command(message, client_user):
+async def handle_bot_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the mention command."""
     bot_mention = f'<@{client_user.id}>'
     bot_mention_alt = f'<@!{client_user.id}>'
@@ -75,13 +75,13 @@ def _validate_hours_range(hours: int) -> bool:
     return 1 <= hours <= config.MAX_SUMMARY_HOURS  # Max 7 days
 
 # Helper function for error responses
-async def _send_error_response(message, client_user, error_msg: str):
+async def _send_error_response(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
     """Send error response and store in database."""
     bot_response = await message.channel.send(error_msg)
     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 # Helper function for message command handling
-async def _handle_message_command_wrapper(message, client_user, command_name: str, hours: int = 24):
+async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24) -> None:
     """Unified wrapper for message command handling with error management."""
     try:
         from command_abstraction import (
@@ -103,11 +103,11 @@ async def _handle_message_command_wrapper(message, client_user, command_name: st
         error_msg = config.ERROR_MESSAGES['summary_error']
         await _send_error_response(message, client_user, error_msg)
 
-async def handle_sum_day_command(message, client_user):
+async def handle_sum_day_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the /sum-day command using the abstraction layer."""
     await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24)
 
-async def handle_sum_hr_command(message, client_user):
+async def handle_sum_hr_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the /sum-hr <num_hours> command using the abstraction layer."""
     # Parse and validate hours parameter
     hours = _parse_and_validate_hours(message.content)
@@ -132,7 +132,7 @@ async def handle_sum_hr_command(message, client_user):
 
     await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
 
-async def store_bot_response_db(bot_msg_obj, client_user, guild, channel, content_to_store):
+async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: discord.ClientUser, guild: Optional[discord.Guild], channel: discord.abc.Messageable, content_to_store: str) -> None:
     """Helper function to store bot's own messages in the database."""
     try:
         guild_id_str = str(guild.id) if guild else None
