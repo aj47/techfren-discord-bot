@@ -61,11 +61,13 @@ class InteractionResponseSender:
         self.interaction = interaction
     
     async def send(self, content: str, ephemeral: bool = False) -> None:
-        await self.interaction.followup.send(content, ephemeral=ephemeral)
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        await self.interaction.followup.send(content, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
     
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
-            await self.interaction.followup.send(part, ephemeral=ephemeral)
+            await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
 
 
 class ThreadManager:

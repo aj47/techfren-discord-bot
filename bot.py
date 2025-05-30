@@ -346,7 +346,8 @@ async def _handle_slash_command_wrapper(
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
         try:
-            await interaction.followup.send(error_message, ephemeral=True)
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
         except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
             logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
         except Exception as unexpected_error:

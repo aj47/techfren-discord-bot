@@ -29,7 +29,8 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
             error_msg = config.ERROR_MESSAGES['rate_limit_cooldown'].format(wait_time=wait_time)
         else:
             error_msg = config.ERROR_MESSAGES['rate_limit_exceeded'].format(wait_time=wait_time)
-        bot_response = await message.channel.send(error_msg)
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
         return
@@ -49,7 +50,8 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
     except Exception as e:
         logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
         error_msg = config.ERROR_MESSAGES['processing_error']
-        bot_response = await message.channel.send(error_msg)
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         try:
             await processing_msg.delete()
@@ -77,7 +79,8 @@ def _validate_hours_range(hours: int) -> bool:
 # Helper function for error responses
 async def _send_error_response(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
     """Send error response and store in database."""
-    bot_response = await message.channel.send(error_msg)
+    allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+    bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 # Helper function for message command handling
