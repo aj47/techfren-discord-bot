@@ -52,3 +52,21 @@ apify_api_token = os.getenv('APIFY_API_TOKEN')
 summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
 summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
+
+# Summary Command Limits
+# Maximum hours that can be requested in summary commands (7 days)
+MAX_SUMMARY_HOURS = 168
+# Performance threshold for large summaries (24 hours)
+LARGE_SUMMARY_THRESHOLD = 24
+
+# Error Messages
+ERROR_MESSAGES = {
+    'invalid_hours_range': f"Number of hours must be between 1 and {MAX_SUMMARY_HOURS} (7 days).",
+    'invalid_hours_format': "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)",
+    'processing_error': "Sorry, an error occurred while processing your request. Please try again later.",
+    'summary_error': "Sorry, an error occurred while generating the summary. Please try again later.",
+    'large_summary_warning': "⚠️ Large summary requested ({hours} hours). This may take longer to process.",
+    'no_query': "Please provide a query after mentioning the bot.",
+    'rate_limit_cooldown': "Please wait {wait_time:.1f} seconds before making another request.",
+    'rate_limit_exceeded': "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+}

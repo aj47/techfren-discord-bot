@@ -14,11 +14,10 @@ async def handle_bot_command(message, client_user):
     query = message.content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
 
     if not query:
-        error_msg = "Please provide a query after mentioning the bot."
-        bot_response = await message.channel.send(
-    error_msg,
-    allowed_mentions=discord.AllowedMentions.none()
-)
+        import config
+        error_msg = config.ERROR_MESSAGES['no_query']
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         return
 
@@ -26,8 +25,10 @@ async def handle_bot_command(message, client_user):
 
     is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
     if is_limited:
-        error_msg = f"Please wait {wait_time:.1f} seconds before making another request." if reason == "cooldown" \
-            else f"You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds."
+        if reason == "cooldown":
+            error_msg = config.ERROR_MESSAGES['rate_limit_cooldown'].format(wait_time=wait_time)
+        else:
+            error_msg = config.ERROR_MESSAGES['rate_limit_exceeded'].format(wait_time=wait_time)
         bot_response = await message.channel.send(error_msg)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
@@ -39,14 +40,15 @@ async def handle_bot_command(message, client_user):
         message_parts = await split_long_message(response)
 
         for part in message_parts:
-            bot_response = await message.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions)
             await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
 
         await processing_msg.delete()
         logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while processing your request. Please try again later."
+        error_msg = config.ERROR_MESSAGES['processing_error']
         bot_response = await message.channel.send(error_msg)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         try:
@@ -69,7 +71,8 @@ def _parse_and_validate_hours(content: str) -> Optional[int]:
 
 def _validate_hours_range(hours: int) -> bool:
     """Validate that hours is within acceptable range."""
-    return 1 <= hours <= 168  # Max 7 days
+    import config
+    return 1 <= hours <= config.MAX_SUMMARY_HOURS  # Max 7 days
 
 # Helper function for error responses
 async def _send_error_response(message, client_user, error_msg: str):
@@ -96,7 +99,8 @@ async def _handle_message_command_wrapper(message, client_user, command_name: st
 
     except Exception as e:
         logger.error(f"Error in handle_{command_name}_command: {str(e)}", exc_info=True)
-        error_msg = "Sorry, an error occurred while generating the summary. Please try again later."
+        import config
+        error_msg = config.ERROR_MESSAGES['summary_error']
         await _send_error_response(message, client_user, error_msg)
 
 async def handle_sum_day_command(message, client_user):
@@ -110,16 +114,21 @@ async def handle_sum_hr_command(message, client_user):
     if hours is None:
         await _send_error_response(
             message, client_user,
-            "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)"
+            config.ERROR_MESSAGES['invalid_hours_format']
         )
         return
 
     if not _validate_hours_range(hours):
         await _send_error_response(
             message, client_user,
-            "Number of hours must be between 1 and 168 (7 days)."
+            config.ERROR_MESSAGES['invalid_hours_range']
         )
         return
+    
+    # Warn for large summaries that may take longer
+    if hours > config.LARGE_SUMMARY_THRESHOLD:
+        warning_msg = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours)
+        await message.channel.send(warning_msg)
 
     await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
 

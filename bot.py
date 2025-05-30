@@ -88,11 +88,18 @@ async def process_url(message_id: str, url: str):
             return
 
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
-        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token \
-           and isinstance(scraped_result, dict):
-            markdown_content = scraped_result.get("markdown", "")
+        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
+            if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
+                markdown_content = scraped_result.get("markdown", "")
+            else:
+                logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
+                return
         else:
-            markdown_content = scraped_result  # Either already a markdown string or fallback value
+            if isinstance(scraped_result, str):
+                markdown_content = scraped_result  # Firecrawl returns markdown directly
+            else:
+                logger.warning(f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}")
+                return
 
         # Step 2: Summarize the scraped content
         scraped_data = await summarize_scraped_content(markdown_content, url)
@@ -354,11 +361,17 @@ async def sum_day_slash(interaction: discord.Interaction):
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    if hours < 1 or hours > 168:  # Max 1 week
-        await interaction.response.send_message("Please provide a number between 1 and 168 hours.", ephemeral=True)
+    if hours < 1 or hours > config.MAX_SUMMARY_HOURS:  # Max 1 week
+        await interaction.response.send_message(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True)
         return
+    
+    # Warn for large summaries that may take longer
+    if hours > config.LARGE_SUMMARY_THRESHOLD:
+        error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
+    else:
+        error_message = None
 
-    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours, error_message=error_message)
 
 try:
     logger.info("Starting bot...")

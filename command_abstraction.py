@@ -43,11 +43,14 @@ class MessageResponseSender:
     
     async def send(self, content: str, ephemeral: bool = False) -> None:
         # `ephemeral` has no meaning for regular messages; we silently ignore it.
-        await self.channel.send(content, allowed_mentions=discord.AllowedMentions.none())
+        # Allow user mentions but disable everyone/here and role mentions for safety
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        await self.channel.send(content, allowed_mentions=allowed_mentions)
     
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
-            await self.channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+            await self.channel.send(part, allowed_mentions=allowed_mentions)
 
 
 class InteractionResponseSender:
@@ -137,9 +140,12 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext,
         import database
         from datetime import datetime
 
-        # Get bot user ID from the provided bot_user or use a default
-        bot_user_id = str(bot_user.id) if bot_user else "0"
-        bot_user_name = str(bot_user) if bot_user else "TechFren Bot"
+        # Get bot user ID from the provided bot_user - raise error if missing
+        if bot_user is None:
+            raise ValueError("bot_user parameter is required for storing DM responses")
+        
+        bot_user_id = str(bot_user.id)
+        bot_user_name = str(bot_user)
 
         for i, part in enumerate(summary_parts):
             # Generate a unique message ID for each part
@@ -159,10 +165,15 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext,
                 is_command=False,
                 command_type=None
             )
+    except (ValueError, TypeError) as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Invalid parameters for storing DM response: {str(e)}")
+        raise
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
-        logger.error(f"Failed to store DM response in database: {str(e)}")
+        logger.error(f"Database error storing DM response: {str(e)}", exc_info=True)
 
 
 async def handle_summary_command(
@@ -276,4 +287,5 @@ async def handle_summary_command(
     
     except Exception as e:
         logger.error(f"Error in handle_summary_command: {str(e)}", exc_info=True)
-        await response_sender.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
+        import config
+        await response_sender.send(config.ERROR_MESSAGES['summary_error'], ephemeral=True)
