@@ -49,3 +49,6 @@ data/
 discord-bot.pem
 .aider*
 .DS_Store
+
+# Code review reports
+code-reviews/

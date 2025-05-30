@@ -6,7 +6,7 @@ import asyncio
 import re
 import os
 import json
-from contextlib import suppress
+from typing import Callable, Optional
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -310,9 +310,17 @@ async def on_message(message):
         # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
-async def _handle_slash_command_wrapper(interaction: discord.Interaction, command_name: str, hours: int = 24):
+async def _handle_slash_command_wrapper(
+    interaction: discord.Interaction, 
+    command_name: str, 
+    hours: int = 24,
+    error_message: Optional[str] = None
+) -> None:
     """Unified wrapper for slash command handling with error management."""
     await interaction.response.defer()
+    
+    if error_message is None:
+        error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
 
     try:
         from command_abstraction import (
@@ -330,8 +338,12 @@ async def _handle_slash_command_wrapper(interaction: discord.Interaction, comman
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
-        with suppress(Exception):
-            await interaction.followup.send("Sorry, an error occurred while generating the summary. Please try again later.", ephemeral=True)
+        try:
+            await interaction.followup.send(error_message, ephemeral=True)
+        except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
+            logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
+        except Exception as unexpected_error:
+            logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
 
 # Slash Commands
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
