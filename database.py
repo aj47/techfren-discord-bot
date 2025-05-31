@@ -297,6 +297,59 @@ def store_message(
         logger.error(f"Error storing message {message_id}: {str(e)}", exc_info=True)
         return False
 
+async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
+    """
+    Store multiple messages in a single transaction for better performance and consistency.
+
+    Args:
+        messages (List[Dict[str, Any]]): List of message dictionaries with required fields
+
+    Returns:
+        bool: True if all messages were stored successfully, False otherwise
+    """
+    if not messages:
+        return True
+        
+    try:
+        def _store_batch():
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                
+                for msg in messages:
+                    cursor.execute(
+                        INSERT_MESSAGE,
+                        (
+                            msg['message_id'],
+                            msg['author_id'],
+                            msg['author_name'],
+                            msg['channel_id'],
+                            msg['channel_name'],
+                            msg.get('guild_id'),
+                            msg.get('guild_name'),
+                            msg['content'],
+                            msg['created_at'].isoformat(),
+                            int(msg.get('is_bot', False)),
+                            int(msg.get('is_command', False)),
+                            msg.get('command_type'),
+                            msg.get('scraped_url'),
+                            msg.get('scraped_content_summary'),
+                            msg.get('scraped_content_key_points')
+                        )
+                    )
+                
+                conn.commit()
+                return True
+
+        result = await asyncio.to_thread(_store_batch)
+        logger.info(f"Stored {len(messages)} messages in batch transaction")
+        return result
+    except sqlite3.IntegrityError as e:
+        logger.warning(f"Integrity error in batch message storage: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Error storing message batch: {str(e)}", exc_info=True)
+        return False
+
 async def update_message_with_scraped_data(
     message_id: str,
     scraped_url: str,
