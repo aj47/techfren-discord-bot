@@ -106,13 +106,15 @@ To use the message content intent, you need to enable it in the Discord Develope
   - The bot retrieves all messages from the channel (including bot responses) except command messages
   - Sends them to the AI model for summarization
   - Returns a formatted summary with the main topics and key points discussed
+  - Creates an efficient thread: the initial message is edited with the summary content and a thread is created from it
+  - Additional summary parts (if content exceeds Discord's character limit) are posted within the thread
 
 - `/sum-hr <hours>`: Summarizes all messages in the current channel for the past N hours
   - Usage: `/sum-hr 6` (summarizes past 6 hours), `/sum-hr 12` (summarizes past 12 hours)
   - Works in any channel (not restricted to #bot-talk)
   - Flexible time range allows for more granular summaries than daily summaries
-  - Creates a thread with an appropriate name (e.g., "6h Summary", "1h Summary")
-  - Same formatting and features as `/sum-day` command
+  - Creates an efficient thread with an appropriate name (e.g., "Summary - channel-name - 2025-05-30")
+  - Same formatting and thread creation features as `/sum-day` command
 
 ### Automated Daily Summarization
 
@@ -220,6 +222,15 @@ If you encounter database-related errors:
 4. Check the logs for detailed error messages
 
 ## Changelog
+
+### 2025-05-30
+- **Thread Optimization**: Improved summary command efficiency and user experience
+  - **Clean Channel View**: Main message shows only a title (e.g., "Summary of #channel for the past 24 hours")
+  - **Content in Thread**: All summary content is posted within the thread to keep channels uncluttered
+  - **Unified Approach**: Both message-based (`/sum-day` typed) and slash commands work identically
+  - **Guild Info Fix**: Automatically fetch messages with proper guild information when needed for thread creation
+  - **Smart Fallback**: If thread creation fails, summary content is included in the main message
+  - Reduced visual clutter while maintaining full functionality
 
 ### 2025-01-25
 - **Documentation Update**: Added missing `/sum-hr <hours>` command documentation to README
