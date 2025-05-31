@@ -333,8 +333,15 @@ async def handle_summary_command(
             return
 
         # Generate summary
-        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
-        summary_parts = await split_long_message(summary)
+        raw_summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
+
+        # For thread content, we only want the raw summary (no title since main message has it)
+        thread_content_parts = await split_long_message(raw_summary)
+
+        # For fallback cases where we need the full summary with header
+        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+        summary_with_header = f"**Summary of #{channel_name_str} for the past {time_period}**\n\n{raw_summary}"
+        summary_parts_with_header = await split_long_message(summary_with_header)
 
         # Send summary efficiently with thread creation
         if context.guild_id:
@@ -353,17 +360,17 @@ async def handle_summary_command(
                     thread = await thread_manager.create_thread_from_message(initial_message, thread_name)
 
                     if thread:
-                        # Send all summary content in the thread
+                        # Send all summary content in the thread (without title)
                         thread_sender = MessageResponseSender(thread)
-                        await thread_sender.send_in_parts(summary_parts)
+                        await thread_sender.send_in_parts(thread_content_parts)
                     else:
                         # Fallback: if thread creation failed, edit message to include summary
                         logger.warning("Thread creation failed, including summary in main message")
-                        await initial_message.edit(content=f"{title_message}\n\n{summary_parts[0] if summary_parts else summary}")
+                        await initial_message.edit(content=f"{title_message}\n\n{thread_content_parts[0] if thread_content_parts else raw_summary}")
 
                         # Send remaining parts as separate messages if needed
-                        if len(summary_parts) > 1:
-                            for part in summary_parts[1:]:
+                        if len(thread_content_parts) > 1:
+                            for part in thread_content_parts[1:]:
                                 await response_sender.send(part)
 
                 except discord.HTTPException as e:
@@ -372,22 +379,22 @@ async def handle_summary_command(
                     thread = await thread_manager.create_thread(thread_name)
                     if thread:
                         thread_sender = MessageResponseSender(thread)
-                        await thread_sender.send_in_parts(summary_parts)
+                        await thread_sender.send_in_parts(thread_content_parts)
                         await response_sender.send(f"Summary posted in thread: {thread.mention}")
                     else:
-                        # Ultimate fallback: send summary parts directly
-                        await response_sender.send_in_parts(summary_parts)
+                        # Ultimate fallback: send summary parts with header directly
+                        await response_sender.send_in_parts(summary_parts_with_header)
             else:
                 # No initial message, send title and summary parts directly
                 await response_sender.send(title_message)
-                await response_sender.send_in_parts(summary_parts)
+                await response_sender.send_in_parts(thread_content_parts)
         else:
-            # For DMs: send summary parts directly
-            await response_sender.send_in_parts(summary_parts)
+            # For DMs: send summary parts with header directly
+            await response_sender.send_in_parts(summary_parts_with_header)
 
             # Store bot responses in database for DMs
             if context.source_type == 'message' and not context.guild_id:
-                await _store_dm_responses(summary_parts, context, bot_user)
+                await _store_dm_responses(summary_parts_with_header, context, bot_user)
         
         # Store summary in database
         try:
@@ -398,7 +405,7 @@ async def handle_summary_command(
                 channel_id=channel_id_str,
                 channel_name=channel_name_str,
                 date=today,
-                summary_text=summary,
+                summary_text=raw_summary,  # Store the raw summary without header in database
                 message_count=len(messages_for_summary),
                 active_users=active_users,
                 guild_id=str(context.guild_id) if context.guild_id else None,
