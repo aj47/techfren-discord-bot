@@ -75,33 +75,12 @@ async def split_long_message(message, max_length=1900):
     if current_part:
         parts.append(current_part.strip())
 
-    # Filter out empty parts
-    parts = [part for part in parts if part.strip()]
-
-    # Add part indicators if there are multiple parts with substantial content
+    # Add part indicators if there are multiple parts
     if len(parts) > 1:
-        # Check if first part is just a title (starts with ** and is short)
-        first_part_is_title = (
-            len(parts) > 0 and
-            parts[0].startswith('**') and
-            parts[0].endswith('**') and
-            len(parts[0]) < 200 and
-            '\n' not in parts[0].strip('*').strip()
-        )
-
-        if first_part_is_title and len(parts) > 1:
-            # Skip the title part and only add indicators to content parts
-            content_parts = parts[1:]
-            if len(content_parts) > 1:
-                for i in range(len(content_parts)):
-                    content_parts[i] = f"[Part {i+1}/{len(content_parts)}]\n{content_parts[i]}"
-            # Return title + content parts
-            return [parts[0]] + content_parts
-        else:
-            # Normal case: add part indicators to all parts
-            for i in range(len(parts)):
-                parts[i] = f"[Part {i+1}/{len(parts)}]\n{parts[i]}"
+        for i in range(len(parts)):
+            parts[i] = f"[Part {i+1}/{len(parts)}]\n{parts[i]}"
     elif not parts and message: # Handle case where original message was <= max_length but split logic ran
         return [message]
+
 
     return parts
