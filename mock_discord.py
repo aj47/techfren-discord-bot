@@ -113,6 +113,14 @@ class MockMessage:
         print(f"[MESSAGE DELETED]: {self.content[:50]}...")
         return True
 
+    async def edit(self, content: str = None, **kwargs):
+        """Mock editing a message"""
+        if content is not None:
+            old_content = self.content[:50]
+            self.content = content
+            print(f"[MESSAGE EDITED]: '{old_content}...' -> '{content[:50]}...'")
+        return self
+
 
 class MockClient:
     """Mock Discord Client object"""

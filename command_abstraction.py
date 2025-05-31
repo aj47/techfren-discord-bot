@@ -10,6 +10,13 @@ from typing import Optional, Union, Protocol
 import discord
 import logging
 
+# Import mock objects for debug support
+try:
+    from mock_discord import MockMessage, MockChannel, MockUser, MockGuild
+    MOCK_AVAILABLE = True
+except ImportError:
+    MOCK_AVAILABLE = False
+
 
 @dataclass
 class CommandContext:
@@ -69,6 +76,21 @@ class InteractionResponseSender:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
             await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
+
+
+class MockResponseSender:
+    """Response sender for mock Discord objects (debug mode)."""
+
+    def __init__(self, channel):
+        self.channel = channel
+
+    async def send(self, content: str, ephemeral: bool = False) -> Optional[object]:
+        # For mock objects, just call the channel's send method
+        return await self.channel.send(content)
+
+    async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
+        for part in parts:
+            await self.channel.send(part)
 
 
 class ThreadManager:
@@ -153,6 +175,28 @@ class ThreadManager:
             return None
 
 
+class MockThreadManager:
+    """Thread manager for mock Discord objects (debug mode)."""
+
+    def __init__(self, channel, guild=None):
+        self.channel = channel
+        self.guild = guild
+
+    async def create_thread(self, name: str) -> Optional[object]:
+        """Create a mock thread in the channel."""
+        if hasattr(self.channel, 'create_thread'):
+            return await self.channel.create_thread(name)
+        return None
+
+    async def create_thread_from_message(self, message, name: str) -> Optional[object]:
+        """Create a mock thread from an existing message."""
+        if hasattr(message, 'create_thread'):
+            return await message.create_thread(name)
+        elif hasattr(self.channel, 'create_thread'):
+            return await self.channel.create_thread(name)
+        return None
+
+
 def create_context_from_message(message: discord.Message) -> CommandContext:
     """Create CommandContext from a Discord message."""
     return CommandContext(
@@ -181,12 +225,39 @@ def create_context_from_interaction(interaction: discord.Interaction, content: s
     )
 
 
+def create_context_from_mock_message(message) -> CommandContext:
+    """Create CommandContext from a mock message (debug mode)."""
+    return CommandContext(
+        user_id=message.author.id,
+        user_name=str(message.author),
+        channel_id=message.channel.id,
+        channel_name=getattr(message.channel, 'name', None),
+        guild_id=message.guild.id if message.guild else None,
+        guild_name=message.guild.name if message.guild else None,
+        content=message.content,
+        source_type='message'
+    )
+
+
+def create_context_from_any_message(message) -> CommandContext:
+    """Create CommandContext from any message (real Discord or mock)."""
+    if isinstance(message, discord.Message):
+        return create_context_from_message(message)
+    elif MOCK_AVAILABLE and hasattr(message, 'author') and hasattr(message, 'channel'):
+        return create_context_from_mock_message(message)
+    else:
+        raise ValueError(f"Unsupported message type: {type(message)}")
+
+
 def create_response_sender(source: Union[discord.Message, discord.Interaction]) -> ResponseSender:
     """Create appropriate response sender based on command source."""
     if isinstance(source, discord.Message):
         return MessageResponseSender(source.channel)
     elif isinstance(source, discord.Interaction):
         return InteractionResponseSender(source)
+    elif MOCK_AVAILABLE and hasattr(source, 'channel') and hasattr(source, 'author'):
+        # Handle mock objects (debug mode)
+        return MockResponseSender(source.channel)
     else:
         raise ValueError(f"Unsupported source type: {type(source)}")
 
@@ -195,6 +266,9 @@ def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -
     """Create thread manager based on command source."""
     if isinstance(source, (discord.Message, discord.Interaction)):
         return ThreadManager(source.channel, source.guild)
+    elif MOCK_AVAILABLE and hasattr(source, 'channel') and hasattr(source, 'guild'):
+        # Handle mock objects (debug mode)
+        return MockThreadManager(source.channel, source.guild)
     else:
         raise ValueError(f"Unsupported source type: {type(source)}")
 
