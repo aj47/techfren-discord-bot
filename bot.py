@@ -1,11 +1,12 @@
 # This example requires the 'message_content' intent.
 
 import discord
-from discord.ext import tasks
+from discord.ext import commands
 import asyncio
 import re
 import os
 import json
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
@@ -22,7 +23,11 @@ from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify 
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 
-client = discord.Client(intents=intents)
+# Use commands.Bot instead of discord.Client to support slash commands
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Keep client reference for backward compatibility
+client = bot
 
 async def process_url(message_id: str, url: str):
     """
@@ -84,9 +89,17 @@ async def process_url(message_id: str, url: str):
 
         # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
         if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
-            markdown_content = scraped_result.get('markdown')
+            if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
+                markdown_content = scraped_result.get("markdown", "")
+            else:
+                logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
+                return
         else:
-            markdown_content = scraped_result  # Firecrawl returns markdown directly
+            if isinstance(scraped_result, str):
+                markdown_content = scraped_result  # Firecrawl returns markdown directly
+            else:
+                logger.warning(f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}")
+                return
 
         # Step 2: Summarize the scraped content
         scraped_data = await summarize_scraped_content(markdown_content, url)
@@ -113,12 +126,19 @@ async def process_url(message_id: str, url: str):
     except Exception as e:
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
 
-@client.event
+@bot.event
 async def on_ready():
-    set_discord_client(client) # Set the client instance for summarization tasks
-    logger.info(f'Bot has successfully connected as {client.user}')
-    logger.info(f'Bot ID: {client.user.id}')
-    logger.info(f'Connected to {len(client.guilds)} guilds')
+    set_discord_client(bot) # Set the client instance for summarization tasks
+    logger.info(f'Bot has successfully connected as {bot.user}')
+    logger.info(f'Bot ID: {bot.user.id}')
+    logger.info(f'Connected to {len(bot.guilds)} guilds')
+
+    # Sync slash commands with Discord
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f'Synced {len(synced)} command(s)')
+    except Exception as e:
+        logger.error(f'Failed to sync commands: {e}')
 
     # Initialize the database - critical for bot operation
     try:
@@ -127,7 +147,7 @@ async def on_ready():
         # Check if database connection is working
         if not database.check_database_connection():
             logger.critical('Database connection check failed. Shutting down.')
-            await client.close()
+            await bot.close()
             return
 
         message_count = database.get_message_count()
@@ -140,12 +160,12 @@ async def on_ready():
             logger.info(f'Database file size: {os.path.getsize(db_file_path)} bytes')
         else:
             logger.critical(f'Database file does not exist at: {db_file_path}')
-            await client.close()
+            await bot.close()
             return
     except Exception as e:
         logger.critical(f'Failed to initialize database: {str(e)}', exc_info=True)
         logger.critical('Database initialization is required for bot operation. Shutting down.')
-        await client.close()
+        await bot.close()
         return
 
     # Start the daily summarization task if not already running
@@ -154,14 +174,14 @@ async def on_ready():
         logger.info("Started daily channel summarization task")
 
     # Log details about each connected guild
-    for guild in client.guilds:
+    for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
         # Check if bot-talk channel exists
         bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
         if not bot_talk_exists:
             logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
-@client.event
+@bot.event
 async def on_guild_join(guild):
     """Log when the bot joins a new guild"""
     logger.info(f'Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
@@ -170,12 +190,12 @@ async def on_guild_join(guild):
     if not bot_talk_exists:
         logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
-@client.event
+@bot.event
 async def on_guild_remove(guild):
     """Log when the bot is removed from a guild"""
     logger.info(f'Bot removed from guild: {guild.name} (ID: {guild.id})')
 
-@client.event
+@bot.event
 async def on_error(event, *args, **kwargs):
     """Log Discord API errors"""
     logger.error(f'Discord error in {event}', exc_info=True)
@@ -185,10 +205,10 @@ async def on_error(event, *args, **kwargs):
     if kwargs:
         logger.error(f'Error context kwargs: {kwargs}')
 
-@client.event
+@bot.event
 async def on_message(message):
     # Ignore messages from the bot itself
-    if message.author == client.user:
+    if message.author == bot.user:
         return
 
     # Log message details - safely handle DMs and different channel types
@@ -213,8 +233,8 @@ async def on_message(message):
         is_command = False
         command_type = None
 
-        bot_mention = f'<@{client.user.id}>'
-        bot_mention_alt = f'<@!{client.user.id}>'
+        bot_mention = f'<@{bot.user.id}>'
+        bot_mention_alt = f'<@!{bot.user.id}>'
         if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
             is_command = True
             command_type = "mention"
@@ -269,8 +289,8 @@ async def on_message(message):
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
     # Check if this is a command
-    bot_mention = f'<@{client.user.id}>'
-    bot_mention_alt = f'<@!{client.user.id}>'
+    bot_mention = f'<@{bot.user.id}>'
+    bot_mention_alt = f'<@!{bot.user.id}>'
     is_mention_command = message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt)
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
@@ -278,7 +298,7 @@ async def on_message(message):
     # Process mention commands in any channel
     if is_mention_command:
         logger.debug(f"Processing mention command in channel #{message.channel.name}")
-        await handle_bot_command(message, client.user)
+        await handle_bot_command(message, bot.user)
         return
 
     # If not a command we recognize, ignore
@@ -288,13 +308,71 @@ async def on_message(message):
     # Process commands
     try:
         if is_sum_day_command:
-            await handle_sum_day_command(message, client.user)
+            await handle_sum_day_command(message, bot.user)
         elif is_sum_hr_command:
-            await handle_sum_hr_command(message, client.user)
+            await handle_sum_hr_command(message, bot.user)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
+
+# Helper function for slash command handling
+async def _handle_slash_command_wrapper(
+    interaction: discord.Interaction, 
+    command_name: str, 
+    hours: int = 24,
+    error_message: Optional[str] = None
+) -> None:
+    """Unified wrapper for slash command handling with error management."""
+    await interaction.response.defer()
+    
+    if error_message is None:
+        error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
+
+    try:
+        from command_abstraction import (
+            create_context_from_interaction,
+            create_response_sender,
+            create_thread_manager,
+            handle_summary_command
+        )
+
+        context = create_context_from_interaction(interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else ""))
+        response_sender = create_response_sender(interaction)
+        thread_manager = create_thread_manager(interaction)
+
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user)
+
+    except Exception as e:
+        logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
+        try:
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
+        except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
+            logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
+        except Exception as unexpected_error:
+            logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
+
+# Slash Commands
+@bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
+async def sum_day_slash(interaction: discord.Interaction):
+    """Slash command version of /sum-day"""
+    await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
+
+@bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
+async def sum_hr_slash(interaction: discord.Interaction, hours: int):
+    """Slash command version of /sum-hr"""
+    if hours < 1 or hours > config.MAX_SUMMARY_HOURS:  # Max 1 week
+        await interaction.response.send_message(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True)
+        return
+    
+    # Warn for large summaries that may take longer
+    if hours > config.LARGE_SUMMARY_THRESHOLD:
+        error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
+    else:
+        error_message = None
+
+    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours, error_message=error_message)
 
 try:
     logger.info("Starting bot...")
@@ -309,7 +387,7 @@ try:
     logger.info("Connecting to Discord...")
 
     # Run the bot
-    client.run(config.token)
+    bot.run(config.token)
 except ImportError:
     logger.critical("Config file not found or token not defined", exc_info=True)
     logger.error("Please create a config.py file with your Discord bot token.")

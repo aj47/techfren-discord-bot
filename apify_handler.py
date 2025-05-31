@@ -8,7 +8,6 @@ from apify_client import ApifyClient
 import logging
 from typing import Optional, Dict, List, Any, Union
 import re
-import json
 
 # Import config for API token
 import config
