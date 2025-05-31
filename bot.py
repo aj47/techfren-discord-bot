@@ -318,16 +318,50 @@ async def on_message(message):
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
-    interaction: discord.Interaction, 
-    command_name: str, 
+    interaction: discord.Interaction,
+    command_name: str,
     hours: int = 24,
     error_message: Optional[str] = None
 ) -> None:
     """Unified wrapper for slash command handling with error management."""
-    await interaction.response.defer()
+    # Only defer if the interaction hasn't been acknowledged yet
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+    except discord.HTTPException as e:
+        if e.status == 400 and e.code == 40060:
+            # Interaction already acknowledged, continue without deferring
+            logger.warning(f"Interaction already acknowledged for {command_name}, continuing...")
+        else:
+            # Re-raise other HTTP exceptions
+            raise
+    except discord.NotFound as e:
+        if e.code == 10062:
+            # Interaction expired (took too long to respond)
+            logger.error(f"Interaction expired for {command_name} - took too long to respond")
+            return  # Can't do anything with an expired interaction
+        else:
+            # Re-raise other NotFound exceptions
+            raise
     
     if error_message is None:
         error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
+
+    # Validate hours parameter for sum-hr command
+    if command_name == "sum-hr":
+        import config
+        if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
+            try:
+                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+                await interaction.followup.send(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True, allowed_mentions=allowed_mentions)
+                return
+            except Exception as e:
+                logger.error(f"Failed to send validation error for {command_name}: {e}")
+                return
+
+        # Warn for large summaries that may take longer
+        if hours > config.LARGE_SUMMARY_THRESHOLD:
+            error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
 
     try:
         from command_abstraction import (
@@ -362,17 +396,8 @@ async def sum_day_slash(interaction: discord.Interaction):
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    if hours < 1 or hours > config.MAX_SUMMARY_HOURS:  # Max 1 week
-        await interaction.response.send_message(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True)
-        return
-    
-    # Warn for large summaries that may take longer
-    if hours > config.LARGE_SUMMARY_THRESHOLD:
-        error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
-    else:
-        error_message = None
-
-    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours, error_message=error_message)
+    # Immediately defer to avoid timeout, then do validation in wrapper
+    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
     logger.info("Starting bot...")

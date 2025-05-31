@@ -333,38 +333,31 @@ async def handle_summary_command(
             return
 
         # Generate summary
-        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today)
+        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
         summary_parts = await split_long_message(summary)
 
         # Send summary efficiently with thread creation
         if context.guild_id:
-            # For guild channels: Create title message and put summary content in thread
+            # For guild channels: Create thread and put summary content in it
             thread_name = f"Summary - {channel_name_str} - {today.strftime('%Y-%m-%d')}"
-
-            # Create a clean title for the main message
-            title_message = f"**Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
 
             if initial_message:
                 try:
-                    # Edit the initial message to show just the title
-                    await initial_message.edit(content=title_message)
-
-                    # Create thread from the title message (will fetch with guild info if needed)
+                    # Create thread from the initial message (will fetch with guild info if needed)
                     thread = await thread_manager.create_thread_from_message(initial_message, thread_name)
 
                     if thread:
                         # Send all summary content in the thread
                         thread_sender = MessageResponseSender(thread)
                         await thread_sender.send_in_parts(summary_parts)
-                    else:
-                        # Fallback: if thread creation failed, edit message to include summary
-                        logger.warning("Thread creation failed, including summary in main message")
-                        await initial_message.edit(content=f"{title_message}\n\n{summary_parts[0] if summary_parts else summary}")
 
-                        # Send remaining parts as separate messages if needed
-                        if len(summary_parts) > 1:
-                            for part in summary_parts[1:]:
-                                await response_sender.send(part)
+                        # Edit the initial message to just indicate the summary is in the thread
+                        await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
+                    else:
+                        # Fallback: if thread creation failed, send summary in main channel
+                        logger.warning("Thread creation failed, sending summary in main channel")
+                        await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
+                        await response_sender.send_in_parts(summary_parts)
 
                 except discord.HTTPException as e:
                     logger.warning(f"Failed to edit initial message: {e}")
@@ -378,9 +371,15 @@ async def handle_summary_command(
                         # Ultimate fallback: send summary parts directly
                         await response_sender.send_in_parts(summary_parts)
             else:
-                # No initial message, send title and summary parts directly
-                await response_sender.send(title_message)
-                await response_sender.send_in_parts(summary_parts)
+                # No initial message, create thread and send summary
+                thread = await thread_manager.create_thread(thread_name)
+                if thread:
+                    thread_sender = MessageResponseSender(thread)
+                    await thread_sender.send_in_parts(summary_parts)
+                    await response_sender.send(f"📊 Summary generated - see thread: {thread.mention}")
+                else:
+                    # Fallback: send summary parts directly
+                    await response_sender.send_in_parts(summary_parts)
         else:
             # For DMs: send summary parts directly
             await response_sender.send_in_parts(summary_parts)

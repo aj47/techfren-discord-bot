@@ -194,10 +194,9 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         summary = completion.choices[0].message.content
         logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
 
-        # Add a header to the summary
-        time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        final_summary = f"**Summary of #{channel_name} for the past {time_period}**\n\n{summary}"
-        return final_summary
+        # Return the summary without adding a redundant header
+        # The thread title already contains the summary information
+        return summary
 
     except Exception as e:
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
