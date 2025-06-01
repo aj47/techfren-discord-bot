@@ -157,7 +157,7 @@ def create_context_from_message(message: discord.Message) -> CommandContext:
     """Create CommandContext from a Discord message."""
     return CommandContext(
         user_id=message.author.id,
-        user_name=str(message.author),
+        user_name=message.author.display_name or str(message.author),
         channel_id=message.channel.id,
         channel_name=getattr(message.channel, 'name', None),
         guild_id=message.guild.id if message.guild else None,

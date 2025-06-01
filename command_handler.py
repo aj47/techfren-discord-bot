@@ -226,7 +226,7 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
         success = database.store_message(
             message_id=str(bot_msg_obj.id),
             author_id=str(client_user.id),
-            author_name=str(client_user),
+            author_name=client_user.display_name or str(client_user),
             channel_id=channel_id_str,
             channel_name=channel_name_str,
             content=content_to_store,

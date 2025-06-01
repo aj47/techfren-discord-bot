@@ -252,7 +252,7 @@ async def on_message(message):
         success = database.store_message(
             message_id=str(message.id),
             author_id=str(message.author.id),
-            author_name=str(message.author),
+            author_name=message.author.display_name or str(message.author),
             channel_id=channel_id,
             channel_name=channel_name,
             content=message.content,
