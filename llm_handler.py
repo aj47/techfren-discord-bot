@@ -50,8 +50,8 @@ async def call_llm_api(query):
                     "content": query
                 }
             ],
-            max_tokens=1000,
-            temperature=0.7
+            max_tokens=config.LLM_MAX_TOKENS_GENERAL,
+            temperature=config.LLM_TEMPERATURE_GENERAL
         )
 
         # Extract the response
@@ -186,8 +186,8 @@ At the end, include a section with the top 3 most interesting or notable one-lin
                     "content": prompt
                 }
             ],
-            max_tokens=1500,  # Increased token limit for summaries
-            temperature=0.5   # Lower temperature for more focused summaries
+            max_tokens=config.LLM_MAX_TOKENS_SUMMARY,
+            temperature=config.LLM_TEMPERATURE_SUMMARY
         )
 
         # Extract the response
@@ -216,7 +216,7 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
     """
     try:
         # Truncate content if it's too long (to avoid token limits)
-        max_content_length = 15000  # Adjust based on model's context window
+        max_content_length = config.MAX_CONTENT_LENGTH_FOR_LLM
         truncated_content = markdown_content[:max_content_length]
         if len(markdown_content) > max_content_length:
             truncated_content += "\n\n[Content truncated due to length...]"
@@ -278,8 +278,8 @@ Format your response exactly as follows:
                     "content": prompt
                 }
             ],
-            max_tokens=1500,  # Increased token limit for summaries
-            temperature=0.3   # Lower temperature for more focused and consistent summaries
+            max_tokens=config.LLM_MAX_TOKENS_SUMMARY,
+            temperature=config.LLM_TEMPERATURE_SCRAPING
         )
 
         # Extract the response

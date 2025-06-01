@@ -16,17 +16,23 @@ def generate_discord_message_link(guild_id: str, channel_id: str, message_id: st
         # For DMs, use @me instead of guild_id
         return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
 
-async def split_long_message(message, max_length=1900):
+async def split_long_message(message, max_length=None):
     """
     Split a long message into multiple parts to avoid Discord's 2000 character limit
 
     Args:
         message (str): The message to split
-        max_length (int): Maximum length of each part (default: 1900 to leave room for part indicators)
+        max_length (int): Maximum length of each part (default: from config)
 
     Returns:
         list: List of message parts
     """
+    # Import config here to avoid circular imports
+    import config
+    
+    # Use config value if max_length not provided
+    if max_length is None:
+        max_length = config.MESSAGE_MAX_LENGTH
     # First, check if we need to split at all
     # We need to account for potential part indicators when determining if splitting is needed
     max_part_indicator_length = len("[Part 999/999]\n")  # Generous estimate for part indicator

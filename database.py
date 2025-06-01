@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from error_handler import handle_database_error, handle_async_database_error, log_error_with_context, ErrorSeverity
+import config
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -99,7 +100,7 @@ def init_database() -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
         # Set a shorter timeout for better error reporting
-        conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+        conn.execute(f"PRAGMA busy_timeout = {config.DB_BUSY_TIMEOUT}")
 
         cursor = conn.cursor()
 
@@ -167,7 +168,7 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row  # This enables column access by name
 
     # Set a shorter timeout for better error reporting
-    conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+    conn.execute(f"PRAGMA busy_timeout = {config.DB_BUSY_TIMEOUT}")
 
     # Enable foreign keys
     conn.execute("PRAGMA foreign_keys = ON")

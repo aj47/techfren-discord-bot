@@ -59,6 +59,26 @@ MAX_SUMMARY_HOURS = 168
 # Performance threshold for large summaries (24 hours)
 LARGE_SUMMARY_THRESHOLD = 24
 
+# Message Processing Constants
+# Maximum length for split messages (leaving room for part indicators)
+MESSAGE_MAX_LENGTH = 1900
+
+# LLM API Constants
+# Token limits for different types of requests
+LLM_MAX_TOKENS_GENERAL = 1000  # For general queries
+LLM_MAX_TOKENS_SUMMARY = 1500  # For summary operations
+LLM_TEMPERATURE_GENERAL = 0.7  # For general queries
+LLM_TEMPERATURE_SUMMARY = 0.5  # For summaries (more focused)
+LLM_TEMPERATURE_SCRAPING = 0.3  # For content scraping (more consistent)
+
+# Database Configuration Constants
+# Database connection timeout in milliseconds
+DB_BUSY_TIMEOUT = 5000  # 5 seconds
+
+# Content Processing Constants
+# Maximum content length for LLM processing (to avoid token limits)
+MAX_CONTENT_LENGTH_FOR_LLM = 15000
+
 # Error Messages
 ERROR_MESSAGES = {
     'invalid_hours_range': f"Number of hours must be between 1 and {MAX_SUMMARY_HOURS} (7 days).",
