@@ -18,6 +18,10 @@ from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from error_handler import (
+    handle_discord_error, log_error_with_context, ErrorSeverity,
+    DiscordAPIError, ConfigurationError, safe_execute_async
+) # Import standardized error handling
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -38,93 +42,100 @@ async def process_url(message_id: str, url: str):
         message_id (str): The ID of the message containing the URL
         url (str): The URL to process
     """
-    try:
-        logger.info(f"Processing URL {url} from message {message_id}")
+    result = await safe_execute_async(
+        _process_url_impl,
+        message_id, url,
+        context=f"Processing URL {url} from message {message_id}",
+        severity=ErrorSeverity.MEDIUM
+    )
+    return result
 
-        # Check if the URL is from Twitter/X.com
-        if await is_twitter_url(url):
-            logger.info(f"Detected Twitter/X.com URL: {url}")
 
-            # Validate if the URL contains a tweet ID (status)
-            from apify_handler import extract_tweet_id
-            tweet_id = extract_tweet_id(url)
-            if not tweet_id:
-                logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
+async def _process_url_impl(message_id: str, url: str):
+    """Internal implementation of URL processing with specific error handling."""
+    logger.info(f"Processing URL {url} from message {message_id}")
 
-                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
-                if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
-                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
-                    scraped_result = {
-                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
-                    }
-                else:
-                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
-                    scraped_result = await scrape_url_content(url)
+    # Check if the URL is from Twitter/X.com
+    if await is_twitter_url(url):
+        logger.info(f"Detected Twitter/X.com URL: {url}")
+
+        # Validate if the URL contains a tweet ID (status)
+        from apify_handler import extract_tweet_id
+        tweet_id = extract_tweet_id(url)
+        if not tweet_id:
+            logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
+
+            # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
+            if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
+                logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+                scraped_result = {
+                    "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
+                }
             else:
-                # Check if Apify API token is configured
-                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+                # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
+                scraped_result = await scrape_url_content(url)
+        else:
+            # Check if Apify API token is configured
+            if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+                scraped_result = await scrape_url_content(url)
+            else:
+                # Use Apify to scrape Twitter/X.com content
+                scraped_result = await scrape_twitter_content(url)
+
+                # If Apify scraping fails, fall back to Firecrawl
+                if not scraped_result:
+                    logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
                     scraped_result = await scrape_url_content(url)
                 else:
-                    # Use Apify to scrape Twitter/X.com content
-                    scraped_result = await scrape_twitter_content(url)
+                    logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+                    # Extract markdown content from the scraped result
+                    markdown_content = scraped_result.get('markdown')
+    else:
+        # For non-Twitter/X.com URLs, use Firecrawl
+        scraped_result = await scrape_url_content(url)
+        markdown_content = scraped_result  # Firecrawl returns markdown directly
 
-                    # If Apify scraping fails, fall back to Firecrawl
-                    if not scraped_result:
-                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
-                        scraped_result = await scrape_url_content(url)
-                    else:
-                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
-                        # Extract markdown content from the scraped result
-                        markdown_content = scraped_result.get('markdown')
+    # Check if scraping was successful
+    if not scraped_result:
+        logger.warning(f"Failed to scrape content from URL: {url}")
+        return
+
+    # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
+    if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
+        if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
+            markdown_content = scraped_result.get("markdown", "")
         else:
-            # For non-Twitter/X.com URLs, use Firecrawl
-            scraped_result = await scrape_url_content(url)
+            logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
+            return
+    else:
+        if isinstance(scraped_result, str):
             markdown_content = scraped_result  # Firecrawl returns markdown directly
-
-        # Check if scraping was successful
-        if not scraped_result:
-            logger.warning(f"Failed to scrape content from URL: {url}")
+        else:
+            logger.warning(f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}")
             return
 
-        # For Twitter/X.com URLs scraped with Apify, we already have the markdown content
-        if await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
-            if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
-                markdown_content = scraped_result.get("markdown", "")
-            else:
-                logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
-                return
-        else:
-            if isinstance(scraped_result, str):
-                markdown_content = scraped_result  # Firecrawl returns markdown directly
-            else:
-                logger.warning(f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}")
-                return
+    # Step 2: Summarize the scraped content
+    scraped_data = await summarize_scraped_content(markdown_content, url)
+    if not scraped_data:
+        logger.warning(f"Failed to summarize content from URL: {url}")
+        return
 
-        # Step 2: Summarize the scraped content
-        scraped_data = await summarize_scraped_content(markdown_content, url)
-        if not scraped_data:
-            logger.warning(f"Failed to summarize content from URL: {url}")
-            return
+    # Step 3: Convert key points to JSON string
+    key_points_json = json.dumps(scraped_data.get('key_points', []))
 
-        # Step 3: Convert key points to JSON string
-        key_points_json = json.dumps(scraped_data.get('key_points', []))
+    # Step 4: Update the message in the database with the scraped data
+    success = await database.update_message_with_scraped_data(
+        message_id,
+        url,
+        scraped_data.get('summary', ''),
+        key_points_json
+    )
 
-        # Step 4: Update the message in the database with the scraped data
-        success = await database.update_message_with_scraped_data(
-            message_id,
-            url,
-            scraped_data.get('summary', ''),
-            key_points_json
-        )
-
-        if success:
-            logger.info(f"Successfully processed URL {url} from message {message_id}")
-        else:
-            logger.warning(f"Failed to update message {message_id} with scraped data")
-
-    except Exception as e:
-        logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
+    if success:
+        logger.info(f"Successfully processed URL {url} from message {message_id}")
+    else:
+        logger.warning(f"Failed to update message {message_id} with scraped data")
 
 @bot.event
 async def on_ready():
@@ -163,7 +174,7 @@ async def on_ready():
             await bot.close()
             return
     except Exception as e:
-        logger.critical(f'Failed to initialize database: {str(e)}', exc_info=True)
+        log_error_with_context(e, 'Database initialization failed', ErrorSeverity.CRITICAL)
         logger.critical('Database initialization is required for bot operation. Shutting down.')
         await bot.close()
         return
@@ -281,7 +292,7 @@ async def on_message(message):
                 # Create a background task to process the URL
                 asyncio.create_task(process_url(message.id, url))
     except Exception as e:
-        logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+        log_error_with_context(e, f"Storing message {message.id} in database", ErrorSeverity.MEDIUM)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
@@ -307,11 +318,12 @@ async def on_message(message):
         elif is_sum_hr_command:
             await handle_sum_hr_command(message, bot.user)
     except Exception as e:
-        logger.error(f"Error processing command in on_message: {e}", exc_info=True)
+        log_error_with_context(e, f"Processing command in on_message", ErrorSeverity.MEDIUM)
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
+@handle_discord_error
 async def _handle_slash_command_wrapper(
     interaction: discord.Interaction,
     command_name: str,
@@ -320,24 +332,8 @@ async def _handle_slash_command_wrapper(
 ) -> None:
     """Unified wrapper for slash command handling with error management."""
     # Only defer if the interaction hasn't been acknowledged yet
-    try:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-    except discord.HTTPException as e:
-        if e.status == 400 and e.code == 40060:
-            # Interaction already acknowledged, continue without deferring
-            logger.warning(f"Interaction already acknowledged for {command_name}, continuing...")
-        else:
-            # Re-raise other HTTP exceptions
-            raise
-    except discord.NotFound as e:
-        if e.code == 10062:
-            # Interaction expired (took too long to respond)
-            logger.error(f"Interaction expired for {command_name} - took too long to respond")
-            return  # Can't do anything with an expired interaction
-        else:
-            # Re-raise other NotFound exceptions
-            raise
+    if not interaction.response.is_done():
+        await interaction.response.defer()
     
     if error_message is None:
         error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
@@ -346,41 +342,26 @@ async def _handle_slash_command_wrapper(
     if command_name == "sum-hr":
         import config
         if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
-            try:
-                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-                await interaction.followup.send(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True, allowed_mentions=allowed_mentions)
-                return
-            except Exception as e:
-                logger.error(f"Failed to send validation error for {command_name}: {e}")
-                return
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            await interaction.followup.send(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True, allowed_mentions=allowed_mentions)
+            return
 
         # Warn for large summaries that may take longer
         if hours > config.LARGE_SUMMARY_THRESHOLD:
             error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
 
-    try:
-        from command_abstraction import (
-            create_context_from_interaction,
-            create_response_sender,
-            create_thread_manager,
-            handle_summary_command
-        )
+    from command_abstraction import (
+        create_context_from_interaction,
+        create_response_sender,
+        create_thread_manager,
+        handle_summary_command
+    )
 
-        context = create_context_from_interaction(interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else ""))
-        response_sender = create_response_sender(interaction)
-        thread_manager = create_thread_manager(interaction)
+    context = create_context_from_interaction(interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else ""))
+    response_sender = create_response_sender(interaction)
+    thread_manager = create_thread_manager(interaction)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user)
-
-    except Exception as e:
-        logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
-        try:
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
-        except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
-            logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
-        except Exception as unexpected_error:
-            logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
+    await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user)
 
 # Slash Commands
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
@@ -408,11 +389,13 @@ try:
 
     # Run the bot
     bot.run(config.token)
-except ImportError:
-    logger.critical("Config file not found or token not defined", exc_info=True)
+except ImportError as e:
+    log_error_with_context(e, "Config file import failed", ErrorSeverity.CRITICAL)
     logger.error("Please create a config.py file with your Discord bot token.")
     logger.error("Example: token = 'YOUR_DISCORD_BOT_TOKEN'")
-except discord.LoginFailure:
-    logger.critical("Invalid Discord token. Please check your token in config.py", exc_info=True)
+except discord.LoginFailure as e:
+    log_error_with_context(e, "Discord login failed", ErrorSeverity.CRITICAL)
+except ConfigurationError as e:
+    log_error_with_context(e, "Configuration validation failed", ErrorSeverity.CRITICAL)
 except Exception as e:
-    logger.critical(f"Unexpected error during bot startup: {e}", exc_info=True)
+    log_error_with_context(e, "Unexpected error during bot startup", ErrorSeverity.CRITICAL)

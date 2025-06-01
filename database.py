@@ -10,6 +10,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
+from error_handler import handle_database_error, handle_async_database_error, log_error_with_context, ErrorSeverity
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -82,80 +83,78 @@ INSERT INTO channel_summaries (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
+@handle_database_error
 def init_database() -> None:
     """
     Initialize the database by creating the necessary directory and tables.
     """
-    try:
-        # Create the data directory if it doesn't exist
-        if not os.path.exists(DB_DIRECTORY):
-            os.makedirs(DB_DIRECTORY)
-            logger.info(f"Created database directory: {DB_DIRECTORY}")
+    # Create the data directory if it doesn't exist
+    if not os.path.exists(DB_DIRECTORY):
+        os.makedirs(DB_DIRECTORY)
+        logger.info(f"Created database directory: {DB_DIRECTORY}")
 
-        # Connect to the database and create tables using context manager
-        with sqlite3.connect(DB_FILE) as conn:
-            # Enable foreign keys
-            conn.execute("PRAGMA foreign_keys = ON")
+    # Connect to the database and create tables using context manager
+    with sqlite3.connect(DB_FILE) as conn:
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
 
-            # Set a shorter timeout for better error reporting
-            conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+        # Set a shorter timeout for better error reporting
+        conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
 
-            cursor = conn.cursor()
+        cursor = conn.cursor()
 
-            # Create tables and indexes
-            cursor.execute(CREATE_MESSAGES_TABLE)
-            cursor.execute(CREATE_CHANNEL_SUMMARIES_TABLE)
+        # Create tables and indexes
+        cursor.execute(CREATE_MESSAGES_TABLE)
+        cursor.execute(CREATE_CHANNEL_SUMMARIES_TABLE)
 
-            # Create indexes for messages table
-            cursor.execute(CREATE_INDEX_AUTHOR)
-            cursor.execute(CREATE_INDEX_CHANNEL)
-            cursor.execute(CREATE_INDEX_GUILD)
-            cursor.execute(CREATE_INDEX_CREATED)
-            cursor.execute(CREATE_INDEX_COMMAND)
-            cursor.execute(CREATE_INDEX_SCRAPED_URL)
+        # Create indexes for messages table
+        cursor.execute(CREATE_INDEX_AUTHOR)
+        cursor.execute(CREATE_INDEX_CHANNEL)
+        cursor.execute(CREATE_INDEX_GUILD)
+        cursor.execute(CREATE_INDEX_CREATED)
+        cursor.execute(CREATE_INDEX_COMMAND)
+        cursor.execute(CREATE_INDEX_SCRAPED_URL)
 
-            # Create indexes for channel_summaries table
-            cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
-            cursor.execute(CREATE_INDEX_SUMMARY_DATE)
-            cursor.execute(CREATE_INDEX_SUMMARY_GUILD)
+        # Create indexes for channel_summaries table
+        cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
+        cursor.execute(CREATE_INDEX_SUMMARY_DATE)
+        cursor.execute(CREATE_INDEX_SUMMARY_GUILD)
 
-            # Insert a test message to ensure the database is working
-            try:
-                test_message_id = f"test-init-{datetime.now().timestamp()}"
-                cursor.execute(
-                    INSERT_MESSAGE,
-                    (
-                        test_message_id,
-                        "system",
-                        "System",
-                        "system",
-                        "System",
-                        None,
-                        None,
-                        "Database initialization test message",
-                        datetime.now().isoformat(),
-                        1,  # is_bot
-                        0,  # is_command
-                        None,
-                        None,
-                        None,
-                        None
-                    )
+        # Insert a test message to ensure the database is working
+        try:
+            test_message_id = f"test-init-{datetime.now().timestamp()}"
+            cursor.execute(
+                INSERT_MESSAGE,
+                (
+                    test_message_id,
+                    "system",
+                    "System",
+                    "system",
+                    "System",
+                    None,
+                    None,
+                    "Database initialization test message",
+                    datetime.now().isoformat(),
+                    1,  # is_bot
+                    0,  # is_command
+                    None,
+                    None,
+                    None,
+                    None
                 )
-                logger.info("Successfully inserted test message during database initialization")
-            except sqlite3.IntegrityError:
-                # This is fine, it means the test message already exists
-                logger.info("Test message already exists in database")
-            except Exception as e:
-                logger.warning(f"Failed to insert test message during initialization: {str(e)}")
+            )
+            logger.info("Successfully inserted test message during database initialization")
+        except sqlite3.IntegrityError:
+            # This is fine, it means the test message already exists
+            logger.info("Test message already exists in database")
+        except Exception as e:
+            log_error_with_context(e, "Inserting test message during database initialization", ErrorSeverity.LOW)
 
-            conn.commit()
+        conn.commit()
 
-        logger.info(f"Database initialized successfully at {DB_FILE}")
-    except Exception as e:
-        logger.error(f"Error initializing database: {str(e)}", exc_info=True)
-        raise
+    logger.info(f"Database initialized successfully at {DB_FILE}")
 
+@handle_database_error
 def get_connection() -> sqlite3.Connection:
     """
     Get a connection to the SQLite database.
@@ -164,20 +163,16 @@ def get_connection() -> sqlite3.Connection:
     Returns:
         sqlite3.Connection: A connection to the database.
     """
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row  # This enables column access by name
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row  # This enables column access by name
 
-        # Set a shorter timeout for better error reporting
-        conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+    # Set a shorter timeout for better error reporting
+    conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
 
-        # Enable foreign keys
-        conn.execute("PRAGMA foreign_keys = ON")
+    # Enable foreign keys
+    conn.execute("PRAGMA foreign_keys = ON")
 
-        return conn
-    except Exception as e:
-        logger.error(f"Error connecting to database: {str(e)}", exc_info=True)
-        raise
+    return conn
 
 def check_database_connection() -> bool:
     """
@@ -220,9 +215,10 @@ def check_database_connection() -> bool:
 
             return result is not None and result[0] == 1
     except Exception as e:
-        logger.error(f"Database connection check failed: {str(e)}", exc_info=True)
+        log_error_with_context(e, "Database connection check", ErrorSeverity.HIGH)
         return False
 
+@handle_database_error
 def store_message(
     message_id: str,
     author_id: str,
@@ -263,43 +259,35 @@ def store_message(
     Returns:
         bool: True if the message was stored successfully, False otherwise
     """
-    try:
-        # Use context manager to ensure connection is properly closed
-        with get_connection() as conn:
-            cursor = conn.cursor()
+    # Use context manager to ensure connection is properly closed
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-            cursor.execute(
-                INSERT_MESSAGE,
-                (
-                    message_id,
-                    author_id,
-                    author_name,
-                    channel_id,
-                    channel_name,
-                    guild_id,
-                    guild_name,
-                    content,
-                    created_at.isoformat(),
-                    1 if is_bot else 0,
-                    1 if is_command else 0,
-                    command_type,
-                    scraped_url,
-                    scraped_content_summary,
-                    scraped_content_key_points
-                )
+        cursor.execute(
+            INSERT_MESSAGE,
+            (
+                message_id,
+                author_id,
+                author_name,
+                channel_id,
+                channel_name,
+                guild_id,
+                guild_name,
+                content,
+                created_at.isoformat(),
+                1 if is_bot else 0,
+                1 if is_command else 0,
+                command_type,
+                scraped_url,
+                scraped_content_summary,
+                scraped_content_key_points
             )
+        )
 
-            conn.commit()
+        conn.commit()
 
-        logger.debug(f"Message {message_id} stored in database")
-        return True
-    except sqlite3.IntegrityError:
-        # This could happen if we try to insert a message with the same ID twice
-        logger.warning(f"Message {message_id} already exists in database")
-        return False
-    except Exception as e:
-        logger.error(f"Error storing message {message_id}: {str(e)}", exc_info=True)
-        return False
+    logger.debug(f"Message {message_id} stored in database")
+    return True
 
 async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
     """
@@ -354,6 +342,7 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
         logger.error(f"Error storing message batch: {str(e)}", exc_info=True)
         return False
 
+@handle_async_database_error
 async def update_message_with_scraped_data(
     message_id: str,
     scraped_url: str,
@@ -372,46 +361,42 @@ async def update_message_with_scraped_data(
     Returns:
         bool: True if the message was updated successfully, False otherwise
     """
-    try:
-        # Define a synchronous function to run in a thread pool
-        def _update_message_sync():
-            with get_connection() as conn:
-                cursor = conn.cursor()
+    # Define a synchronous function to run in a thread pool
+    def _update_message_sync():
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-                # Update the message with scraped data
-                cursor.execute(
-                    """
-                    UPDATE messages
-                    SET scraped_url = ?,
-                        scraped_content_summary = ?,
-                        scraped_content_key_points = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        scraped_url,
-                        scraped_content_summary,
-                        scraped_content_key_points,
-                        message_id
-                    )
+            # Update the message with scraped data
+            cursor.execute(
+                """
+                UPDATE messages
+                SET scraped_url = ?,
+                    scraped_content_summary = ?,
+                    scraped_content_key_points = ?
+                WHERE id = ?
+                """,
+                (
+                    scraped_url,
+                    scraped_content_summary,
+                    scraped_content_key_points,
+                    message_id
                 )
+            )
 
-                # Check if any rows were affected
-                rows_affected = cursor.rowcount == 0
-                conn.commit()
-                return rows_affected
+            # Check if any rows were affected
+            rows_affected = cursor.rowcount == 0
+            conn.commit()
+            return rows_affected
 
-        # Run the synchronous function in a thread pool to avoid blocking the event loop
-        no_rows_affected = await asyncio.to_thread(_update_message_sync)
+    # Run the synchronous function in a thread pool to avoid blocking the event loop
+    no_rows_affected = await asyncio.to_thread(_update_message_sync)
 
-        if no_rows_affected:
-            logger.warning(f"No message found with ID {message_id} to update with scraped data")
-            return False
-
-        logger.info(f"Message {message_id} updated with scraped data from URL: {scraped_url}")
-        return True
-    except Exception as e:
-        logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
+    if no_rows_affected:
+        logger.warning(f"No message found with ID {message_id} to update with scraped data")
         return False
+
+    logger.info(f"Message {message_id} updated with scraped data from URL: {scraped_url}")
+    return True
 
 def get_message_count() -> int:
     """
