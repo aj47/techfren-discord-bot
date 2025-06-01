@@ -16,30 +16,30 @@ def validate_config(config_module):
     """
     # Check Discord token
     if not hasattr(config_module, 'token') or not config_module.token:
-        logger.error("Discord token not found in config.py or is empty")
-        raise ValueError("Bot token is missing or empty in config.py")
+        logger.error("Required configuration missing: Discord token")
+        raise ValueError("Critical configuration is missing or invalid. Please check your setup.")
 
     if not isinstance(config_module.token, str) or len(config_module.token) < 50:
         # This is a warning, not a critical error, as token length can vary.
-        logger.warning("Discord token in config.py appears to be invalid (too short or not a string).")
+        logger.warning("Discord token appears to be invalid (too short or not a string).")
 
     # Check OpenRouter API key
     if not hasattr(config_module, 'openrouter') or not config_module.openrouter:
-        logger.error("OpenRouter API key not found in config.py or is empty")
-        raise ValueError("OpenRouter API key is missing or empty in config.py")
+        logger.error("Required configuration missing: OpenRouter API key")
+        raise ValueError("Critical configuration is missing or invalid. Please check your setup.")
 
     if not isinstance(config_module.openrouter, str) or len(config_module.openrouter) < 20:
         # This is a warning.
-        logger.warning("OpenRouter API key in config.py appears to be invalid (too short or not a string).")
+        logger.warning("OpenRouter API key appears to be invalid (too short or not a string).")
         
     # Check Firecrawl API key
     if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
-        logger.error("Firecrawl API key not found in config.py or is empty")
-        raise ValueError("Firecrawl API key is missing or empty in config.py")
+        logger.error("Required configuration missing: Firecrawl API key")
+        raise ValueError("Critical configuration is missing or invalid. Please check your setup.")
 
     if not isinstance(config_module.firecrawl_api_key, str) or len(config_module.firecrawl_api_key) < 10:
         # This is a warning.
-        logger.warning("Firecrawl API key in config.py appears to be invalid (too short or not a string).")
+        logger.warning("Firecrawl API key appears to be invalid (too short or not a string).")
         
     # Check Apify API token (optional)
     if hasattr(config_module, 'apify_api_token') and config_module.apify_api_token:

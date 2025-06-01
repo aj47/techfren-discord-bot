@@ -16,13 +16,13 @@ load_dotenv()
 # Environment variable: DISCORD_BOT_TOKEN
 token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
-    raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
+    raise ValueError("Required configuration is missing. Please check your environment variables.")
 
 # OpenRouter API Key (required)
 # Environment variable: OPENROUTER_API_KEY
 openrouter = os.getenv('OPENROUTER_API_KEY')
 if not openrouter:
-    raise ValueError("OPENROUTER_API_KEY environment variable is required")
+    raise ValueError("Required configuration is missing. Please check your environment variables.")
 
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL
@@ -39,7 +39,7 @@ max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
 # Environment variable: FIRECRAWL_API_KEY
 firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
 if not firecrawl_api_key:
-    raise ValueError("FIRECRAWL_API_KEY environment variable is required")
+    raise ValueError("Required configuration is missing. Please check your environment variables.")
 
 # Apify API Token (optional, for x.com/twitter.com link scraping)
 # Environment variable: APIFY_API_TOKEN
