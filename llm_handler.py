@@ -116,12 +116,11 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
-            # Format the message with the basic content and link, using Discord mention format
-            author_mention = f"<@{author_id}>" if author_id else author_name
+            # Format the message with the basic content and link, using readable username
             if message_link:
-                message_text = f"[{time_str}] {author_mention}: {content} [Link: {message_link}]"
+                message_text = f"[{time_str}] {author_name}: {content} [Link: {message_link}]"
             else:
-                message_text = f"[{time_str}] {author_mention}: {content}"
+                message_text = f"[{time_str}] {author_name}: {content}"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
@@ -150,7 +149,7 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 {messages_text}
 
 Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
-Highlight all user names/aliases with backticks (e.g., `username`).
+Include usernames in the summary to show who participated in conversations.
 For each bullet point, include a link to the source message at the end of the bullet point in the format: [Source](link)
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link.
 """
