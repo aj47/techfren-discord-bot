@@ -117,9 +117,9 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
             # Format the message with the basic content and link
             if message_link:
-                message_text = f"[{time_str}] {author_name}: {content} [Link: {message_link}]"
+                message_text = f"[{time_str}] @{author_name}: {content} [Link: {message_link}]"
             else:
-                message_text = f"[{time_str}] {author_name}: {content}"
+                message_text = f"[{time_str}] @{author_name}: {content}"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
