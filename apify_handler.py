@@ -33,45 +33,49 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
             logger.error("Apify API token not found in config.py or is empty")
             return None
 
-        # Initialize the Apify client
-        client = ApifyClient(token=config.apify_api_token)
-
-        # Extract tweet ID from URL
+        # Extract tweet ID from URL (non-blocking operation)
         tweet_id = extract_tweet_id(url)
         if not tweet_id:
             logger.error(f"Could not extract tweet ID from URL: {url}")
             return None
 
-        # Ensure URL is properly formatted
+        # Ensure URL is properly formatted (non-blocking operation)
         if not url.startswith('http'):
             formatted_url = f"https://{url}"
         else:
             formatted_url = url
             
         logger.info(f"Using formatted URL: {formatted_url}")
-            
-        # Prepare the input for the Twitter Scraper actor
-        input_data = {
-            "startUrls": [{"url": formatted_url}],
-            "tweetsDesired": 1,
-            "addUserInfo": True,
-            "proxyConfig": {
-                "useApifyProxy": True
-            }
-        }
 
-        # Use a separate thread for the blocking API call
-        loop = asyncio.get_event_loop()
-        run = await loop.run_in_executor(
-            None,
-            lambda: client.actor("u6ppkMWAx2E2MpEuF").call(run_input=input_data)
-        )
+        # Define the blocking operations as a separate function
+        def _fetch_tweet_blocking():
+            try:
+                # Initialize the Apify client
+                client = ApifyClient(token=config.apify_api_token)
+                
+                # Prepare the input for the Twitter Scraper actor
+                input_data = {
+                    "startUrls": [{"url": formatted_url}],
+                    "tweetsDesired": 1,
+                    "addUserInfo": True,
+                    "proxyConfig": {
+                        "useApifyProxy": True
+                    }
+                }
 
-        # Get the dataset items
-        dataset_items = await loop.run_in_executor(
-            None,
-            lambda: client.dataset(run["defaultDatasetId"]).list_items().items
-        )
+                # Run the actor
+                run = client.actor("u6ppkMWAx2E2MpEuF").call(run_input=input_data)
+
+                # Get the dataset items
+                dataset_items = client.dataset(run["defaultDatasetId"]).list_items().items
+
+                return dataset_items
+            except Exception as e:
+                # Re-raise to be handled in the async context
+                raise e
+
+        # Execute all blocking operations in thread executor
+        dataset_items = await asyncio.get_event_loop().run_in_executor(None, _fetch_tweet_blocking)
 
         if not dataset_items:
             logger.warning(f"No tweet data found for URL: {url}")
@@ -86,7 +90,11 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         return tweet_data
 
     except Exception as e:
-        logger.error(f"Error fetching tweet from URL {url}: {str(e)}", exc_info=True)
+        # Ensure error logging doesn't block the event loop
+        await asyncio.get_event_loop().run_in_executor(
+            None, 
+            lambda: logger.error(f"Error fetching tweet from URL {url}: {str(e)}", exc_info=True)
+        )
         return None
 
 async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
@@ -107,35 +115,39 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
             logger.error("Apify API token not found in config.py or is empty")
             return None
 
-        # Initialize the Apify client
-        client = ApifyClient(token=config.apify_api_token)
-
-        # Ensure URL is properly formatted
+        # Ensure URL is properly formatted (non-blocking operation)
         if not url.startswith('http'):
             formatted_url = f"https://{url}"
         else:
             formatted_url = url
             
         logger.info(f"Using formatted URL for replies: {formatted_url}")
-            
-        # Prepare the input for the Twitter Replies Scraper actor
-        input_data = {
-            "postUrls": [formatted_url],
-            "resultsLimit": 30
-        }
 
-        # Use a separate thread for the blocking API call
-        loop = asyncio.get_event_loop()
-        run = await loop.run_in_executor(
-            None,
-            lambda: client.actor("qhybbvlFivx7AP0Oh").call(run_input=input_data)
-        )
+        # Define the blocking operations as a separate function
+        def _fetch_replies_blocking():
+            try:
+                # Initialize the Apify client
+                client = ApifyClient(token=config.apify_api_token)
+                
+                # Prepare the input for the Twitter Replies Scraper actor
+                input_data = {
+                    "postUrls": [formatted_url],
+                    "resultsLimit": 30
+                }
 
-        # Get the dataset items
-        dataset_items = await loop.run_in_executor(
-            None,
-            lambda: client.dataset(run["defaultDatasetId"]).list_items().items
-        )
+                # Run the actor
+                run = client.actor("qhybbvlFivx7AP0Oh").call(run_input=input_data)
+
+                # Get the dataset items
+                dataset_items = client.dataset(run["defaultDatasetId"]).list_items().items
+
+                return dataset_items
+            except Exception as e:
+                # Re-raise to be handled in the async context
+                raise e
+
+        # Execute all blocking operations in thread executor
+        dataset_items = await asyncio.get_event_loop().run_in_executor(None, _fetch_replies_blocking)
 
         if not dataset_items:
             logger.warning(f"No reply data found for URL: {url}")
@@ -147,7 +159,11 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         return dataset_items
 
     except Exception as e:
-        logger.error(f"Error fetching tweet replies from URL {url}: {str(e)}", exc_info=True)
+        # Ensure error logging doesn't block the event loop
+        await asyncio.get_event_loop().run_in_executor(
+            None, 
+            lambda: logger.error(f"Error fetching tweet replies from URL {url}: {str(e)}", exc_info=True)
+        )
         return None
 
 def extract_tweet_id(url: str) -> Optional[str]:

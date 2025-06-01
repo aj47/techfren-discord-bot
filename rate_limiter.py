@@ -7,6 +7,7 @@ from logging_config import logger
 RATE_LIMIT_SECONDS = 10  # Time between allowed requests per user
 MAX_REQUESTS_PER_MINUTE = 6  # Maximum requests per user per minute
 CLEANUP_INTERVAL = 3600  # Clean up old rate limit data every hour (in seconds)
+MAX_USERS_TRACKED = 10000  # Maximum number of users to track before aggressive cleanup
 
 # Thread safety for rate limiting
 rate_limit_lock = threading.Lock()  # Lock for thread safety
@@ -31,9 +32,14 @@ def check_rate_limit(user_id):
 
     # Use lock for thread safety
     with rate_limit_lock:
+        # Check if we need aggressive cleanup due to memory limits
+        if len(user_last_request) > MAX_USERS_TRACKED:
+            logger.warning(f"Rate limiter tracking {len(user_last_request)} users, performing aggressive cleanup")
+            cleanup_rate_limit_data(current_time, aggressive=True)
+            last_cleanup_time = current_time
         # Periodically clean up old rate limit data to prevent memory leaks
-        if current_time - last_cleanup_time > CLEANUP_INTERVAL:
-            cleanup_rate_limit_data(current_time)
+        elif current_time - last_cleanup_time > CLEANUP_INTERVAL:
+            cleanup_rate_limit_data(current_time, aggressive=False)
             last_cleanup_time = current_time
 
         # Check cooldown between requests
@@ -59,29 +65,50 @@ def check_rate_limit(user_id):
 
     return False, 0, None
 
-def cleanup_rate_limit_data(current_time):
+def cleanup_rate_limit_data(current_time, aggressive=False):
     """
     Clean up old rate limit data to prevent memory leaks
 
     Args:
         current_time (float): The current time
+        aggressive (bool): Whether to perform aggressive cleanup
     """
     # This function is called from within check_rate_limit which already holds the lock
     # No need to acquire the lock again
 
-    # Remove users who haven't made a request in the last hour
-    inactive_threshold = current_time - 3600
+    # Determine cleanup threshold based on mode
+    if aggressive:
+        # More aggressive cleanup - remove users inactive for 30 minutes
+        inactive_threshold = current_time - 1800
+    else:
+        # Normal cleanup - remove users inactive for 1 hour
+        inactive_threshold = current_time - 3600
 
     # Clean up user_last_request
     inactive_users = [user_id for user_id, last_time in user_last_request.items()
                      if last_time < inactive_threshold]
+    
     for user_id in inactive_users:
         del user_last_request[user_id]
         if user_id in user_request_count:
             del user_request_count[user_id]
 
+    # Additional aggressive cleanup if still over limit
+    if aggressive and len(user_last_request) > MAX_USERS_TRACKED:
+        # Sort users by last request time and remove oldest ones
+        sorted_users = sorted(user_last_request.items(), key=lambda x: x[1])
+        users_to_remove = sorted_users[:len(user_last_request) - MAX_USERS_TRACKED // 2]
+        
+        for user_id, _ in users_to_remove:
+            del user_last_request[user_id]
+            if user_id in user_request_count:
+                del user_request_count[user_id]
+        
+        logger.warning(f"Aggressive cleanup removed {len(users_to_remove)} additional users")
+
     if inactive_users:
-        logger.debug(f"Cleaned up rate limit data for {len(inactive_users)} inactive users")
+        cleanup_type = "aggressive" if aggressive else "normal"
+        logger.info(f"Rate limiter {cleanup_type} cleanup: removed {len(inactive_users)} inactive users, tracking {len(user_last_request)} users")
 
 def update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute):
     """

@@ -32,19 +32,26 @@ async def scrape_url_content(url: str) -> Optional[str]:
             logger.error("Firecrawl API key not found in config.py or is empty")
             return None
 
-        # Initialize the Firecrawl client
-        app = FirecrawlApp(api_key=config.firecrawl_api_key)
+        # Define the blocking operations as a separate function
+        def _scrape_url_blocking():
+            try:
+                # Initialize the Firecrawl client
+                app = FirecrawlApp(api_key=config.firecrawl_api_key)
 
-        # Use a separate thread for the blocking API call
-        loop = asyncio.get_event_loop()
-        scrape_result = await loop.run_in_executor(
-            None,
-            lambda: app.scrape_url(
-                url,
-                formats=['markdown'],
-                page_options={'onlyMainContent': True}
-            )
-        )
+                # Perform the scraping
+                scrape_result = app.scrape_url(
+                    url,
+                    formats=['markdown'],
+                    page_options={'onlyMainContent': True}
+                )
+
+                return scrape_result
+            except Exception as e:
+                # Re-raise to be handled in the async context
+                raise e
+
+        # Execute all blocking operations in thread executor
+        scrape_result = await asyncio.get_event_loop().run_in_executor(None, _scrape_url_blocking)
 
         # Check if scraping was successful
         if not scrape_result or 'markdown' not in scrape_result:
@@ -60,19 +67,24 @@ async def scrape_url_content(url: str) -> Optional[str]:
         return markdown_content
 
     except Exception as e:
-        # Provide more detailed error information
-        error_message = str(e)
-        if hasattr(e, 'response') and e.response:
-            status_code = getattr(e.response, 'status_code', 'unknown')
-            error_message = f"HTTP Error {status_code}: {error_message}"
-            
-            # Try to extract more details from the response if available
-            try:
-                response_text = e.response.text
-                if response_text:
-                    error_message += f" - Response: {response_text[:200]}"
-            except:
-                pass
+        # Ensure error handling doesn't block the event loop
+        def _log_error():
+            # Provide more detailed error information
+            error_message = str(e)
+            if hasattr(e, 'response') and e.response:
+                status_code = getattr(e.response, 'status_code', 'unknown')
+                error_message = f"HTTP Error {status_code}: {error_message}"
                 
-        logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
+                # Try to extract more details from the response if available
+                try:
+                    response_text = e.response.text
+                    if response_text:
+                        error_message += f" - Response: {response_text[:200]}"
+                except:
+                    pass
+                    
+            logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
+
+        # Run error logging in thread executor to avoid blocking
+        await asyncio.get_event_loop().run_in_executor(None, _log_error)
         return None
