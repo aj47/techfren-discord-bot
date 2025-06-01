@@ -89,8 +89,10 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
             return f"No messages found in #{channel_name} for the past {time_period}."
 
-        # Prepare the messages for summarization
+        # Prepare the messages for summarization and build user mapping
         formatted_messages_text = []
+        user_mapping = {}  # author_name -> author_id mapping
+        
         for msg in filtered_messages:
             # Ensure created_at is a datetime object before calling strftime
             created_at_time = msg.get('created_at')
@@ -100,10 +102,15 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
                 time_str = "Unknown Time" # Fallback if created_at is not as expected
 
             author_name = msg.get('author_name', 'Unknown Author')
+            author_id = msg.get('author_id', '')
             content = msg.get('content', '')
             message_id = msg.get('id', '')
             guild_id = msg.get('guild_id', '')
             channel_id = msg.get('channel_id', '')
+
+            # Build user mapping for Discord mentions
+            if author_name and author_id:
+                user_mapping[author_name] = author_id
 
             # Generate Discord message link
             message_link = ""
@@ -140,15 +147,27 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Join the messages with newlines
         messages_text = "\n".join(formatted_messages_text)
+        
+        # Create user mapping text for the prompt
+        user_mentions_guide = ""
+        if user_mapping:
+            user_mentions_guide = "\n\nUser ID Mapping (use Discord mention format <@user_id> when referring to these users):\n"
+            for username, user_id in user_mapping.items():
+                user_mentions_guide += f"- {username}: <@{user_id}>\n"
 
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
         prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
 
-{messages_text}
+{messages_text}{user_mentions_guide}
 
 Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
-Highlight all user names/aliases with backticks (e.g., `username`).
+
+IMPORTANT: When mentioning users in your summary, you MUST use the Discord mention format <@user_id> instead of backticks or plain text. 
+- Example: Instead of writing `pierrunoyt` or pierrunoyt, write <@293486003245809664>
+- Example: Instead of writing `techfren` or techfren, write <@200272755520700416>
+- Use the User ID Mapping provided above to find the correct user ID for each username.
+
 For each bullet point, include a link to the source message at the end of the bullet point in the format: [Source](link)
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link.
 """
