@@ -48,7 +48,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         logger.info(f"Using formatted URL: {formatted_url}")
 
         # Define the blocking operations as a separate function
-        def _fetch_tweet_blocking():
+        def _fetch_tweet_blocking() -> Optional[Dict[str, Any]]:
             try:
                 # Initialize the Apify client
                 client = ApifyClient(token=config.apify_api_token)
@@ -124,7 +124,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         logger.info(f"Using formatted URL for replies: {formatted_url}")
 
         # Define the blocking operations as a separate function
-        def _fetch_replies_blocking():
+        def _fetch_replies_blocking() -> Optional[List[Dict[str, Any]]]:
             try:
                 # Initialize the Apify client
                 client = ApifyClient(token=config.apify_api_token)

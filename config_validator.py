@@ -1,7 +1,80 @@
+import re
+from typing import Any
 from logging_config import logger
 from rate_limiter import update_rate_limit_config
 
-def validate_config(config_module):
+def _is_valid_discord_id(value: Any) -> bool:
+    """
+    Validate if a value is a valid Discord ID.
+    
+    Args:
+        value: The value to validate
+        
+    Returns:
+        bool: True if valid Discord ID, False otherwise
+    """
+    try:
+        # Convert to string first
+        str_value = str(value).strip()
+        
+        # Discord IDs are 17-20 digit integers
+        if not str_value.isdigit():
+            return False
+            
+        # Check length (Discord IDs are typically 17-20 digits)
+        if not (17 <= len(str_value) <= 20):
+            return False
+            
+        # Convert to int to ensure it's a valid number
+        int_value = int(str_value)
+        
+        # Discord IDs should be positive
+        return int_value > 0
+        
+    except (ValueError, TypeError):
+        return False
+
+def _is_valid_api_key(value: Any, min_length: int = 10) -> bool:
+    """
+    Validate if a value is a valid API key format.
+    
+    Args:
+        value: The value to validate
+        min_length: Minimum length for the API key
+        
+    Returns:
+        bool: True if valid API key format, False otherwise
+    """
+    try:
+        if not isinstance(value, str):
+            return False
+        
+        # Remove whitespace
+        value = value.strip()
+        
+        # Check minimum length
+        if len(value) < min_length:
+            return False
+            
+        # Check for obvious placeholder values
+        placeholder_patterns = [
+            r'^your[_\-]?api[_\-]?key$',
+            r'^your[_\-]?token$',
+            r'^placeholder$',
+            r'^change[_\-]?me$',
+            r'^example$'
+        ]
+        
+        for pattern in placeholder_patterns:
+            if re.match(pattern, value, re.IGNORECASE):
+                return False
+                
+        return True
+        
+    except (ValueError, TypeError):
+        return False
+
+def validate_config(config_module: Any) -> bool:
     """
     Validate the configuration file (config.py)
 
@@ -19,18 +92,18 @@ def validate_config(config_module):
         logger.error("Required configuration missing: Discord token")
         raise ValueError("Critical configuration is missing or invalid. Please check your setup.")
 
-    if not isinstance(config_module.token, str) or len(config_module.token) < 50:
+    if not _is_valid_api_key(config_module.token, min_length=50):
         # This is a warning, not a critical error, as token length can vary.
-        logger.warning("Discord token appears to be invalid (too short or not a string).")
+        logger.warning("Discord token appears to be invalid (too short, not a string, or placeholder value).")
 
     # Check OpenRouter API key
     if not hasattr(config_module, 'openrouter') or not config_module.openrouter:
         logger.error("Required configuration missing: OpenRouter API key")
         raise ValueError("Critical configuration is missing or invalid. Please check your setup.")
 
-    if not isinstance(config_module.openrouter, str) or len(config_module.openrouter) < 20:
+    if not _is_valid_api_key(config_module.openrouter, min_length=20):
         # This is a warning.
-        logger.warning("OpenRouter API key appears to be invalid (too short or not a string).")
+        logger.warning("OpenRouter API key appears to be invalid (too short, not a string, or placeholder value).")
         
     # Check Firecrawl API key
     if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
@@ -85,13 +158,12 @@ def validate_config(config_module):
     else:
         logger.info("No custom llm_model in config.py. Using default model.")
 
-    # Check for optional reports channel ID
+    # Check for optional reports channel ID with Discord ID format validation
     if hasattr(config_module, 'reports_channel_id') and config_module.reports_channel_id:
-        try:
-            int(config_module.reports_channel_id)
+        if _is_valid_discord_id(config_module.reports_channel_id):
             logger.info(f"Reports channel ID configured: {config_module.reports_channel_id}")
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid reports_channel_id in config: '{config_module.reports_channel_id}'. It should be an integer. Reports will not be posted.")
+        else:
+            logger.warning(f"Invalid reports_channel_id in config: '{config_module.reports_channel_id}'. It should be a valid Discord channel ID. Reports will not be posted.")
             # Optionally, you could set config_module.reports_channel_id = None here if it's invalid
             
     # Check for optional summary time

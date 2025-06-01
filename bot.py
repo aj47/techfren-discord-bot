@@ -22,6 +22,7 @@ from error_handler import (
     handle_discord_error, log_error_with_context, ErrorSeverity,
     DiscordAPIError, ConfigurationError, safe_execute_async
 ) # Import standardized error handling
+from discord_rate_limiter import rate_limited_send, rate_limited_followup_send # Import Discord rate limiting
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -285,12 +286,25 @@ async def on_message(message):
             urls = re.findall(url_pattern, message.content)
 
             if urls:
-                # Process the first URL found
-                url = urls[0]
-                logger.info(f"Found URL in message {message.id}: {url}")
+                # Import config for limits
+                import config
+                
+                # Process all URLs found (limited to prevent abuse)
+                urls_to_process = urls[:config.MAX_URLS_PER_MESSAGE]
+                logger.info(f"Found {len(urls)} URL(s) in message {message.id}, processing first {len(urls_to_process)}")
 
-                # Create a background task to process the URL
-                asyncio.create_task(process_url(message.id, url))
+                # Create background tasks to process all URLs
+                for i, url in enumerate(urls_to_process):
+                    # Add a delay between processing multiple URLs to spread load
+                    if i > 0:
+                        delay_task = asyncio.create_task(asyncio.sleep(i * config.URL_PROCESSING_DELAY))
+                        async def delayed_process(url=url, delay=delay_task):
+                            await delay
+                            await process_url(message.id, url)
+                        asyncio.create_task(delayed_process())
+                    else:
+                        # Process first URL immediately
+                        asyncio.create_task(process_url(message.id, url))
     except Exception as e:
         log_error_with_context(e, f"Storing message {message.id} in database", ErrorSeverity.MEDIUM)
 

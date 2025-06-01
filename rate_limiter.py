@@ -1,6 +1,7 @@
 import time
 import threading
 from collections import defaultdict
+from typing import Tuple, Optional
 from logging_config import logger
 
 # Rate limiting configuration
@@ -17,7 +18,7 @@ user_last_request = {}  # Track last request time per user
 user_request_count = defaultdict(list)  # Track request timestamps for per-minute limiting
 last_cleanup_time = time.time()  # Track when we last cleaned up old rate limit data
 
-def check_rate_limit(user_id):
+def check_rate_limit(user_id: str) -> Tuple[bool, float, str]:
     """
     Check if a user has exceeded the rate limit
 
@@ -65,7 +66,7 @@ def check_rate_limit(user_id):
 
     return False, 0, None
 
-def cleanup_rate_limit_data(current_time, aggressive=False):
+def cleanup_rate_limit_data(current_time: float, aggressive: bool = False) -> None:
     """
     Clean up old rate limit data to prevent memory leaks
 
@@ -110,7 +111,7 @@ def cleanup_rate_limit_data(current_time, aggressive=False):
         cleanup_type = "aggressive" if aggressive else "normal"
         logger.info(f"Rate limiter {cleanup_type} cleanup: removed {len(inactive_users)} inactive users, tracking {len(user_last_request)} users")
 
-def update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute):
+def update_rate_limit_config(new_rate_limit_seconds: int, new_max_requests_per_minute: int) -> None:
     """
     Update rate limiting parameters.
     This function should be called if these values are changed in the main config.

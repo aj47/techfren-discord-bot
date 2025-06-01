@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional, Union, Protocol
 import discord
 import logging
+from discord_rate_limiter import rate_limited_send, rate_limited_followup_send, rate_limited_thread_create
 
 
 @dataclass
@@ -46,12 +47,12 @@ class MessageResponseSender:
         # `ephemeral` has no meaning for regular messages; we silently ignore it.
         # Allow user mentions but disable everyone/here and role mentions for safety
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        return await self.channel.send(content, allowed_mentions=allowed_mentions)
+        return await rate_limited_send(self.channel, content, allowed_mentions=allowed_mentions)
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
-            await self.channel.send(part, allowed_mentions=allowed_mentions)
+            await rate_limited_send(self.channel, part, allowed_mentions=allowed_mentions)
 
 
 class InteractionResponseSender:
@@ -62,13 +63,13 @@ class InteractionResponseSender:
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        message = await self.interaction.followup.send(content, ephemeral=ephemeral, allowed_mentions=allowed_mentions, wait=True)
+        message = await rate_limited_followup_send(self.interaction, content, ephemeral=ephemeral, allowed_mentions=allowed_mentions, wait=True)
         return message if not ephemeral else None  # Can't create threads from ephemeral messages
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
-            await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
+            await rate_limited_followup_send(self.interaction, part, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
 
 
 class ThreadManager:
@@ -84,7 +85,8 @@ class ThreadManager:
             return None
 
         try:
-            return await self.channel.create_thread(
+            return await rate_limited_thread_create(
+                self.channel,
                 name=name,
                 type=discord.ChannelType.public_thread
             )

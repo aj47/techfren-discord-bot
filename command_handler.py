@@ -4,6 +4,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message
+from discord_rate_limiter import rate_limited_send
 import re
 from typing import Optional
 
@@ -101,26 +102,26 @@ async def _send_error_response_thread(message: discord.Message, client_user: dis
         else:
             # Fallback to channel response
             allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+            bot_response = await rate_limited_send(message.channel, error_msg, allowed_mentions=allowed_mentions)
             await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
     except Exception as e:
         logger.error(f"Error sending error response in thread: {str(e)}", exc_info=True)
         # Ultimate fallback to channel response
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+        bot_response = await rate_limited_send(message.channel, error_msg, allowed_mentions=allowed_mentions)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 
 async def _handle_bot_command_fallback(message: discord.Message, client_user: discord.ClientUser, query: str) -> None:
     """Fallback handler for bot commands when thread creation fails."""
-    processing_msg = await message.channel.send("Processing your request, please wait...")
+    processing_msg = await rate_limited_send(message.channel, "Processing your request, please wait...")
     try:
         response = await call_llm_api(query)
         message_parts = await split_long_message(response)
 
         for part in message_parts:
             allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions)
+            bot_response = await rate_limited_send(message.channel, part, allowed_mentions=allowed_mentions)
             await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
 
         await processing_msg.delete()
@@ -130,7 +131,7 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
         import config
         error_msg = config.ERROR_MESSAGES['processing_error']
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+        bot_response = await rate_limited_send(message.channel, error_msg, allowed_mentions=allowed_mentions)
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
         try:
             await processing_msg.delete()
@@ -157,7 +158,7 @@ def _validate_hours_range(hours: int) -> bool:
 async def _send_error_response(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
     """Send error response and store in database."""
     allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-    bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+    bot_response = await rate_limited_send(message.channel, error_msg, allowed_mentions=allowed_mentions)
     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 # Helper function for message command handling
@@ -209,7 +210,7 @@ async def handle_sum_hr_command(message: discord.Message, client_user: discord.C
     # Warn for large summaries that may take longer
     if hours > config.LARGE_SUMMARY_THRESHOLD:
         warning_msg = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours)
-        await message.channel.send(warning_msg)
+        await rate_limited_send(message.channel, warning_msg)
 
     await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
 

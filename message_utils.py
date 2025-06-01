@@ -1,3 +1,5 @@
+from typing import Optional, List
+
 def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
     """
     Generate a Discord message link from guild ID, channel ID, and message ID.
@@ -16,7 +18,7 @@ def generate_discord_message_link(guild_id: str, channel_id: str, message_id: st
         # For DMs, use @me instead of guild_id
         return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
 
-async def split_long_message(message, max_length=None):
+async def split_long_message(message: str, max_length: Optional[int] = None) -> List[str]:
     """
     Split a long message into multiple parts to avoid Discord's 2000 character limit
 

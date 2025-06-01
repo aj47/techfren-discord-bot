@@ -33,7 +33,7 @@ async def scrape_url_content(url: str) -> Optional[str]:
             return None
 
         # Define the blocking operations as a separate function
-        def _scrape_url_blocking():
+        def _scrape_url_blocking() -> Optional[str]:
             try:
                 # Initialize the Firecrawl client
                 app = FirecrawlApp(api_key=config.firecrawl_api_key)
@@ -68,7 +68,7 @@ async def scrape_url_content(url: str) -> Optional[str]:
 
     except Exception as e:
         # Ensure error handling doesn't block the event loop
-        def _log_error():
+        def _log_error() -> None:
             # Provide more detailed error information
             error_message = str(e)
             if hasattr(e, 'response') and e.response:

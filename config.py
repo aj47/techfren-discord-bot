@@ -78,6 +78,10 @@ DB_BUSY_TIMEOUT = 5000  # 5 seconds
 # Content Processing Constants
 # Maximum content length for LLM processing (to avoid token limits)
 MAX_CONTENT_LENGTH_FOR_LLM = 15000
+# Maximum number of URLs to process per message (to prevent abuse)
+MAX_URLS_PER_MESSAGE = 3
+# Delay between processing multiple URLs (in seconds)
+URL_PROCESSING_DELAY = 2
 
 # Error Messages
 ERROR_MESSAGES = {
