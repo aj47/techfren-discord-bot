@@ -16,7 +16,7 @@ A simple Discord bot built with discord.py.
   - Uses Firecrawl for all other URLs
   - Summarizes content and stores it in the database
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
-- Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel. While originally envisaged for a dedicated `#bot-talk` channel, the current implementation allows use in all channels.
+- Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel, with responses posted in threads attached to your original message
 - `/sum-day` command works in any channel
 - Stores all messages in a SQLite database for logging and analysis
 
@@ -97,7 +97,7 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 ### Basic Commands
 
-- `@botname <query>`: Sends your query to an AI model via OpenRouter and returns the response. This command works in any channel.
+- `@botname <query>`: Sends your query to an AI model via OpenRouter and returns the response. This command works in any channel and creates a thread attached to your message where the bot's response is posted.
 
 ### Channel Summarization
 
@@ -223,6 +223,12 @@ If you encounter database-related errors:
 
 ## Changelog
 
+### 2025-01-27
+- **Thread-based replies for mention commands**: Bot responses to `@botname <query>` commands are now posted in threads attached to the user's original message
+- **Removed channel restrictions**: All mention commands now work in any channel without restrictions
+- **Improved user experience**: Bot responses are organized in threads, keeping main channels cleaner
+- **Maintained existing functionality**: Message storage, character limit handling, and user mention protections continue to work as expected
+
 ### 2025-05-30
 - **Thread Optimization**: Improved summary command efficiency and user experience
   - **Clean Channel View**: Main message shows only a title (e.g., "Summary of #channel for the past 24 hours")
@@ -260,8 +266,8 @@ If you encounter database-related errors:
 - Updated documentation with new configuration options
 
 ### 2023-05-25
-- Modified the `/sum-day` command to work in any channel (not just #bot-talk)
-- Mention-based queries (`@botname <query>`) are available in all channels.
+- Modified the `/sum-day` command to work in any channel
+- Mention-based queries (`@botname <query>`) are available in all channels with thread-based responses
 - Updated documentation to reflect these changes
 
 ### 2023-05-20

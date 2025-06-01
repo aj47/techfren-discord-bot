@@ -27,7 +27,7 @@ if not openrouter:
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL
 # Default model is "x-ai/grok-3-mini-beta"
-llm_model = os.getenv('LLM_MODEL', 'x-ai/grok-3-mini-beta')
+llm_model = os.getenv('LLM_MODEL', 'x-ai/grok-3-mini-beta:online')
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE

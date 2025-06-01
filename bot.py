@@ -176,19 +176,11 @@ async def on_ready():
     # Log details about each connected guild
     for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
-        # Check if bot-talk channel exists
-        bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
-        if not bot_talk_exists:
-            logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @bot.event
 async def on_guild_join(guild):
     """Log when the bot joins a new guild"""
     logger.info(f'Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
-    # Check if bot-talk channel exists
-    bot_talk_exists = any(channel.name == 'bot-talk' for channel in guild.text_channels)
-    if not bot_talk_exists:
-        logger.warning(f'Guild {guild.name} does not have a #bot-talk channel. While the bot\'s mention-based query functionality (e.g., @botname <query>) currently works in all channels, a #bot-talk channel was originally intended as a dedicated space for these interactions. The /sum-day command will still function in all channels.')
 
 @bot.event
 async def on_guild_remove(guild):
@@ -238,6 +230,9 @@ async def on_message(message):
         if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
             is_command = True
             command_type = "mention"
+        elif message.content.startswith('/bot'):
+            is_command = True
+            command_type = "/bot"
         elif message.content.startswith('/sum-day'):
             is_command = True
             command_type = "/sum-day"
