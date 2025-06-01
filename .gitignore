@@ -27,9 +27,12 @@ ENV/
 
 # Environment files with sensitive data
 .env
+.env*
 .env.local
 .env.production
 .env.development
+.env[0-9]
+*.env
 
 # Log files
 logs/
