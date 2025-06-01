@@ -61,8 +61,10 @@ CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (c
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
 CREATE_INDEX_CREATED = "CREATE INDEX IF NOT EXISTS idx_created_at ON messages (created_at);"
 CREATE_INDEX_COMMAND = "CREATE INDEX IF NOT EXISTS idx_is_command ON messages (is_command);"
+CREATE_INDEX_SCRAPED_URL = "CREATE INDEX IF NOT EXISTS idx_scraped_url ON messages (scraped_url);"
 CREATE_INDEX_SUMMARY_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_summary_channel_id ON channel_summaries (channel_id);"
 CREATE_INDEX_SUMMARY_DATE = "CREATE INDEX IF NOT EXISTS idx_summary_date ON channel_summaries (date);"
+CREATE_INDEX_SUMMARY_GUILD = "CREATE INDEX IF NOT EXISTS idx_summary_guild_id ON channel_summaries (guild_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -110,10 +112,12 @@ def init_database() -> None:
             cursor.execute(CREATE_INDEX_GUILD)
             cursor.execute(CREATE_INDEX_CREATED)
             cursor.execute(CREATE_INDEX_COMMAND)
+            cursor.execute(CREATE_INDEX_SCRAPED_URL)
 
             # Create indexes for channel_summaries table
             cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
             cursor.execute(CREATE_INDEX_SUMMARY_DATE)
+            cursor.execute(CREATE_INDEX_SUMMARY_GUILD)
 
             # Insert a test message to ensure the database is working
             try:
