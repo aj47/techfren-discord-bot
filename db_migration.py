@@ -37,19 +37,30 @@ def migrate_database():
             cursor.execute("PRAGMA table_info(messages)")
             columns = [column[1] for column in cursor.fetchall()]
             
-            # Add missing columns
-            columns_to_add = []
-            if 'scraped_url' not in columns:
-                columns_to_add.append(("scraped_url", "TEXT"))
-            if 'scraped_content_summary' not in columns:
-                columns_to_add.append(("scraped_content_summary", "TEXT"))
-            if 'scraped_content_key_points' not in columns:
-                columns_to_add.append(("scraped_content_key_points", "TEXT"))
+            # Define allowlisted columns and their types for security
+            ALLOWED_COLUMNS = {
+                'scraped_url': 'TEXT',
+                'scraped_content_summary': 'TEXT',
+                'scraped_content_key_points': 'TEXT'
+            }
             
-            # Execute ALTER TABLE statements
+            # Add missing columns using allowlisted values only
+            columns_to_add = []
+            for column_name, column_type in ALLOWED_COLUMNS.items():
+                if column_name not in columns:
+                    columns_to_add.append((column_name, column_type))
+            
+            # Execute ALTER TABLE statements with allowlisted values
             for column_name, column_type in columns_to_add:
-                logger.info(f"Adding column {column_name} to messages table")
-                cursor.execute(f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}")
+                # Validate that column_name and column_type are in our allowlist
+                if column_name in ALLOWED_COLUMNS and ALLOWED_COLUMNS[column_name] == column_type:
+                    logger.info(f"Adding column {column_name} to messages table")
+                    # Use parameterized query construction with allowlisted values
+                    sql = f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}"
+                    cursor.execute(sql)
+                else:
+                    logger.error(f"Attempted to add non-allowlisted column: {column_name} {column_type}")
+                    return False
             
             # explicit commit is optional; context-manager also commits on success
             conn.commit()
