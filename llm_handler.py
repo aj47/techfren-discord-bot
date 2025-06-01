@@ -89,8 +89,10 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
             return f"No messages found in #{channel_name} for the past {time_period}."
 
-        # Prepare the messages for summarization
+        # Prepare the messages for summarization and collect user mappings
         formatted_messages_text = []
+        user_mappings = {}  # Map author_name to author_id for Discord mentions
+
         for msg in filtered_messages:
             # Ensure created_at is a datetime object before calling strftime
             created_at_time = msg.get('created_at')
@@ -105,6 +107,10 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             message_id = msg.get('id', '')
             guild_id = msg.get('guild_id', '')
             channel_id = msg.get('channel_id', '')
+
+            # Store user mapping for Discord mentions (only if we have a valid author_id)
+            if author_id and author_name != 'Unknown Author':
+                user_mappings[author_name] = author_id
 
             # Generate Discord message link
             message_link = ""
@@ -142,14 +148,21 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
         # Join the messages with newlines
         messages_text = "\n".join(formatted_messages_text)
 
+        # Create user mappings text for the LLM
+        user_mappings_text = ""
+        if user_mappings:
+            user_mappings_text = "\n\nUser ID Mappings (for Discord mentions):\n"
+            for username, user_id in user_mappings.items():
+                user_mappings_text += f"- {username} = <@{user_id}>\n"
+
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
         prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
 
-{messages_text}
+{messages_text}{user_mappings_text}
 
 Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
-Include usernames in the summary to show who participated in conversations.
+When mentioning users in the summary, use Discord mention format <@user_id> instead of plain usernames. Use the User ID Mappings provided above to convert usernames to mentions.
 For each bullet point, include a link to the source message at the end of the bullet point in the format: [Source](link)
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link.
 """
@@ -180,7 +193,7 @@ At the end, include a section with the top 3 most interesting or notable one-lin
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. For each bullet point, include a link to the source message at the end in the format [Source](link). Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation, each with their source link."
+                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. When mentioning users, use Discord mention format <@user_id> instead of plain usernames. For each bullet point, include a link to the source message at the end in the format [Source](link). Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation, each with their source link."
                 },
                 {
                     "role": "user",
