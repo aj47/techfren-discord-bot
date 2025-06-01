@@ -100,6 +100,7 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
                 time_str = "Unknown Time" # Fallback if created_at is not as expected
 
             author_name = msg.get('author_name', 'Unknown Author')
+            author_id = msg.get('author_id', '')
             content = msg.get('content', '')
             message_id = msg.get('id', '')
             guild_id = msg.get('guild_id', '')
@@ -115,11 +116,12 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
-            # Format the message with the basic content and link
+            # Format the message with the basic content and link, using Discord mention format
+            author_mention = f"<@{author_id}>" if author_id else author_name
             if message_link:
-                message_text = f"[{time_str}] @{author_name}: {content} [Link: {message_link}]"
+                message_text = f"[{time_str}] {author_mention}: {content} [Link: {message_link}]"
             else:
-                message_text = f"[{time_str}] @{author_name}: {content}"
+                message_text = f"[{time_str}] {author_mention}: {content}"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
