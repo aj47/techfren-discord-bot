@@ -1,9 +1,8 @@
-from openai import OpenAI
 from logging_config import logger
-import config # Assuming config.py is in the same directory or accessible
 import json
 from typing import Optional, Dict, Any
 from message_utils import generate_discord_message_link
+from utils.api_utils import get_openai_client, get_llm_model, validate_api_key
 
 async def call_llm_api(query, message_context=None):
     """
@@ -19,19 +18,12 @@ async def call_llm_api(query, message_context=None):
     try:
         logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Validate API key and get client
+        if not validate_api_key('openrouter', 'OpenRouter'):
             return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        openai_client = get_openai_client()
+        model = get_llm_model()
 
         # Prepare the user content with message context if available
         user_content = query
@@ -199,19 +191,12 @@ At the end, include a section with the top 3 most interesting or notable one-lin
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Validate API key and get client
+        if not validate_api_key('openrouter', 'OpenRouter'):
             return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        openai_client = get_openai_client()
+        model = get_llm_model()
 
         # Make the API request with a higher token limit for summaries
         completion = openai_client.chat.completions.create(
@@ -267,19 +252,12 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
         logger.info(f"Summarizing content from URL: {url}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Validate API key and get client
+        if not validate_api_key('openrouter', 'OpenRouter'):
             return None
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        openai_client = get_openai_client()
+        model = get_llm_model()
 
         # Create the prompt for the LLM
         prompt = f"""Please analyze the following content from the URL: {url}

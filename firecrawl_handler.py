@@ -8,7 +8,7 @@ from firecrawl import FirecrawlApp
 import logging
 from typing import Optional
 
-# Import config for API key
+from utils.api_utils import validate_api_key
 import config
 
 # Set up logging
@@ -27,9 +27,8 @@ async def scrape_url_content(url: str) -> Optional[str]:
     try:
         logger.info(f"Scraping URL: {url}")
 
-        # Check if Firecrawl API key exists
-        if not hasattr(config, 'firecrawl_api_key') or not config.firecrawl_api_key:
-            logger.error("Firecrawl API key not found in config.py or is empty")
+        # Validate Firecrawl API key
+        if not validate_api_key('firecrawl_api_key', 'Firecrawl'):
             return None
 
         # Initialize the Firecrawl client

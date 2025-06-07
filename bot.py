@@ -18,6 +18,7 @@ from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from utils.discord_utils import SAFE_ALLOWED_MENTIONS
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -347,7 +348,7 @@ async def _handle_slash_command_wrapper(
         import config
         if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
             try:
-                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+                allowed_mentions = SAFE_ALLOWED_MENTIONS
                 await interaction.followup.send(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True, allowed_mentions=allowed_mentions)
                 return
             except Exception as e:

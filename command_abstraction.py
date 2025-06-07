@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional, Union, Protocol
 import discord
 import logging
+from utils.discord_utils import SAFE_ALLOWED_MENTIONS
 
 
 @dataclass
@@ -45,11 +46,11 @@ class MessageResponseSender:
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
         # `ephemeral` has no meaning for regular messages; we silently ignore it.
         # Allow user mentions but disable everyone/here and role mentions for safety
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        allowed_mentions = SAFE_ALLOWED_MENTIONS
         return await self.channel.send(content, allowed_mentions=allowed_mentions)
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        allowed_mentions = SAFE_ALLOWED_MENTIONS
         for part in parts:
             await self.channel.send(part, allowed_mentions=allowed_mentions)
 
@@ -61,12 +62,12 @@ class InteractionResponseSender:
         self.interaction = interaction
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        allowed_mentions = SAFE_ALLOWED_MENTIONS
         message = await self.interaction.followup.send(content, ephemeral=ephemeral, allowed_mentions=allowed_mentions, wait=True)
         return message if not ephemeral else None  # Can't create threads from ephemeral messages
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        allowed_mentions = SAFE_ALLOWED_MENTIONS
         for part in parts:
             await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions)
 

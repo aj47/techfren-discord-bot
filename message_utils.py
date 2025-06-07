@@ -1,7 +1,32 @@
 import discord
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+
+
+async def get_safe_message_context(message: discord.Message, bot_client: discord.Client) -> Optional[Dict[str, Any]]:
+    """
+    Safely get message context (referenced messages and linked messages) with error handling.
+    
+    Args:
+        message: The Discord message to get context for
+        bot_client: The Discord bot client
+        
+    Returns:
+        Optional[Dict[str, Any]]: Message context or None if failed
+    """
+    if not bot_client or not (message.reference or 'discord.com/channels/' in message.content):
+        return None
+        
+    try:
+        message_context = await get_message_context(message, bot_client)
+        logger = logging.getLogger('discord_bot.message_utils')
+        logger.debug(f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+        return message_context
+    except Exception as e:
+        logger = logging.getLogger('discord_bot.message_utils')
+        logger.warning(f"Failed to get message context: {e}")
+        return None
 
 def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
     """
