@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Dict, List, Any, Union
 import re
 
-# Import config for API token
+from utils.api_utils import validate_api_key, ensure_https_url
 import config
 
 # Set up logging
@@ -28,9 +28,8 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
     try:
         logger.info(f"Fetching tweet from URL: {url}")
 
-        # Check if Apify API token exists
-        if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-            logger.error("Apify API token not found in config.py or is empty")
+        # Validate Apify API token
+        if not validate_api_key('apify_api_token', 'Apify'):
             return None
 
         # Initialize the Apify client
@@ -43,10 +42,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
             return None
 
         # Ensure URL is properly formatted
-        if not url.startswith('http'):
-            formatted_url = f"https://{url}"
-        else:
-            formatted_url = url
+        formatted_url = ensure_https_url(url)
             
         logger.info(f"Using formatted URL: {formatted_url}")
             
@@ -102,19 +98,15 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
     try:
         logger.info(f"Fetching tweet replies from URL: {url}")
 
-        # Check if Apify API token exists
-        if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-            logger.error("Apify API token not found in config.py or is empty")
+        # Validate Apify API token
+        if not validate_api_key('apify_api_token', 'Apify'):
             return None
 
         # Initialize the Apify client
         client = ApifyClient(token=config.apify_api_token)
 
         # Ensure URL is properly formatted
-        if not url.startswith('http'):
-            formatted_url = f"https://{url}"
-        else:
-            formatted_url = url
+        formatted_url = ensure_https_url(url)
             
         logger.info(f"Using formatted URL for replies: {formatted_url}")
             
