@@ -1,6 +1,6 @@
 import discord
 import re
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import logging
 
 
