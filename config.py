@@ -32,8 +32,17 @@ llm_model = os.getenv('LLM_MODEL', 'x-ai/grok-3-mini-beta:online')
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
 # Default values: 10 seconds cooldown, 6 requests per minute
-rate_limit_seconds = int(os.getenv('RATE_LIMIT_SECONDS', '10'))
-max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
+try:
+    rate_limit_seconds = int(os.getenv('RATE_LIMIT_SECONDS', '10'))
+except ValueError:
+    print("Warning: Invalid RATE_LIMIT_SECONDS value, using default: 10")
+    rate_limit_seconds = 10
+
+try:
+    max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
+except ValueError:
+    print("Warning: Invalid MAX_REQUESTS_PER_MINUTE value, using default: 6")
+    max_requests_per_minute = 6
 
 # Firecrawl API Key (required for link scraping)
 # Environment variable: FIRECRAWL_API_KEY
@@ -49,8 +58,22 @@ apify_api_token = os.getenv('APIFY_API_TOKEN')
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID
 # Default time: 00:00 UTC
-summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
-summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
+try:
+    summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
+    if not (0 <= summary_hour <= 23):
+        raise ValueError("SUMMARY_HOUR must be between 0 and 23")
+except ValueError as e:
+    print(f"Warning: Invalid SUMMARY_HOUR value ({e}), using default: 0")
+    summary_hour = 0
+
+try:
+    summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
+    if not (0 <= summary_minute <= 59):
+        raise ValueError("SUMMARY_MINUTE must be between 0 and 59")
+except ValueError as e:
+    print(f"Warning: Invalid SUMMARY_MINUTE value ({e}), using default: 0")
+    summary_minute = 0
+
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 
 # Summary Command Limits

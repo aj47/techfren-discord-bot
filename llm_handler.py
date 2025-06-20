@@ -2,8 +2,13 @@ from openai import OpenAI
 from logging_config import logger
 import config # Assuming config.py is in the same directory or accessible
 import json
+import os
 from typing import Optional, Dict, Any
 from message_utils import generate_discord_message_link
+
+# Configuration constants
+MAX_INPUT_LENGTH = int(os.getenv('MAX_INPUT_LENGTH', '60000'))  # ~15k tokens for input
+MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', '15000'))  # For content summarization
 
 async def call_llm_api(query, message_context=None):
     """
@@ -68,8 +73,8 @@ async def call_llm_api(query, message_context=None):
         # Make the API request
         completion = openai_client.chat.completions.create(
             extra_headers={
-                "HTTP-Referer": "https://techfren.net",  # Optional site URL
-                "X-Title": "TechFren Discord Bot",  # Optional site title
+                "HTTP-Referer": os.getenv('HTTP_REFERER', "https://techfren.net"),
+                "X-Title": os.getenv('X_TITLE', "TechFren Discord Bot"),
             },
             model=model,  # Use the model from config
             messages=[
@@ -179,10 +184,9 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Truncate input if it's too long to avoid token limits
         # Rough estimate: 1 token ≈ 4 characters, leaving room for prompt and response
-        max_input_length = 60000  # ~15k tokens for input, allowing room for system prompt and output
-        if len(messages_text) > max_input_length:
+        if len(messages_text) > MAX_INPUT_LENGTH:
             original_length = len('\n'.join(formatted_messages_text))
-            messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
+            messages_text = messages_text[:MAX_INPUT_LENGTH] + "\n\n[Messages truncated due to length...]"
             logger.info(f"Truncated conversation input from {original_length} to {len(messages_text)} characters")
 
         # Create the prompt for the LLM
@@ -216,8 +220,8 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         # Make the API request with a higher token limit for summaries
         completion = openai_client.chat.completions.create(
             extra_headers={
-                "HTTP-Referer": "https://techfren.net",
-                "X-Title": "TechFren Discord Bot",
+                "HTTP-Referer": os.getenv('HTTP_REFERER', "https://techfren.net"),
+                "X-Title": os.getenv('X_TITLE', "TechFren Discord Bot"),
             },
             model=model,  # Use the model from config
             messages=[
@@ -260,9 +264,8 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
     """
     try:
         # Truncate content if it's too long (to avoid token limits)
-        max_content_length = 15000  # Adjust based on model's context window
-        truncated_content = markdown_content[:max_content_length]
-        if len(markdown_content) > max_content_length:
+        truncated_content = markdown_content[:MAX_CONTENT_LENGTH]
+        if len(markdown_content) > MAX_CONTENT_LENGTH:
             truncated_content += "\n\n[Content truncated due to length...]"
 
         logger.info(f"Summarizing content from URL: {url}")
@@ -308,8 +311,8 @@ Format your response exactly as follows:
         # Make the API request
         completion = openai_client.chat.completions.create(
             extra_headers={
-                "HTTP-Referer": "https://techfren.net",
-                "X-Title": "TechFren Discord Bot",
+                "HTTP-Referer": os.getenv('HTTP_REFERER', "https://techfren.net"),
+                "X-Title": os.getenv('X_TITLE', "TechFren Discord Bot"),
             },
             model=model,  # Use the model from config
             messages=[

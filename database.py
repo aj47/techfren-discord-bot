@@ -392,7 +392,7 @@ async def update_message_with_scraped_data(
                 )
 
                 # Check if any rows were affected
-                rows_affected = cursor.rowcount == 0
+                rows_affected = cursor.rowcount > 0
                 conn.commit()
                 return rows_affected
 
