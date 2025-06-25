@@ -327,6 +327,15 @@ Format your response exactly as follows:
 
         # Extract the response
         response_text = completion.choices[0].message.content
+        
+        # Handle case where response_text could be None
+        if response_text is None:
+            logger.error("LLM API returned None response for content summarization")
+            return {
+                "summary": "Failed to generate summary - empty response from AI model.",
+                "key_points": ["The AI model returned an empty response."]
+            }
+        
         logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
         # Extract the JSON part from the response

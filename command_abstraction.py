@@ -10,6 +10,12 @@ from typing import Optional, Union, Protocol
 import discord
 import logging
 
+# Type alias for channels that can send messages
+MessageableChannel = Union[discord.TextChannel, discord.Thread]
+
+# Type alias for channels that can create threads
+ThreadableChannel = discord.TextChannel
+
 
 @dataclass
 class CommandContext:
@@ -39,7 +45,7 @@ class ResponseSender(Protocol):
 class MessageResponseSender:
     """Response sender for regular Discord messages."""
 
-    def __init__(self, channel: discord.TextChannel):
+    def __init__(self, channel: MessageableChannel):
         self.channel = channel
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
@@ -74,7 +80,7 @@ class InteractionResponseSender:
 class ThreadManager:
     """Handles thread creation for both message and interaction contexts."""
 
-    def __init__(self, channel: discord.TextChannel, guild: Optional[discord.Guild] = None):
+    def __init__(self, channel: ThreadableChannel, guild: Optional[discord.Guild] = None):
         self.channel = channel
         self.guild = guild
 
@@ -169,6 +175,10 @@ def create_context_from_message(message: discord.Message) -> CommandContext:
 
 def create_context_from_interaction(interaction: discord.Interaction, content: str) -> CommandContext:
     """Create CommandContext from a Discord interaction."""
+    # Handle case where interaction.channel might be None
+    if interaction.channel is None:
+        raise ValueError("Interaction channel is None - cannot create CommandContext")
+    
     return CommandContext(
         user_id=interaction.user.id,
         user_name=str(interaction.user),
@@ -184,7 +194,11 @@ def create_context_from_interaction(interaction: discord.Interaction, content: s
 def create_response_sender(source: Union[discord.Message, discord.Interaction]) -> ResponseSender:
     """Create appropriate response sender based on command source."""
     if isinstance(source, discord.Message):
-        return MessageResponseSender(source.channel)
+        # Only support TextChannel and Thread for MessageResponseSender
+        if isinstance(source.channel, (discord.TextChannel, discord.Thread)):
+            return MessageResponseSender(source.channel)
+        else:
+            raise ValueError(f"Unsupported channel type for MessageResponseSender: {type(source.channel)}")
     elif isinstance(source, discord.Interaction):
         return InteractionResponseSender(source)
     else:
@@ -193,8 +207,18 @@ def create_response_sender(source: Union[discord.Message, discord.Interaction]) 
 
 def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -> ThreadManager:
     """Create thread manager based on command source."""
-    if isinstance(source, (discord.Message, discord.Interaction)):
-        return ThreadManager(source.channel, source.guild)
+    if isinstance(source, discord.Message):
+        # Only support TextChannel for ThreadManager (only channel type that can create threads)
+        if isinstance(source.channel, discord.TextChannel):
+            return ThreadManager(source.channel, source.guild)
+        else:
+            raise ValueError(f"Unsupported channel type for ThreadManager: {type(source.channel)}")
+    elif isinstance(source, discord.Interaction):
+        # Interactions should always have TextChannel for thread creation
+        if hasattr(source, 'channel') and isinstance(source.channel, discord.TextChannel):
+            return ThreadManager(source.channel, source.guild)
+        else:
+            raise ValueError(f"Interaction channel is not a TextChannel: {type(getattr(source, 'channel', None))}")
     else:
         raise ValueError(f"Unsupported source type: {type(source)}")
 

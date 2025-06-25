@@ -6,9 +6,9 @@ from llm_handler import call_llm_api
 from message_utils import split_long_message, get_message_context
 from firecrawl_handler import scrape_url_content
 import re
-from typing import Optional
+from typing import Optional, Union, cast
 
-async def handle_bot_command(message: discord.Message, client_user: discord.ClientUser, bot_client: discord.Client = None) -> None:
+async def handle_bot_command(message: discord.Message, client_user: discord.ClientUser, bot_client: Optional[discord.Client] = None) -> None:
     """Handles the mention command with thread-based replies."""
     bot_mention = f'<@{client_user.id}>'
     bot_mention_alt = f'<@!{client_user.id}>'
@@ -121,7 +121,7 @@ async def _send_error_response_thread(message: discord.Message, client_user: dis
         await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 
-async def _handle_bot_command_fallback(message: discord.Message, client_user: discord.ClientUser, query: str, bot_client: discord.Client = None) -> None:
+async def _handle_bot_command_fallback(message: discord.Message, client_user: discord.ClientUser, query: str, bot_client: Optional[discord.Client] = None) -> None:
     """Fallback handler for bot commands when thread creation fails."""
     processing_msg = await message.channel.send("Processing your request, please wait...")
     try:
@@ -237,9 +237,20 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
     try:
         guild_id_str = str(guild.id) if guild else None
         guild_name_str = guild.name if guild else None
-        channel_id_str = str(channel.id)
-        # Handle DM channel name
-        channel_name_str = channel.name if hasattr(channel, 'name') else f"DM with {channel.recipient}"
+        # Ensure channel has an id attribute
+        if hasattr(channel, 'id'):
+            channel_id_str = str(channel.id)
+        else:
+            logger.error(f"Channel type {type(channel)} has no id attribute")
+            return
+        
+        # Handle DM channel name with proper type checking
+        if hasattr(channel, 'name') and channel.name is not None:
+            channel_name_str = channel.name
+        elif hasattr(channel, 'recipient'):
+            channel_name_str = f"DM with {channel.recipient}"
+        else:
+            channel_name_str = "Unknown channel"
 
 
         success = database.store_message(
