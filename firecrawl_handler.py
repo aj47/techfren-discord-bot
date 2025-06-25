@@ -4,7 +4,7 @@ Handles scraping URL content using the Firecrawl API.
 """
 
 import asyncio
-from firecrawl import FirecrawlApp
+from firecrawl import FirecrawlApp  # type: ignore
 import logging
 from typing import Optional
 
@@ -13,6 +13,7 @@ import config
 
 # Set up logging
 logger = logging.getLogger('discord_bot.firecrawl_handler')
+logger.setLevel(logging.DEBUG)
 
 async def scrape_url_content(url: str) -> Optional[str]:
     """
@@ -42,16 +43,37 @@ async def scrape_url_content(url: str) -> Optional[str]:
             lambda: app.scrape_url(
                 url,
                 formats=['markdown'],
-                page_options={'onlyMainContent': True}
+                onlyMainContent=True
             )
         )
 
+        # Debug: Log the actual response structure
+        logger.debug(f"Firecrawl response for {url}: {type(scrape_result)} - Keys: {scrape_result.keys() if isinstance(scrape_result, dict) else 'Not a dict'}")
+        
         # Check if scraping was successful
-        if not scrape_result or 'markdown' not in scrape_result:
-            logger.warning(f"Failed to scrape URL: {url} - No markdown content returned")
+        if not scrape_result:
+            logger.warning(f"Failed to scrape URL: {url} - No response returned")
             return None
-
-        markdown_content = scrape_result['markdown']
+            
+        # Handle different response structures
+        if isinstance(scrape_result, dict):
+            if 'markdown' in scrape_result:
+                markdown_content = scrape_result['markdown']
+            elif 'data' in scrape_result and isinstance(scrape_result['data'], dict) and 'markdown' in scrape_result['data']:
+                markdown_content = scrape_result['data']['markdown']
+            elif 'content' in scrape_result:
+                markdown_content = scrape_result['content']
+            else:
+                logger.warning(f"Failed to scrape URL: {url} - No markdown content found in response. Available keys: {list(scrape_result.keys())}")
+                return None
+        else:
+            # If response is not a dict, assume it's the content directly
+            markdown_content = str(scrape_result)
+        
+        # Check if content is empty or None
+        if not markdown_content or markdown_content.strip() == "":
+            logger.warning(f"Failed to scrape URL: {url} - Content is empty (possible bot blocking or private content)")
+            return None
         
         # Log success (truncate content for logging)
         content_preview = markdown_content[:100] + ('...' if len(markdown_content) > 100 else '')

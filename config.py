@@ -18,11 +18,13 @@ token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
-# OpenRouter API Key (required)
+# OpenRouter API Key (optional - required only for AI features)
 # Environment variable: OPENROUTER_API_KEY
+# To disable AI features, comment out the OPENROUTER_API_KEY line in your .env file
 openrouter = os.getenv('OPENROUTER_API_KEY')
-if not openrouter:
-    raise ValueError("OPENROUTER_API_KEY environment variable is required")
+
+# Check if AI features should be enabled
+ai_features_enabled = bool(openrouter and openrouter.strip() and openrouter != "YOUR_OPENROUTER_API_KEY")
 
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL
@@ -53,11 +55,28 @@ summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
 summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 
+# Links Channel Configuration (optional)
+# Environment variables: LINKS_CHANNEL_ID, LINKS_CHANNEL_DELETE_DELAY, LINKS_CLEANUP_ON_STARTUP, LINKS_CLEANUP_MAX_AGE_HOURS
+# Channel ID for the #links dump channel where only links are allowed
+links_channel_id = os.getenv('LINKS_CHANNEL_ID')
+# Time in seconds before deleting enforcement messages (default: 300 = 5 minutes)
+links_channel_delete_delay = int(os.getenv('LINKS_CHANNEL_DELETE_DELAY', '300'))
+# Whether to clean up orphaned messages on bot startup (default: True)
+links_cleanup_on_startup = os.getenv('LINKS_CLEANUP_ON_STARTUP', 'true').lower() == 'true'
+# Maximum age in hours for messages to be considered for cleanup (default: 24 hours)
+links_cleanup_max_age_hours = int(os.getenv('LINKS_CLEANUP_MAX_AGE_HOURS', '24'))
+
 # Summary Command Limits
 # Maximum hours that can be requested in summary commands (7 days)
 MAX_SUMMARY_HOURS = 168
 # Performance threshold for large summaries (24 hours)
 LARGE_SUMMARY_THRESHOLD = 24
+
+# Firecrawl Command Configuration (optional)
+# Environment variable: FIRECRAWL_ALLOWED_USERS
+# Comma-separated list of Discord user IDs allowed to use !firecrawl command
+# Default: 200272755520700416
+firecrawl_allowed_users = os.getenv('FIRECRAWL_ALLOWED_USERS', '200272755520700416').split(',')
 
 # Error Messages
 ERROR_MESSAGES = {
@@ -71,5 +90,9 @@ ERROR_MESSAGES = {
     'rate_limit_exceeded': "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.",
     'database_unavailable': "Sorry, a critical error occurred (database unavailable). Please try again later.",
     'database_error': "Sorry, a database connection error occurred. Please try again later.",
-    'no_messages_found': "No messages found in this channel for the past {hours} hours."
+    'no_messages_found': "No messages found in this channel for the past {hours} hours.",
+    'firecrawl_permission_denied': "You don't have permission to use the !firecrawl command.",
+    'firecrawl_invalid_url': "Please provide a valid URL. Usage: `!firecrawl <url>`",
+    'firecrawl_missing_url': "Please provide a URL to scrape. Usage: `!firecrawl <url>`",
+    'firecrawl_error': "Sorry, an error occurred while scraping the URL. Please try again later."
 }

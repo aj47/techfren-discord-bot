@@ -2,7 +2,7 @@ discord.py
 openai
 tabulate
 pynacl
-firecrawl
+firecrawl-py
 apify-client
 pytest-asyncio
 python-dotenv

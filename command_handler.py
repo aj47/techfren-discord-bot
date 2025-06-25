@@ -4,6 +4,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message, get_message_context
+from firecrawl_handler import scrape_url_content
 import re
 from typing import Optional
 
@@ -261,5 +262,146 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
         logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
 
 
+def check_firecrawl_permission(user_id: str) -> bool:
+    """Check if a user has permission to use the !firecrawl command."""
+    import config
+    return user_id in config.firecrawl_allowed_users
+
+
+async def handle_firecrawl_command(message: discord.Message, client_user: discord.ClientUser) -> None:
+    """Handles the !firecrawl <url> command with user permission checks."""
+    import config
+    
+    # Check user permission
+    if not check_firecrawl_permission(str(message.author.id)):
+        error_msg = config.ERROR_MESSAGES['firecrawl_permission_denied']
+        await _send_error_response_thread(message, client_user, error_msg)
+        logger.info(f"Firecrawl command denied for user {message.author} (ID: {message.author.id})")
+        return
+    
+    # Parse URL from command
+    content = message.content.strip()
+    match = re.match(r'!firecrawl\s+(.+)', content)
+    
+    if not match:
+        error_msg = config.ERROR_MESSAGES['firecrawl_missing_url']
+        await _send_error_response_thread(message, client_user, error_msg)
+        return
+    
+    url = match.group(1).strip()
+    
+    # Basic URL validation
+    if not (url.startswith('http://') or url.startswith('https://')):
+        error_msg = config.ERROR_MESSAGES['firecrawl_invalid_url']
+        await _send_error_response_thread(message, client_user, error_msg)
+        return
+    
+    logger.info(f"Executing firecrawl command - URL: {url} - Requested by {message.author}")
+    
+    # Check rate limits
+    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
+    if is_limited:
+        if reason == "cooldown":
+            error_msg = config.ERROR_MESSAGES['rate_limit_cooldown'].format(wait_time=wait_time)
+        else:
+            error_msg = config.ERROR_MESSAGES['rate_limit_exceeded'].format(wait_time=wait_time)
+        await _send_error_response_thread(message, client_user, error_msg)
+        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
+        return
+    
+    # Create thread for response
+    thread_name = f"Firecrawl - {message.author.display_name}"
+    
+    try:
+        from command_abstraction import ThreadManager, MessageResponseSender
+        thread_manager = ThreadManager(message.channel, message.guild)
+        
+        # Create thread from the user's original message
+        thread = await thread_manager.create_thread_from_message(message, thread_name)
+        
+        if thread:
+            # Send processing message in the thread
+            thread_sender = MessageResponseSender(thread)
+            processing_msg = await thread_sender.send(f"Scraping URL: {url}\nPlease wait...")
+            
+            try:
+                # Scrape the URL using Firecrawl
+                scraped_content = await scrape_url_content(url)
+                
+                if scraped_content:
+                    # Split long content into multiple messages
+                    message_parts = await split_long_message(scraped_content)
+                    
+                    # Send all response parts in the thread
+                    for part in message_parts:
+                        bot_response = await thread_sender.send(part)
+                        if bot_response:
+                            await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+                    
+                    logger.info(f"Firecrawl command executed successfully - URL: {url} - Response length: {len(scraped_content)} - Split into {len(message_parts)} parts")
+                else:
+                    error_msg = config.ERROR_MESSAGES['firecrawl_error']
+                    await thread_sender.send(error_msg)
+                
+                # Delete processing message
+                if processing_msg:
+                    await processing_msg.delete()
+                    
+            except Exception as e:
+                logger.error(f"Error scraping URL {url}: {str(e)}", exc_info=True)
+                error_msg = config.ERROR_MESSAGES['firecrawl_error']
+                await thread_sender.send(error_msg)
+                try:
+                    if processing_msg:
+                        await processing_msg.delete()
+                except discord.NotFound:
+                    pass
+        else:
+            # Fallback: if thread creation failed, send response in main channel
+            logger.warning("Thread creation failed for firecrawl command, falling back to channel response")
+            await _handle_firecrawl_command_fallback(message, client_user, url)
+            
+    except Exception as e:
+        logger.error(f"Error in thread-based firecrawl command handling: {str(e)}", exc_info=True)
+        # Fallback to original behavior
+        await _handle_firecrawl_command_fallback(message, client_user, url)
+
+
+async def _handle_firecrawl_command_fallback(message: discord.Message, client_user: discord.ClientUser, url: str) -> None:
+    """Fallback handler for firecrawl command when thread creation fails."""
+    import config
+    
+    processing_msg = await message.channel.send(f"Scraping URL: {url}\nPlease wait...")
+    try:
+        # Scrape the URL using Firecrawl
+        scraped_content = await scrape_url_content(url)
+        
+        if scraped_content:
+            # Split long content into multiple messages
+            message_parts = await split_long_message(scraped_content)
+            
+            for part in message_parts:
+                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+                bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions)
+                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            
+            logger.info(f"Firecrawl command executed successfully (fallback) - URL: {url} - Response length: {len(scraped_content)} - Split into {len(message_parts)} parts")
+        else:
+            error_msg = config.ERROR_MESSAGES['firecrawl_error']
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        
+        await processing_msg.delete()
+    except Exception as e:
+        logger.error(f"Error processing firecrawl command (fallback): {str(e)}", exc_info=True)
+        error_msg = config.ERROR_MESSAGES['firecrawl_error']
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        try:
+            await processing_msg.delete()
+        except discord.NotFound:
+            pass
 
 

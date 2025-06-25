@@ -20,6 +20,7 @@
 # SUMMARY_HOUR=0
 # SUMMARY_MINUTE=0
 # REPORTS_CHANNEL_ID=your_channel_id
+# FIRECRAWL_ALLOWED_USERS=200272755520700416
 #
 # ============================================================
 # LEGACY CONFIG (for reference only - not recommended)
@@ -55,3 +56,8 @@ apify_api_token = "YOUR_APIFY_API_TOKEN"
 summary_hour = 0
 summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"
+
+# Firecrawl Command Configuration (optional)
+# Environment variable: FIRECRAWL_ALLOWED_USERS
+# Comma-separated list of Discord user IDs allowed to use !firecrawl command
+firecrawl_allowed_users = ["200272755520700416"]

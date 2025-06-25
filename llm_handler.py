@@ -17,12 +17,11 @@ async def call_llm_api(query, message_context=None):
         str: The LLM's response or an error message
     """
     try:
+        # Check if AI features are enabled
+        if not config.ai_features_enabled:
+            return "🤖 AI features are currently disabled. To enable AI responses, set a valid OPENROUTER_API_KEY in your .env file."
+        
         logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
-
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
-            return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
         # Initialize the OpenAI client with OpenRouter base URL
         openai_client = OpenAI(
@@ -111,6 +110,11 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
         str: The LLM's summary or an error message
     """
     try:
+        # Check if AI features are enabled
+        if not config.ai_features_enabled:
+            time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
+            return f"🤖 AI features are currently disabled. Cannot generate summary for #{channel_name} for the past {time_period}. To enable AI summaries, set a valid OPENROUTER_API_KEY in your .env file."
+        
         # Filter out command messages but include bot responses
         filtered_messages = [
             msg for msg in messages
@@ -199,11 +203,6 @@ At the end, include a section with the top 3 most interesting or notable one-lin
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
-            return "Error: OpenRouter API key is missing. Please contact the bot administrator."
-
         # Initialize the OpenAI client with OpenRouter base URL
         openai_client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -256,9 +255,14 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
     Returns:
         Optional[Dict[str, Any]]: A dictionary containing the summary and key points,
-                                 or None if summarization failed
+                                 or None if summarization failed or AI is disabled
     """
     try:
+        # Check if AI features are enabled
+        if not config.ai_features_enabled:
+            logger.info(f"AI features disabled, skipping content summarization for URL: {url}")
+            return None
+        
         # Truncate content if it's too long (to avoid token limits)
         max_content_length = 15000  # Adjust based on model's context window
         truncated_content = markdown_content[:max_content_length]
@@ -266,11 +270,6 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
             truncated_content += "\n\n[Content truncated due to length...]"
 
         logger.info(f"Summarizing content from URL: {url}")
-
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
-            return None
 
         # Initialize the OpenAI client with OpenRouter base URL
         openai_client = OpenAI(
