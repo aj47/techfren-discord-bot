@@ -1,8 +1,20 @@
-import discord
-from discord.abc import Messageable
+"""
+Message utilities for Discord bot functionality.
+
+This module provides utility functions for handling Discord messages, including:
+- Message link generation and parsing
+- Message content validation and processing
+- Referenced message fetching
+- Long message splitting with smart breakpoints
+"""
+
+import logging
 import re
 from typing import Optional, Dict, Any, cast, List
-import logging
+
+import discord
+from discord.abc import Messageable
+
 import config
 
 def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
@@ -19,9 +31,9 @@ def generate_discord_message_link(guild_id: str, channel_id: str, message_id: st
     """
     if guild_id:
         return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
-    else:
-        # For DMs, use @me instead of guild_id
-        return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
+
+    # For DMs, use @me instead of guild_id
+    return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
 
 async def split_long_message(message, max_length=1950):
     """
@@ -29,7 +41,7 @@ async def split_long_message(message, max_length=1950):
 
     Args:
         message (str): The message to split
-        max_length (int): Maximum length of each part 
+        max_length (int): Maximum length of each part
                          (default: 1950 to leave room for part indicators)
 
     Returns:
@@ -67,13 +79,16 @@ async def split_long_message(message, max_length=1950):
             # Find a good split point (prefer sentence, then word)
             split_at = -1
             # Try to split at the last sentence ending before effective_max_length
-            for i in range(min(len(current_part), effective_max_length) -1, -1, -1):
-                if current_part[i] == '.' and (i + 1 < len(current_part) and current_part[i+1] == ' '):
+            max_check_pos = min(len(current_part), effective_max_length) - 1
+            for i in range(max_check_pos, -1, -1):
+                is_period = current_part[i] == '.'
+                has_space_after = (i + 1 < len(current_part) and current_part[i+1] == ' ')
+                if is_period and has_space_after:
                     split_at = i + 1 # Include the period, split after space
                     break
 
             if split_at == -1: # If no sentence found, try to split at the last space
-                for i in range(min(len(current_part), effective_max_length) -1, -1, -1):
+                for i in range(max_check_pos, -1, -1):
                     if current_part[i] == ' ':
                         split_at = i
                         break
@@ -90,9 +105,10 @@ async def split_long_message(message, max_length=1950):
 
     # Add part indicators only if there are multiple parts
     if len(parts) > 1:
-        for i in range(len(parts)):
-            parts[i] = f"[Part {i+1}/{len(parts)}]\n{parts[i]}"
-    elif not parts and message: # Handle case where original message was <= max_length but split logic ran
+        for i, part in enumerate(parts):
+            parts[i] = f"[Part {i+1}/{len(parts)}]\n{part}"
+    elif not parts and message:
+        # Handle case where original message was <= max_length but split logic ran
         return [message]
 
     return parts
@@ -100,22 +116,22 @@ async def split_long_message(message, max_length=1950):
 async def fetch_referenced_message(message: discord.Message) -> Optional[discord.Message]:
     """
     Fetch the message that this message is replying to.
-    
+
     Args:
         message (discord.Message): The message to check for references
-        
+
     Returns:
         Optional[discord.Message]: The referenced message if found, None otherwise
     """
     logger = logging.getLogger(__name__)
-    
+
     try:
         # Check if message has a reference (reply)
         if message.reference and message.reference.message_id:
             # Try to get the referenced message from cache first
             if message.reference.cached_message:
                 return message.reference.cached_message
-            
+
             # If not in cache, fetch it from the channel
             channel: Messageable = message.channel
             if message.reference.channel_id != getattr(channel, 'id', None):
@@ -124,54 +140,57 @@ async def fetch_referenced_message(message: discord.Message) -> Optional[discord
                 if guild:
                     fetched_channel = guild.get_channel(message.reference.channel_id)
                     if not fetched_channel:
-                        logger.warning(f"Could not find channel {message.reference.channel_id} for referenced message")
+                        logger.warning("Could not find channel %s for referenced message",
+                                      message.reference.channel_id)
                         return None
                     # Check if the channel supports fetching messages
                     if not isinstance(fetched_channel, Messageable):
-                        logger.warning(f"Channel {message.reference.channel_id} does not support message fetching")
+                        logger.warning("Channel %s does not support message fetching",
+                                      message.reference.channel_id)
                         return None
                     channel = fetched_channel  # fetched_channel is now guaranteed to be Messageable
                 else:
                     logger.warning("Cannot fetch cross-channel reference without guild context")
                     return None
-            
+
             # Channel is guaranteed to be messageable at this point
             return await channel.fetch_message(message.reference.message_id)
-    
+
     except (discord.HTTPException, discord.NotFound) as e:
-        logger.warning(f"Failed to fetch referenced message: {e}")
+        logger.warning("Failed to fetch referenced message: %s", e)
     except Exception as e:
-        logger.error(f"Unexpected error fetching referenced message: {e}")
-    
+        logger.error("Unexpected error fetching referenced message: %s", e)
+
     return None
 
 async def fetch_message_from_link(link: str, bot: discord.Client) -> Optional[discord.Message]:
     """
     Fetch a Discord message from a Discord message link.
-    
+
     Args:
-        link (str): Discord message link (e.g., https://discord.com/channels/guild_id/channel_id/message_id)
+        link (str): Discord message link 
+                   (e.g., https://discord.com/channels/guild_id/channel_id/message_id)
         bot (discord.Client): The Discord bot client
-        
+
     Returns:
         Optional[discord.Message]: The message if found, None otherwise
     """
     logger = logging.getLogger(__name__)
-    
+
     # Parse Discord message link
     pattern = r'https://discord\.com/channels/(@me|\d+)/(\d+)/(\d+)'
     match = re.match(pattern, link)
-    
+
     if not match:
-        logger.warning(f"Invalid Discord message link format: {link}")
+        logger.warning("Invalid Discord message link format: %s", link)
         return None
-    
+
     guild_id_str, channel_id_str, message_id_str = match.groups()
-    
+
     try:
         channel_id = int(channel_id_str)
         message_id = int(message_id_str)
-        
+
         # Get the channel
         channel = None
         if guild_id_str == "@me":
@@ -181,39 +200,39 @@ async def fetch_message_from_link(link: str, bot: discord.Client) -> Optional[di
             guild_id = int(guild_id_str)
             guild = bot.get_guild(guild_id)
             if not guild:
-                logger.warning(f"Bot is not in guild {guild_id}")
+                logger.warning("Bot is not in guild %s", guild_id)
                 return None
             channel = guild.get_channel(channel_id)
-        
+
         if not channel:
-            logger.warning(f"Could not find channel {channel_id}")
+            logger.warning("Could not find channel %s", channel_id)
             return None
-        
+
         # Check if channel supports message fetching
         if not isinstance(channel, Messageable):
-            logger.warning(f"Channel {channel_id} does not support message fetching")
+            logger.warning("Channel %s does not support message fetching", channel_id)
             return None
-        
+
         # Cast to Messageable since we've verified it's messageable
         messageable_channel = cast(Messageable, channel)
-        
+
         # Fetch the message
         return await messageable_channel.fetch_message(message_id)
-    
+
     except (ValueError, discord.HTTPException, discord.NotFound) as e:
-        logger.warning(f"Failed to fetch message from link {link}: {e}")
+        logger.warning("Failed to fetch message from link %s: %s", link, e)
     except Exception as e:
-        logger.error(f"Unexpected error fetching message from link {link}: {e}")
-    
+        logger.error("Unexpected error fetching message from link %s: %s", link, e)
+
     return None
 
 def extract_message_links(text: str) -> list[str]:
     """
     Extract Discord message links from text.
-    
+
     Args:
         text (str): Text to search for Discord message links
-        
+
     Returns:
         list[str]: List of Discord message links found
     """
@@ -223,11 +242,11 @@ def extract_message_links(text: str) -> list[str]:
 async def get_message_context(message: discord.Message, bot: discord.Client) -> Dict[str, Any]:
     """
     Get context for a message including any referenced messages and linked messages.
-    
+
     Args:
         message (discord.Message): The message to get context for
         bot (discord.Client): The Discord bot client
-        
+
     Returns:
         Dict[str, Any]: Dictionary containing message context
     """
@@ -237,93 +256,98 @@ async def get_message_context(message: discord.Message, bot: discord.Client) -> 
         'referenced_message': None,
         'linked_messages': linked_messages
     }
-    
+
     # Get referenced message (reply)
     referenced_msg = await fetch_referenced_message(message)
     if referenced_msg:
         context['referenced_message'] = referenced_msg
-    
+
     # Get messages from links in the message content
     message_links = extract_message_links(message.content)
     for link in message_links:
         linked_msg = await fetch_message_from_link(link, bot)
         if linked_msg:
             linked_messages.append(linked_msg)
-    
+
     return context
 
 def is_message_link_only(message_content: str) -> bool:
     """
     Check if a message contains only links (URLs) with minimal surrounding text,
     or if it's a short, non-intrusive message that won't disrupt the links channel.
-    
+
     Args:
         message_content (str): The message content to validate
-        
+
     Returns:
-        bool: True if message contains only links or is acceptably short/non-intrusive, False otherwise
+        bool: True if message contains only links or is acceptably short/non-intrusive, 
+              False otherwise
     """
     if not message_content.strip():
         return False
-    
+
     original_content = message_content.strip()
-    
+
     # URL regex pattern - same as used in bot.py for consistency
     url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
     urls = re.findall(url_pattern, message_content)
-    
+
     # If message contains URLs, apply the original logic (links + minimal text)
     if urls:
         # Create a copy of the message content to work with
         content_copy = message_content.strip()
-        
+
         # Remove all found URLs from the message
         for url in urls:
             content_copy = content_copy.replace(url, '')
-        
+
         # Remove common whitespace and punctuation that might accompany links
         # Allow minimal surrounding text like "Check this out:", "Here:", etc.
         content_copy = re.sub(r'[^\w\s]', '', content_copy)  # Remove punctuation
         content_copy = re.sub(r'\s+', ' ', content_copy)      # Normalize whitespace
         content_copy = content_copy.strip()
-        
+
         # If there are more than 15 characters left after removing URLs and punctuation,
         # consider it non-link content (increased from 10 to be more lenient)
         return len(content_copy) <= 15
-    
+
     # For messages without URLs, apply stricter length limits first
-    
+
     # Reject very long messages immediately (over 50 characters)
     if len(original_content) > 50:
         return False
-    
+
     # Allow very short messages (under 25 characters total)
     if len(original_content) <= 25:
         return True
-    
+
     # Allow emoji-only messages (including Discord custom emojis)
-    emoji_pattern = r'^[\s\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F900-\U0001F9FF\U0001F018-\U0001F0FF<:>\w:]+$'
+    emoji_pattern = (r'^[\s\U0001F600-\U0001F64F\U0001F300-\U0001F5FF'
+                    r'\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF'
+                    r'\U00002600-\U000027BF\U0001F900-\U0001F9FF'
+                    r'\U0001F018-\U0001F0FF<:>\w:]+$')
     if re.match(emoji_pattern, original_content):
         return True
-    
+
     # Use configurable short responses from config.py
-    # This allows communities to customize acceptable short responses for their context
+    # This allows communities to customize acceptable short responses
+    # for their specific context
     short_responses = config.links_allowed_short_responses
-    
+
     # Convert to lowercase and check if it's in our allowlist
     content_lower = original_content.lower().strip()
-    
+
     # Remove common punctuation for comparison
     content_clean = re.sub(r'[^\w\s]', '', content_lower).strip()
-    
+
     if content_clean in short_responses:
         return True
-    
+
     # Allow short messages that end with common reaction words (and are under 35 chars)
     for response in short_responses:
         if content_clean.endswith(response) and len(original_content) <= 35:
             return True
-    
+
     # For messages 26-50 characters, be more restrictive
     # Only allow if they contain common positive/reaction words
     if 26 <= len(original_content) <= 50:
@@ -333,6 +357,6 @@ def is_message_link_only(message_content: str) -> bool:
                 return True
         # If no approved words found, reject it
         return False
-    
+
     # All other cases: reject
     return False
