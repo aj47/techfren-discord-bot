@@ -263,9 +263,27 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
 
 
 def check_firecrawl_permission(user_id: str) -> bool:
-    """Check if a user has permission to use the !firecrawl command."""
+    """
+    Check if a user has permission to use the !firecrawl command.
+    
+    Args:
+        user_id (str): Discord user ID to check
+        
+    Returns:
+        bool: True if user has permission, False otherwise
+    """
     import config
-    return user_id in config.firecrawl_allowed_users
+    
+    # Check if user is in the allowed list
+    has_permission = user_id in config.firecrawl_allowed_users
+    
+    # Debug logging to track permission checks
+    if has_permission:
+        logger.debug(f"Permission check GRANTED for user ID {user_id} - User is in allowed list")
+    else:
+        logger.debug(f"Permission check DENIED for user ID {user_id} - User not in allowed list (allowed: {config.firecrawl_allowed_users})")
+    
+    return has_permission
 
 
 async def handle_firecrawl_command(message: discord.Message, client_user: discord.ClientUser) -> None:

@@ -21,6 +21,7 @@
 # SUMMARY_MINUTE=0
 # REPORTS_CHANNEL_ID=your_channel_id
 # FIRECRAWL_ALLOWED_USERS=200272755520700416
+# LINKS_ALLOWED_SHORT_RESPONSES=thanks,nice,cool,awesome,lol,good find
 #
 # ============================================================
 # LEGACY CONFIG (for reference only - not recommended)
@@ -61,3 +62,8 @@ reports_channel_id = "YOUR_CHANNEL_ID"
 # Environment variable: FIRECRAWL_ALLOWED_USERS
 # Comma-separated list of Discord user IDs allowed to use !firecrawl command
 firecrawl_allowed_users = ["200272755520700416"]
+
+# Links Channel Short Responses Configuration (optional)
+# Environment variable: LINKS_ALLOWED_SHORT_RESPONSES
+# Comma-separated list of short responses allowed in the links channel
+links_allowed_short_responses = ["thanks", "nice", "cool", "awesome", "lol", "good find"]

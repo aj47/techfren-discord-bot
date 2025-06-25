@@ -3,6 +3,7 @@ from discord.abc import Messageable
 import re
 from typing import Optional, Dict, Any, cast, List
 import logging
+import config
 
 def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
     """
@@ -305,17 +306,9 @@ def is_message_link_only(message_content: str) -> bool:
     if re.match(emoji_pattern, original_content):
         return True
     
-    # Allow common short, non-intrusive responses
-    short_responses = {
-        'thanks', 'thank you', 'ty', 'thx', 'nice', 'cool', 'good', 'great', 'awesome',
-        'interesting', 'helpful', 'useful', 'wow', 'nice find', 'good find', 'solid',
-        'love it', 'like it', 'this', '+1', '👍', '👏', '🔥', '💯', '❤️', '♥️',
-        'yep', 'yes', 'yeah', 'yup', 'nope', 'no', 'nah', 'maybe', 'possibly',
-        'lol', 'haha', 'hehe', 'omg', 'damn', 'shit', 'fuck', 'based', 'cringe',
-        'facts', 'true', 'real', 'fr', 'frfr', 'bet', 'word', 'same', 'mood',
-        'this is it', 'exactly', 'agree', 'disagree', 'idk', 'not sure',
-        'hmm', 'interesting take', 'hot take', 'bad take', 'good take'
-    }
+    # Use configurable short responses from config.py
+    # This allows communities to customize acceptable short responses for their context
+    short_responses = config.links_allowed_short_responses
     
     # Convert to lowercase and check if it's in our allowlist
     content_lower = original_content.lower().strip()

@@ -66,6 +66,24 @@ links_cleanup_on_startup = os.getenv('LINKS_CLEANUP_ON_STARTUP', 'true').lower()
 # Maximum age in hours for messages to be considered for cleanup (default: 24 hours)
 links_cleanup_max_age_hours = int(os.getenv('LINKS_CLEANUP_MAX_AGE_HOURS', '24'))
 
+# Links Channel Short Responses Configuration (optional)
+# Environment variable: LINKS_ALLOWED_SHORT_RESPONSES
+# Comma-separated list of short responses allowed in the links channel
+# These are non-intrusive responses that won't disrupt the purpose of a links-only channel
+default_short_responses = (
+    'thanks,thank you,ty,thx,nice,cool,good,great,awesome,'
+    'interesting,helpful,useful,wow,nice find,good find,solid,'
+    'love it,like it,this,+1,👍,👏,🔥,💯,❤️,♥️,'
+    'yep,yes,yeah,yup,nope,no,nah,maybe,possibly,'
+    'lol,haha,hehe,omg,damn,shit,fuck,based,cringe,'
+    'facts,true,real,fr,frfr,bet,word,same,mood,'
+    'this is it,exactly,agree,disagree,idk,not sure,'
+    'hmm,interesting take,hot take,bad take,good take'
+)
+links_allowed_short_responses_str = os.getenv('LINKS_ALLOWED_SHORT_RESPONSES', default_short_responses)
+# Convert to set for efficient lookup
+links_allowed_short_responses = set(response.strip().lower() for response in links_allowed_short_responses_str.split(',') if response.strip())
+
 # Summary Command Limits
 # Maximum hours that can be requested in summary commands (7 days)
 MAX_SUMMARY_HOURS = 168
