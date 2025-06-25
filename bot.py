@@ -109,6 +109,10 @@ async def process_url(message_id: str, url: str):
                 return
 
         # Step 2: Summarize the scraped content
+        if not markdown_content:
+            logger.warning(f"No markdown content available for URL: {url}")
+            return
+            
         scraped_data = await summarize_scraped_content(markdown_content, url)
         if not scraped_data:
             logger.warning(f"Failed to summarize content from URL: {url}")
