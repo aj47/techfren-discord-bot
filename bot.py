@@ -144,8 +144,15 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         # Check if links dump channel is configured and this is that channel
         if not hasattr(config, 'links_dump_channel_id') or not config.links_dump_channel_id:
             return False
+        
+        # Get the actual channel ID to compare against
+        # If this is a thread, we need to check the parent channel instead
+        channel_id_to_check = str(message.channel.id)
+        if isinstance(message.channel, discord.Thread):
+            # For threads, check the parent channel ID
+            channel_id_to_check = str(message.channel.parent.id) if message.channel.parent else str(message.channel.id)
             
-        if str(message.channel.id) != config.links_dump_channel_id:
+        if channel_id_to_check != config.links_dump_channel_id:
             return False
             
         # Don't handle bot messages or commands
