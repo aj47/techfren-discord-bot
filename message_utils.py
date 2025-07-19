@@ -205,7 +205,8 @@ def extract_message_links(text: str) -> list[str]:
 
 async def get_message_context(message: discord.Message, bot: discord.Client) -> Dict[str, Any]:
     """
-    Get context for a message including any referenced messages and linked messages.
+    Get context for a message, including referenced messages, linked messages,
+    and the starter message if in a thread.
     
     Args:
         message (discord.Message): The message to get context for
@@ -214,22 +215,47 @@ async def get_message_context(message: discord.Message, bot: discord.Client) -> 
     Returns:
         Dict[str, Any]: Dictionary containing message context
     """
+    logger = logging.getLogger(__name__)
     context = {
         'original_message': message,
         'referenced_message': None,
         'linked_messages': []
     }
     
-    # Get referenced message (reply)
+    # Get referenced message (direct reply)
     referenced_msg = await fetch_referenced_message(message)
     if referenced_msg:
         context['referenced_message'] = referenced_msg
     
+    # If no direct reply, check if the message is in a thread
+    # If so, use the thread's starter message as the referenced message
+    elif isinstance(message.channel, discord.Thread):
+        try:
+            # fetch_message on a thread with its own ID gets the starter message
+            starter_message = await message.channel.fetch_message(message.channel.id)
+            if starter_message:
+                context['referenced_message'] = starter_message
+                logger.info(f"Message is in a thread. Using starter message {starter_message.id} as context.")
+        except (discord.HTTPException, discord.NotFound) as e:
+            logger.warning(f"Could not fetch starter message for thread {message.channel.id}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching starter message for thread {message.channel.id}: {e}")
+
     # Get messages from links in the message content
     message_links = extract_message_links(message.content)
     for link in message_links:
         linked_msg = await fetch_message_from_link(link, bot)
         if linked_msg:
             context['linked_messages'].append(linked_msg)
-    
+            
+    # Also extract links from the referenced message if it exists
+    if context['referenced_message']:
+        referenced_links = extract_message_links(context['referenced_message'].content)
+        for link in referenced_links:
+            # Avoid duplicating links already found in the original message
+            if link not in message_links:
+                linked_msg = await fetch_message_from_link(link, bot)
+                if linked_msg:
+                    context['linked_messages'].append(linked_msg)
+
     return context
