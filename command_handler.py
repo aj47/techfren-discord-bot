@@ -11,7 +11,40 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
     """Handles the mention command with thread-based replies."""
     bot_mention = f'<@{client_user.id}>'
     bot_mention_alt = f'<@!{client_user.id}>'
-    query = message.content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
+    
+    # Check for @tbot alias
+    content = message.content
+    if '@tbot' in content.lower():
+        content = content.replace('@tbot', bot_mention, 1)
+    
+    query = content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
+
+    # Handle help command
+    if query in ['--help', '-h', 'help']:
+        help_text = """**TechFren Bot Help**
+
+**Commands:**
+• `@techfren-bot <question>` or `@tbot <question>` - Ask me anything! I can help with:
+  - Technical questions and programming help
+  - Code reviews and debugging
+  - Explaining concepts and documentation
+  - General conversation and assistance
+
+• `/sum-day` - Generate a summary of today's messages in this channel
+• `/sum-hr <hours>` - Generate a summary of messages from the past N hours (1-168 max)
+
+**Features:**
+• I automatically process shared links and can answer questions about them
+• Reference messages by replying to them or including Discord message links
+• I work in threads to keep conversations organized
+
+**Tips:**
+• Use `@tbot` as a shorter alias for `@techfren-bot`
+• Add `--help` after mentioning me to see this message again
+• Ask specific questions for better responses"""
+        
+        await _send_help_response_thread(message, client_user, help_text)
+        return
 
     if not query:
         import config
@@ -91,6 +124,33 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
         # Fallback to original behavior
         await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
+
+async def _send_help_response_thread(message: discord.Message, client_user: discord.ClientUser, help_text: str) -> None:
+    """Send help response in a thread attached to the user's message."""
+    try:
+        from command_abstraction import ThreadManager, MessageResponseSender
+        thread_manager = ThreadManager(message.channel, message.guild)
+        thread_name = f"Bot Help - {message.author.display_name}"
+
+        # Try to create thread from the user's message
+        thread = await thread_manager.create_thread_from_message(message, thread_name)
+
+        if thread:
+            thread_sender = MessageResponseSender(thread)
+            bot_response = await thread_sender.send(help_text)
+            if bot_response:
+                await store_bot_response_db(bot_response, client_user, message.guild, thread, help_text)
+        else:
+            # Fallback to channel response
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            bot_response = await message.channel.send(help_text, allowed_mentions=allowed_mentions, suppress_embeds=True)
+            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, help_text)
+    except Exception as e:
+        logger.error(f"Error sending help response in thread: {str(e)}", exc_info=True)
+        # Ultimate fallback to channel response
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(help_text, allowed_mentions=allowed_mentions, suppress_embeds=True)
+        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, help_text)
 
 async def _send_error_response_thread(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
     """Send error response in a thread attached to the user's message."""
