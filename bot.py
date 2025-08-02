@@ -404,7 +404,7 @@ async def on_message(message):
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
     bot_mention_alt = f'<@!{bot.user.id}>'
-    is_mention_command = bot_mention in message.content or bot_mention_alt in message.content
+    is_mention_command = bot_mention in message.content or bot_mention_alt in message.content or '@tbot' in message.content.lower()
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
 
