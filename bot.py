@@ -17,8 +17,7 @@ from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouT
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
-from firecrawl_handler import scrape_url_content # Import Firecrawl handler
-from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from url_processor import URLProcessor # Import centralized URL processor
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -42,61 +41,13 @@ async def process_url(message_id: str, url: str):
     try:
         logger.info(f"Processing URL {url} from message {message_id}")
 
-        # Check if the URL is from YouTube
-        if await is_youtube_url(url):
-            logger.info(f"Detected YouTube URL: {url}")
-            
-            # Use YouTube handler to scrape content
-            scraped_result = await scrape_youtube_content(url)
-            
-            # If YouTube scraping fails, fall back to Firecrawl
-            if not scraped_result:
-                logger.warning(f"Failed to scrape YouTube content, falling back to Firecrawl: {url}")
-                scraped_result = await scrape_url_content(url)
-            else:
-                logger.info(f"Successfully scraped YouTube content: {url}")
-                # Extract markdown content from the scraped result
-                markdown_content = scraped_result.get('markdown')
-        # Check if the URL is from Twitter/X.com
-        elif await is_twitter_url(url):
-            logger.info(f"Detected Twitter/X.com URL: {url}")
-
-            # Validate if the URL contains a tweet ID (status)
-            from apify_handler import extract_tweet_id
-            tweet_id = extract_tweet_id(url)
-            if not tweet_id:
-                logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
-
-                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
-                if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
-                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
-                    scraped_result = {
-                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
-                    }
-                else:
-                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
-                    scraped_result = await scrape_url_content(url)
-            else:
-                # Check if Apify API token is configured
-                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
-                    scraped_result = await scrape_url_content(url)
-                else:
-                    # Use Apify to scrape Twitter/X.com content
-                    scraped_result = await scrape_twitter_content(url)
-
-                    # If Apify scraping fails, fall back to Firecrawl
-                    if not scraped_result:
-                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
-                        scraped_result = await scrape_url_content(url)
-                    else:
-                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
-                        # Extract markdown content from the scraped result
-                        markdown_content = scraped_result.get('markdown')
+        # Use centralized URL processor for all URL types
+        scraped_result = await URLProcessor.scrape_content(url)
+        if scraped_result:
+            markdown_content = scraped_result.get('markdown', '')
         else:
-            # For non-Twitter/X.com and non-YouTube URLs, use Firecrawl
-            scraped_result = await scrape_url_content(url)
-            markdown_content = scraped_result  # Firecrawl returns markdown directly
+            logger.warning(f"Failed to scrape content for URL: {url}")
+            return
 
         # Check if scraping was successful
         if not scraped_result:

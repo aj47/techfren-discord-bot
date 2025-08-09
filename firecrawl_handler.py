@@ -28,6 +28,8 @@ async def scrape_url_content(url: str) -> Optional[str]:
         logger.info(f"Scraping URL: {url}")
 
         # Check if Firecrawl API key exists
+        # Configuration validation is handled by config_validator.py at startup
+        # If we reach here, the key should be available, but check just in case
         if not hasattr(config, 'firecrawl_api_key') or not config.firecrawl_api_key:
             logger.error("Firecrawl API key not found in config.py or is empty")
             return None

@@ -4,6 +4,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message, get_message_context
+from response_manager import ResponseManager
 import re
 from typing import Optional
 
@@ -43,13 +44,23 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
 • Add `--help` after mentioning me to see this message again
 • Ask specific questions for better responses"""
         
-        await _send_help_response_thread(message, client_user, help_text)
+        await ResponseManager.create_thread_response(
+            message=message,
+            content=help_text,
+            thread_name=f"Bot Help - {message.author.display_name}",
+            client_user=client_user
+        )
         return
 
     if not query:
         import config
         error_msg = config.ERROR_MESSAGES['no_query']
-        await _send_error_response_thread(message, client_user, error_msg)
+        await ResponseManager.create_thread_response(
+            message=message,
+            content=error_msg,
+            thread_name=f"Bot Response - {message.author.display_name}",
+            client_user=client_user
+        )
         return
 
     logger.info(f"Executing mention command - Requested by {message.author}")
@@ -61,7 +72,12 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
             error_msg = config.ERROR_MESSAGES['rate_limit_cooldown'].format(wait_time=wait_time)
         else:
             error_msg = config.ERROR_MESSAGES['rate_limit_exceeded'].format(wait_time=wait_time)
-        await _send_error_response_thread(message, client_user, error_msg)
+        await ResponseManager.create_thread_response(
+            message=message,
+            content=error_msg,
+            thread_name=f"Bot Response - {message.author.display_name}",
+            client_user=client_user
+        )
         logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
         return
 
@@ -69,115 +85,65 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
     thread_name = f"Bot Response - {message.author.display_name}"
 
     try:
-        from command_abstraction import ThreadManager, MessageResponseSender
-        thread_manager = ThreadManager(message.channel, message.guild)
+        # Send processing message
+        processing_msg = await ResponseManager.send_processing_message(
+            message=message,
+            create_thread=True,
+            thread_name=thread_name
+        )
 
-        # Create thread from the user's original message
-        thread = await thread_manager.create_thread_from_message(message, thread_name)
+        try:
+            # Get message context (referenced messages and linked messages)
+            message_context = None
+            if bot_client and (message.reference or 'discord.com/channels/' in message.content):
+                try:
+                    message_context = await get_message_context(message, bot_client)
+                    logger.debug(f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+                except Exception as e:
+                    logger.warning(f"Failed to get message context: {e}")
 
-        if thread:
-            # Send processing message in the thread
-            thread_sender = MessageResponseSender(thread)
-            processing_msg = await thread_sender.send("Processing your request, please wait...")
+            response = await call_llm_api(query, message_context)
+            message_parts = await split_long_message(response)
 
+            # Send all response parts using the response manager
+            sent_messages = await ResponseManager.send_response_parts(
+                message=message,
+                content_parts=message_parts,
+                client_user=client_user,
+                create_thread=True,
+                thread_name=thread_name
+            )
+
+            # Delete processing message
+            if processing_msg:
+                await processing_msg.delete()
+
+            logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts - Posted in thread")
+        
+        except Exception as e:
+            logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
+            import config
+            error_msg = config.ERROR_MESSAGES['processing_error']
+            
+            # Send error message using response manager
+            await ResponseManager.send_response(
+                message=message,
+                content=error_msg,
+                client_user=client_user,
+                create_thread=True,
+                thread_name=thread_name
+            )
+            
             try:
-                # Get message context (referenced messages and linked messages)
-                message_context = None
-                if bot_client and (message.reference or 'discord.com/channels/' in message.content):
-                    try:
-                        message_context = await get_message_context(message, bot_client)
-                        logger.debug(f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
-                    except Exception as e:
-                        logger.warning(f"Failed to get message context: {e}")
-
-                response = await call_llm_api(query, message_context)
-                message_parts = await split_long_message(response)
-
-                # Send all response parts in the thread
-                for part in message_parts:
-                    bot_response = await thread_sender.send(part)
-                    if bot_response:
-                        await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
-
-                # Delete processing message
                 if processing_msg:
                     await processing_msg.delete()
-
-                logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts - Posted in thread")
-            except Exception as e:
-                logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
-                import config
-                error_msg = config.ERROR_MESSAGES['processing_error']
-                await thread_sender.send(error_msg)
-                try:
-                    if processing_msg:
-                        await processing_msg.delete()
-                except discord.NotFound:
-                    pass
-        else:
-            # Fallback: if thread creation failed, send response in main channel
-            logger.warning("Thread creation failed for bot command, falling back to channel response")
-            await _handle_bot_command_fallback(message, client_user, query, bot_client)
+            except discord.NotFound:
+                pass
 
     except Exception as e:
         logger.error(f"Error in thread-based bot command handling: {str(e)}", exc_info=True)
         # Fallback to original behavior
         await _handle_bot_command_fallback(message, client_user, query, bot_client)
-
-
-async def _send_help_response_thread(message: discord.Message, client_user: discord.ClientUser, help_text: str) -> None:
-    """Send help response in a thread attached to the user's message."""
-    try:
-        from command_abstraction import ThreadManager, MessageResponseSender
-        thread_manager = ThreadManager(message.channel, message.guild)
-        thread_name = f"Bot Help - {message.author.display_name}"
-
-        # Try to create thread from the user's message
-        thread = await thread_manager.create_thread_from_message(message, thread_name)
-
-        if thread:
-            thread_sender = MessageResponseSender(thread)
-            bot_response = await thread_sender.send(help_text)
-            if bot_response:
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, help_text)
-        else:
-            # Fallback to channel response
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(help_text, allowed_mentions=allowed_mentions, suppress_embeds=True)
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, help_text)
-    except Exception as e:
-        logger.error(f"Error sending help response in thread: {str(e)}", exc_info=True)
-        # Ultimate fallback to channel response
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        bot_response = await message.channel.send(help_text, allowed_mentions=allowed_mentions, suppress_embeds=True)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, help_text)
-
-async def _send_error_response_thread(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
-    """Send error response in a thread attached to the user's message."""
-    try:
-        from command_abstraction import ThreadManager, MessageResponseSender
-        thread_manager = ThreadManager(message.channel, message.guild)
-        thread_name = f"Bot Response - {message.author.display_name}"
-
-        # Try to create thread from the user's message
-        thread = await thread_manager.create_thread_from_message(message, thread_name)
-
-        if thread:
-            thread_sender = MessageResponseSender(thread)
-            bot_response = await thread_sender.send(error_msg)
-            if bot_response:
-                await store_bot_response_db(bot_response, client_user, message.guild, thread, error_msg)
-        else:
-            # Fallback to channel response
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True)
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
-    except Exception as e:
-        logger.error(f"Error sending error response in thread: {str(e)}", exc_info=True)
-        # Ultimate fallback to channel response
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 
 async def _handle_bot_command_fallback(message: discord.Message, client_user: discord.ClientUser, query: str, bot_client: discord.Client = None) -> None:
@@ -196,10 +162,13 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
         response = await call_llm_api(query, message_context)
         message_parts = await split_long_message(response)
 
-        for part in message_parts:
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+        # Send response parts using response manager (without thread creation)
+        await ResponseManager.send_response_parts(
+            message=message,
+            content_parts=message_parts,
+            client_user=client_user,
+            create_thread=False
+        )
 
         await processing_msg.delete()
         logger.info(f"Command executed successfully (fallback): mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
@@ -207,9 +176,15 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
         logger.error(f"Error processing mention command (fallback): {str(e)}", exc_info=True)
         import config
         error_msg = config.ERROR_MESSAGES['processing_error']
-        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True)
-        await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+        
+        # Send error using response manager
+        await ResponseManager.send_response(
+            message=message,
+            content=error_msg,
+            client_user=client_user,
+            create_thread=False
+        )
+        
         try:
             await processing_msg.delete()
         except discord.NotFound:
@@ -234,9 +209,12 @@ def _validate_hours_range(hours: int) -> bool:
 # Helper function for error responses
 async def _send_error_response(message: discord.Message, client_user: discord.ClientUser, error_msg: str) -> None:
     """Send error response and store in database."""
-    allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-    bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True)
-    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
+    await ResponseManager.send_response(
+        message=message,
+        content=error_msg,
+        client_user=client_user,
+        create_thread=False
+    )
 
 # Helper function for message command handling
 async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24) -> None:
@@ -293,32 +271,18 @@ async def handle_sum_hr_command(message: discord.Message, client_user: discord.C
 
 async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: discord.ClientUser, guild: Optional[discord.Guild], channel: discord.abc.Messageable, content_to_store: str) -> None:
     """Helper function to store bot's own messages in the database."""
-    try:
-        guild_id_str = str(guild.id) if guild else None
-        guild_name_str = guild.name if guild else None
-        channel_id_str = str(channel.id)
-        # Handle DM channel name
-        channel_name_str = channel.name if hasattr(channel, 'name') else f"DM with {channel.recipient}"
-
-
-        success = database.store_message(
-            message_id=str(bot_msg_obj.id),
-            author_id=str(client_user.id),
-            author_name=str(client_user),
-            channel_id=channel_id_str,
-            channel_name=channel_name_str,
-            content=content_to_store,
-            created_at=bot_msg_obj.created_at,
-            guild_id=guild_id_str,
-            guild_name=guild_name_str,
-            is_bot=True,
-            is_command=False, # Bot responses are not commands themselves
-            command_type=None
-        )
-        if not success:
-            logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
-    except Exception as e:
-        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+    from database_helpers import DatabaseHelpers
+    
+    success = await DatabaseHelpers.store_bot_response_safely(
+        bot_message=bot_msg_obj,
+        client_user=client_user,
+        guild=guild,
+        channel=channel,
+        content=content_to_store
+    )
+    
+    if not success:
+        logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
 
 
 
