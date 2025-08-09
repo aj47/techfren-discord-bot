@@ -202,41 +202,28 @@ def create_thread_manager(source: Union[discord.Message, discord.Interaction]) -
 async def _store_dm_responses(summary_parts: list[str], context: CommandContext, bot_user: Optional[discord.ClientUser] = None) -> None:
     """Store bot responses in database for DM conversations."""
     try:
-        import database
+        from database_helpers import DatabaseHelpers
         from datetime import datetime
 
         # Get bot user ID from the provided bot_user - raise error if missing
         if bot_user is None:
             raise ValueError("bot_user parameter is required for storing DM responses")
         
-        bot_user_id = str(bot_user.id)
-        bot_user_name = str(bot_user)
-
-        # Use transaction for multiple database operations
-        messages_to_store = []
-        base_timestamp = datetime.now()
+        # Use database helpers for safe DM response storage
+        success = await DatabaseHelpers.store_dm_responses_safely(
+            response_parts=summary_parts,
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            channel_name=context.channel_name,
+            bot_user=bot_user,
+            base_timestamp=datetime.now()
+        )
         
-        for i, part in enumerate(summary_parts):
-            # Generate a unique message ID for each part
-            message_id = f"bot_dm_response_{context.user_id}_{base_timestamp.timestamp()}_{i}"
+        if not success:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to store DM responses for user {context.user_id}")
             
-            messages_to_store.append({
-                'message_id': message_id,
-                'author_id': bot_user_id,
-                'author_name': bot_user_name,
-                'channel_id': str(context.channel_id),
-                'channel_name': context.channel_name or "DM",
-                'content': part,
-                'created_at': base_timestamp,
-                'guild_id': None,  # DMs don't have guilds
-                'guild_name': None,
-                'is_bot': True,
-                'is_command': False,
-                'command_type': None
-            })
-        
-        # Store all messages in a single transaction
-        await database.store_messages_batch(messages_to_store)
     except (ValueError, TypeError) as e:
         import logging
         logger = logging.getLogger(__name__)

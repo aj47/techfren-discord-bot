@@ -1,4 +1,3 @@
-from openai import AsyncOpenAI
 from logging_config import logger
 import config # Assuming config.py is in the same directory or accessible
 import json
@@ -7,6 +6,8 @@ import asyncio
 import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
+from openai_client_manager import OpenAIClientManager
+from url_processor import URLProcessor
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -31,61 +32,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
     Returns:
         Optional[Dict[str, Any]]: Dictionary containing summary and key_points, or None if failed
     """
-    try:
-        # Import here to avoid circular imports
-        from youtube_handler import is_youtube_url, scrape_youtube_content
-        from firecrawl_handler import scrape_url_content
-        from apify_handler import is_twitter_url, scrape_twitter_content
-        import config
-        
-        # Check if the URL is from YouTube
-        if await is_youtube_url(url):
-            logger.info(f"Scraping YouTube URL on-demand: {url}")
-            scraped_result = await scrape_youtube_content(url)
-            if not scraped_result:
-                logger.warning(f"Failed to scrape YouTube content: {url}")
-                return None
-            markdown_content = scraped_result.get('markdown', '')
-            
-        # Check if the URL is from Twitter/X.com
-        elif await is_twitter_url(url):
-            logger.info(f"Scraping Twitter/X.com URL on-demand: {url}")
-            if hasattr(config, 'apify_api_token') and config.apify_api_token:
-                scraped_result = await scrape_twitter_content(url)
-                if not scraped_result:
-                    logger.warning(f"Failed to scrape Twitter content with Apify, falling back to Firecrawl: {url}")
-                    scraped_result = await scrape_url_content(url)
-                    markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-                else:
-                    markdown_content = scraped_result.get('markdown', '')
-            else:
-                scraped_result = await scrape_url_content(url)
-                markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-                
-        else:
-            # For other URLs, use Firecrawl
-            logger.info(f"Scraping URL with Firecrawl on-demand: {url}")
-            scraped_result = await scrape_url_content(url)
-            markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-        
-        if not markdown_content:
-            logger.warning(f"No content scraped for URL: {url}")
-            return None
-            
-        # Summarize the scraped content
-        summarized_data = await summarize_scraped_content(markdown_content, url)
-        if not summarized_data:
-            logger.warning(f"Failed to summarize scraped content for URL: {url}")
-            return None
-            
-        return {
-            'summary': summarized_data.get('summary', ''),
-            'key_points': summarized_data.get('key_points', [])
-        }
-        
-    except Exception as e:
-        logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
-        return None
+    return await URLProcessor.scrape_content_on_demand(url)
 
 async def call_llm_api(query, message_context=None):
     """
@@ -101,20 +48,13 @@ async def call_llm_api(query, message_context=None):
     try:
         logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Create OpenAI client using centralized manager
+        openai_client = await OpenAIClientManager.create_client()
+        if not openai_client:
             return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter,
-            timeout=60.0
-        )
-
         # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        model = OpenAIClientManager.get_model()
 
         # Prepare the user content with message context if available
         user_content = query
@@ -203,41 +143,33 @@ async def call_llm_api(query, message_context=None):
                     user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
                 logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": "https://techfren.net",  # Optional site URL
-                "X-Title": "TechFren Discord Bot",  # Optional site title
+        # Make the API request using centralized client manager
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
+                Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
+                Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
+                When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant."
             },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
-                    Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
-                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
-                    When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant."
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            max_tokens=4000,  # Increased for better responses, within reasonable limits
+            {
+                "role": "user",
+                "content": user_content
+            }
+        ]
+        
+        response = await OpenAIClientManager.make_chat_completion(
+            client=openai_client,
+            messages=messages,
+            model=model,
+            max_tokens=4000,
             temperature=0.7
         )
+        
+        return response
 
-        # Extract the response
-        message = completion.choices[0].message.content
-        logger.info(f"LLM API response received successfully: {message[:50]}{'...' if len(message) > 50 else ''}")
-        return message
-
-    except asyncio.TimeoutError:
-        logger.error("LLM API request timed out")
-        return "Sorry, the request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while processing your request. Please try again later."
+        return await OpenAIClientManager.handle_openai_error(e)
 
 async def call_llm_for_summary(messages, channel_name, date, hours=24):
     """
@@ -341,56 +273,40 @@ At the end, include a section with the top 3 most interesting or notable one-lin
 
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Create OpenAI client using centralized manager
+        openai_client = await OpenAIClientManager.create_client()
+        if not openai_client:
             return "Error: OpenRouter API key is missing. Please contact the bot administrator."
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter,
-            timeout=60.0
-        )
-
         # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        model = OpenAIClientManager.get_model()
 
         # Make the API request with a higher token limit for summaries
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": "https://techfren.net",
-                "X-Title": "TechFren Discord Bot",
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. For each bullet point, include a link to the source message at the end in the format [Source](link). Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation, each with their source link."
             },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. Create concise summaries with short bullet points. Highlight all user names with backticks. For each bullet point, include a link to the source message at the end in the format [Source](link). Do not include an introductory paragraph. End with the top 3 most interesting quotes from the conversation, each with their source link."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=8000,  # Increased token limit for comprehensive summaries (Grok-3-mini context: 131k)
-            temperature=0.5   # Lower temperature for more focused summaries
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        response = await OpenAIClientManager.make_chat_completion(
+            client=openai_client,
+            messages=messages,
+            model=model,
+            max_tokens=8000,
+            temperature=0.5
         )
-
-        # Extract the response
-        summary = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {summary[:50]}{'...' if len(summary) > 50 else ''}")
-
+        
         # Return the summary without adding a redundant header
         # The thread title already contains the summary information
-        return summary
+        return response
 
-    except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during summary generation")
-        return "Sorry, the summary request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while generating the summary. Please try again later."
+        return await OpenAIClientManager.handle_openai_error(e)
 
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[Dict[str, Any]]:
     """
@@ -413,20 +329,13 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
         logger.info(f"Summarizing content from URL: {url}")
 
-        # Check if OpenRouter API key exists
-        if not hasattr(config, 'openrouter') or not config.openrouter:
-            logger.error("OpenRouter API key not found in config.py or is empty")
+        # Create OpenAI client using centralized manager
+        openai_client = await OpenAIClientManager.create_client()
+        if not openai_client:
             return None
 
-        # Initialize the OpenAI client with OpenRouter base URL
-        openai_client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=config.openrouter,
-            timeout=60.0
-        )
-
         # Get the model from config or use default
-        model = getattr(config, 'llm_model', "x-ai/grok-3-mini-beta")
+        model = OpenAIClientManager.get_model()
 
         # Create the prompt for the LLM
         prompt = f"""Please analyze the following content from the URL: {url}
@@ -452,30 +361,28 @@ Format your response exactly as follows:
 ```
 """
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": "https://techfren.net",
-                "X-Title": "TechFren Discord Bot",
+        # Make the API request using centralized client manager
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested."
             },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=6000,  # Increased token limit for content summarization (Grok-3-mini context: 131k)
-            temperature=0.3   # Lower temperature for more focused and consistent summaries
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        response_text = await OpenAIClientManager.make_chat_completion(
+            client=openai_client,
+            messages=messages,
+            model=model,
+            max_tokens=6000,
+            temperature=0.3
         )
-
-        # Extract the response
-        response_text = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+        
+        if not response_text:
+            return None
 
         # Extract the JSON part from the response
         try:
@@ -512,9 +419,6 @@ Format your response exactly as follows:
                 "key_points": ["The content could not be properly summarized due to a processing error."]
             }
 
-    except asyncio.TimeoutError:
-        logger.error(f"LLM API request timed out while summarizing content from URL {url}")
-        return None
     except Exception as e:
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
         return None
