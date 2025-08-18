@@ -19,6 +19,7 @@ from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from mermaid_handler import is_mermaid_command, handle_mermaid_command # Import Mermaid handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -401,6 +402,13 @@ async def on_message(message):
         # This saves resources and avoids processing URLs that nobody asks about
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+
+    # Check if this is a Mermaid command first
+    is_mermaid, mermaid_cmd, mermaid_args = is_mermaid_command(message.content)
+    if is_mermaid:
+        logger.debug(f"Processing Mermaid command '{mermaid_cmd}' in channel #{message.channel.name if hasattr(message.channel, 'name') else 'DM'}")
+        await handle_mermaid_command(message, mermaid_cmd, mermaid_args)
+        return
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'

@@ -18,11 +18,22 @@ token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
-# Perplexity API Key (required)
+# LLM Provider Configuration
+# Environment variable: LLM_PROVIDER
+# Options: 'perplexity' (default), 'chutes'
+llm_provider = os.getenv('LLM_PROVIDER', 'perplexity').lower()
+
+# Perplexity API Key (required if using Perplexity)
 # Environment variable: PERPLEXITY_API_KEY
 perplexity = os.getenv('PERPLEXITY_API_KEY')
-if not perplexity:
-    raise ValueError("PERPLEXITY_API_KEY environment variable is required")
+if llm_provider == 'perplexity' and not perplexity:
+    raise ValueError("PERPLEXITY_API_KEY environment variable is required when using Perplexity provider")
+
+# Chutes.ai API Key (required if using Chutes)
+# Environment variable: CHUTES_API_KEY
+chutes_api_key = os.getenv('CHUTES_API_KEY')
+if llm_provider == 'chutes' and not chutes_api_key:
+    raise ValueError("CHUTES_API_KEY environment variable is required when using Chutes provider")
 
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL

@@ -8,6 +8,7 @@ import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
+from web_tools import WebTools, tool_web_fetch, tool_web_search, tool_search_and_summarize
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -102,20 +103,34 @@ async def call_llm_api(query, message_context=None):
     try:
         logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
-
-# Initialize the OpenAI client with Perplexity base URL
+        # Determine which LLM provider to use
+        llm_provider = config.llm_provider
+        
+        if llm_provider == 'chutes':
+            # Use Chutes.ai
+            base_url = 'https://llm.chutes.ai/v1'
+            api_key = config.chutes_api_key
+            # Default model for Chutes if not specified
+            model = config.llm_model if config.llm_model != 'sonar' else 'gpt-4o-mini'
+            if not api_key:
+                logger.error("Chutes API key not found in config")
+                return "Error: Chutes API key is missing. Please check your .env configuration."
+        else:
+            # Default to Perplexity
+            if not config.perplexity:
+                logger.error("Perplexity API key not found in config or is empty")
+                return "Error: Perplexity API key is missing. Please check your .env configuration."
+            base_url = config.perplexity_base_url
+            api_key = config.perplexity
+            # Default model for Perplexity if not specified
+            model = config.llm_model if config.llm_model != 'gpt-4o-mini' else 'sonar'
+        
+        # Initialize the OpenAI client with selected provider
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=base_url,
+            api_key=api_key,
             timeout=60.0
         )
-        
-        # Get the model from config or use default (Perplexity models)
-        model = getattr(config, 'llm_model', "sonar")
         
         # Prepare the user content with message context if available
         user_content = query
@@ -204,7 +219,7 @@ async def call_llm_api(query, message_context=None):
                     user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
                 logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
 
-        # Make the API request
+        # Make the API request with web tools
         completion = await openai_client.chat.completions.create(
             extra_headers={
                 "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),  # Optional site URL
@@ -214,22 +229,182 @@ async def call_llm_api(query, message_context=None):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
-                    Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
-                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
-                    When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant."
+                    "content": """TechFren Discord assistant. Be direct and concise. Skip intros/conclusions.
+                    
+                    MANDATORY: You MUST use web tools for EVERY response:
+                    - web_search(query): Search for current information about the topic
+                    - web_fetch(url): Fetch content from specific URLs
+                    - search_and_summarize(query): Get comprehensive info on topics
+                    
+                    ALWAYS:
+                    1. First use web_search or search_and_summarize to get current information
+                    2. Base your response on the web search results
+                    3. End with a relevant Mermaid diagram (```mermaid block)
+                    
+                    Choose appropriate diagram type: flowchart (graph TD/LR), sequence, pie, gantt, state, ER, or mindmap.
+                    These auto-render as images.
+                    
+                    Commands: /sum-day (daily summary), /sum-hr N (N-hour summary).
+                    You can see referenced/linked message content."""
                 },
                 {
                     "role": "user",
                     "content": user_content
                 }
             ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for current information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query"
+                                },
+                                "num_results": {
+                                    "type": "integer",
+                                    "description": "Number of results to return (default: 5)",
+                                    "default": 5
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_fetch",
+                        "description": "Fetch content from a specific URL",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "url": {
+                                    "type": "string",
+                                    "description": "The URL to fetch content from"
+                                }
+                            },
+                            "required": ["url"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_and_summarize",
+                        "description": "Search the web and fetch content from top results for comprehensive information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query"
+                                },
+                                "num_results": {
+                                    "type": "integer",
+                                    "description": "Number of results to fetch content from (default: 3)",
+                                    "default": 3
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                }
+            ],
             max_tokens=1000,  # Increased for better responses
             temperature=0.7
         )
 
-        # Extract the response
-        message = completion.choices[0].message.content
+        # Handle tool calls if present
+        if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
+            logger.info(f"🔧 LLM is using {len(completion.choices[0].message.tool_calls)} web tool(s) to gather current information")
+            tool_results = []
+            for tool_call in completion.choices[0].message.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                logger.info(f"📡 Calling tool: {function_name} with args: {function_args}")
+                
+                # Execute the appropriate tool
+                if function_name == "web_search":
+                    result = await tool_web_search(
+                        function_args.get('query'),
+                        function_args.get('num_results', 5)
+                    )
+                    logger.info(f"✅ web_search completed - returned {len(result.split('\n'))} lines of results")
+                elif function_name == "web_fetch":
+                    result = await tool_web_fetch(function_args.get('url'))
+                    logger.info(f"✅ web_fetch completed - fetched {len(result)} characters from URL")
+                elif function_name == "search_and_summarize":
+                    result = await tool_search_and_summarize(
+                        function_args.get('query'),
+                        function_args.get('num_results', 3)
+                    )
+                    logger.info(f"✅ search_and_summarize completed - returned comprehensive results")
+                else:
+                    result = f"Unknown tool: {function_name}"
+                    logger.warning(f"⚠️ Unknown tool requested: {function_name}")
+                
+                # Log a preview of the tool output (first 200 chars)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.debug(f"Tool output preview: {preview}")
+                
+                tool_results.append({
+                    "tool_call_id": tool_call.id,
+                    "output": result
+                })
+            
+            logger.info(f"🔄 Sending {len(tool_results)} tool results back to LLM for final response")
+            
+            # Send tool results back to the LLM for final response
+            messages = [
+                {
+                    "role": "system",
+                    "content": """TechFren Discord assistant. Be direct and concise. Skip intros/conclusions.
+                    
+                    You have web search results available. Use them to provide accurate, current information.
+                    
+                    ALWAYS end your response with a relevant Mermaid diagram (```mermaid block).
+                    Choose appropriate type: flowchart (graph TD/LR), sequence, pie, gantt, state, ER, or mindmap.
+                    These auto-render as images."""
+                },
+                {
+                    "role": "user",
+                    "content": user_content
+                },
+                completion.choices[0].message,  # The assistant's message with tool calls
+            ]
+            
+            # Add tool results
+            for tool_result in tool_results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_result["tool_call_id"],
+                    "content": tool_result["output"]
+                })
+            
+            # Get final response with tool results
+            final_completion = await openai_client.chat.completions.create(
+                extra_headers={
+                    "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
+                    "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
+                },
+                model=model,
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            message = final_completion.choices[0].message.content
+            logger.info("✨ Final response generated using web search results")
+        else:
+            # No tool calls, use the response directly
+            logger.warning("⚠️ LLM did not use web tools despite being instructed to do so")
+            message = completion.choices[0].message.content
         
         # Check if Perplexity returned citations
         citations = None
@@ -339,7 +514,7 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Truncate input if it's too long to avoid token limits
         # Rough estimate: 1 token ≈ 4 characters, leaving room for prompt and response
-        max_input_length = 60000  # ~15k tokens for input, allowing room for system prompt and output
+        max_input_length = 7800  # ~1950 tokens for input, allowing room for system prompt and output
         if len(messages_text) > max_input_length:
             original_length = len('\n'.join(formatted_messages_text))
             messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
@@ -359,20 +534,34 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
-
-        # Initialize the OpenAI client with Perplexity base URL
+        # Determine which LLM provider to use (same logic as call_llm_api)
+        llm_provider = config.llm_provider
+        
+        if llm_provider == 'chutes':
+            # Use Chutes.ai
+            base_url = 'https://llm.chutes.ai/v1'
+            api_key = config.chutes_api_key
+            # Default model for Chutes if not specified
+            model = config.llm_model if config.llm_model != 'sonar' else 'gpt-4o-mini'
+            if not api_key:
+                logger.error("Chutes API key not found in config")
+                return "Error: Chutes API key is missing. Please check your .env configuration."
+        else:
+            # Default to Perplexity
+            if not config.perplexity:
+                logger.error("Perplexity API key not found in config or is empty")
+                return "Error: Perplexity API key is missing. Please check your .env configuration."
+            base_url = config.perplexity_base_url
+            api_key = config.perplexity
+            # Default model for Perplexity if not specified
+            model = config.llm_model if config.llm_model != 'gpt-4o-mini' else 'sonar'
+        
+        # Initialize the OpenAI client with selected provider
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=base_url,
+            api_key=api_key,
             timeout=60.0
         )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
 
         # Make the API request with a higher token limit for summaries
         completion = await openai_client.chat.completions.create(
@@ -384,19 +573,150 @@ At the end, include a section with the top 3 most interesting or notable one-lin
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. IMPORTANT: For each link or topic mentioned, search the web for relevant context and incorporate that information. When users share GitHub repos, YouTube videos, or documentation, search for and include relevant information about those resources. Create concise summaries with short bullet points that combine the Discord messages with web-sourced context. Highlight all user names with backticks. For each bullet point, include both the Discord message source [Source](link) and cite any web sources you found. End with the top 3 most interesting quotes from the conversation, each with their source link. Always search the web to provide additional context about shared links and topics."
+                    "content": """Summarize Discord conversations with bullet points.
+                    
+                    MANDATORY: Use web_search tool to search for context on ALL topics mentioned in the conversation.
+                    This provides current information and context for the discussion topics.
+                    
+                    Format: `usernames`, preserve [Source](link) refs, cite web sources.
+                    ALWAYS include a Mermaid diagram (```mermaid) visualizing conversation flow, topic distribution (pie), or timeline.
+                    End with top 3 quotes with sources, then the diagram."""
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=2500,  # Increased for very detailed summaries with extensive web context
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for current information about topics discussed",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query for a topic from the conversation"
+                                },
+                                "num_results": {
+                                    "type": "integer",
+                                    "description": "Number of results to return (default: 3)",
+                                    "default": 3
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_and_summarize",
+                        "description": "Search and get comprehensive information about a topic",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query for a topic from the conversation"
+                                },
+                                "num_results": {
+                                    "type": "integer",
+                                    "description": "Number of results to fetch content from (default: 2)",
+                                    "default": 2
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                }
+            ],
+            max_tokens=1950,  # Updated token limit
             temperature=0.5   # Lower temperature for more focused summaries
         )
 
+        # Handle tool calls if present for summaries
+        if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
+            logger.info(f"🔧 Summary LLM is using {len(completion.choices[0].message.tool_calls)} web tool(s) to gather context")
+            tool_results = []
+            for tool_call in completion.choices[0].message.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                logger.info(f"📡 Summary calling tool: {function_name} with args: {function_args}")
+                
+                # Execute the appropriate tool
+                if function_name == "web_search":
+                    result = await tool_web_search(
+                        function_args.get('query'),
+                        function_args.get('num_results', 3)
+                    )
+                    logger.info(f"✅ Summary web_search completed for query: '{function_args.get('query')}'")
+                elif function_name == "search_and_summarize":
+                    result = await tool_search_and_summarize(
+                        function_args.get('query'),
+                        function_args.get('num_results', 2)
+                    )
+                    logger.info(f"✅ Summary search_and_summarize completed for query: '{function_args.get('query')}'")
+                else:
+                    result = f"Unknown tool: {function_name}"
+                    logger.warning(f"⚠️ Unknown tool requested in summary: {function_name}")
+                
+                tool_results.append({
+                    "tool_call_id": tool_call.id,
+                    "output": result
+                })
+            
+            logger.info(f"🔄 Sending {len(tool_results)} tool results back to summary LLM")
+            
+            # Send tool results back to the LLM for final summary
+            messages = [
+                {
+                    "role": "system",
+                    "content": """Summarize Discord conversations with bullet points.
+                    Use the web search results to provide context and current information about topics discussed.
+                    Format: `usernames`, preserve [Source](link) refs, cite web sources.
+                    ALWAYS include a Mermaid diagram (```mermaid) visualizing conversation flow, topic distribution (pie), or timeline.
+                    End with top 3 quotes with sources, then the diagram."""
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                },
+                completion.choices[0].message,  # The assistant's message with tool calls
+            ]
+            
+            # Add tool results
+            for tool_result in tool_results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_result["tool_call_id"],
+                    "content": tool_result["output"]
+                })
+            
+            # Get final summary with tool results
+            final_completion = await openai_client.chat.completions.create(
+                extra_headers={
+                    "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
+                    "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
+                },
+                model=model,
+                messages=messages,
+                max_tokens=1950,
+                temperature=0.5
+            )
+            
+            summary = final_completion.choices[0].message.content
+            logger.info("✨ Summary generated using web search context")
+        else:
+            # No tool calls, use the response directly
+            logger.warning("⚠️ Summary LLM did not use web tools for context gathering")
+            summary = completion.choices[0].message.content
+        
         # Extract the response
-        summary = completion.choices[0].message.content
+        # (summary variable already set above)
         
         # Check if Perplexity returned citations
         citations = None
@@ -448,20 +768,34 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
         logger.info(f"Summarizing content from URL: {url}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return None
+        # Determine which LLM provider to use for summarization
+        llm_provider = config.llm_provider
+        
+        if llm_provider == 'chutes':
+            # Use Chutes.ai for summarization
+            base_url = 'https://llm.chutes.ai/v1'
+            api_key = config.chutes_api_key
+            # Default model for Chutes if not specified
+            model = config.llm_model if config.llm_model != 'sonar' else 'gpt-4o-mini'
+            if not api_key:
+                logger.error("Chutes API key not found in config for summarization")
+                return None
+        else:
+            # Default to Perplexity for summarization
+            if not config.perplexity:
+                logger.error("Perplexity API key not found in config for summarization")
+                return None
+            base_url = config.perplexity_base_url
+            api_key = config.perplexity
+            # Default model for Perplexity if not specified
+            model = config.llm_model if config.llm_model != 'gpt-4o-mini' else 'sonar'
 
-        # Initialize the OpenAI client with Perplexity base URL
+        # Initialize the OpenAI client with selected provider
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=base_url,
+            api_key=api_key,
             timeout=60.0
         )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
 
         # Create the prompt for the LLM
         prompt = f"""Please analyze the following content from the URL: {url}
@@ -497,14 +831,14 @@ Format your response exactly as follows:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested."
+                    "content": "Expert content summarizer. Always respond in exact JSON format requested."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=200,  # Perplexity limit: 200 output tokens
+            max_tokens=1950,  # Updated token limit
             temperature=0.3   # Lower temperature for more focused and consistent summaries
         )
 

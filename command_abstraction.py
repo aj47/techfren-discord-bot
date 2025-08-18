@@ -339,7 +339,15 @@ async def handle_summary_command(
 
         # Generate summary
         summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
-        summary_parts = await split_long_message(summary)
+        
+        # Process Mermaid diagrams in the summary
+        from mermaid_handler import process_mermaid_in_response
+        modified_summary, mermaid_files = await process_mermaid_in_response(
+            summary, str(context.user_id)
+        )
+        logger.info(f"Mermaid processing for summary: {len(mermaid_files)} diagrams found")
+        
+        summary_parts = await split_long_message(modified_summary)
 
         # Send summary efficiently with thread creation
         if context.guild_id:
@@ -354,7 +362,16 @@ async def handle_summary_command(
                     if thread:
                         # Send all summary content in the thread
                         thread_sender = MessageResponseSender(thread)
-                        await thread_sender.send_in_parts(summary_parts)
+                        
+                        # Send all text parts first
+                        if summary_parts:
+                            await thread_sender.send_in_parts(summary_parts)
+                        
+                        # If we have Mermaid diagrams, send them at the end
+                        if mermaid_files:
+                            logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as final message in thread")
+                            diagram_message = "📊 **Summary Visualizations:**"
+                            await thread.send(content=diagram_message, files=mermaid_files)
 
                         # Edit the initial message to just indicate the summary is in the thread
                         await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
@@ -362,7 +379,15 @@ async def handle_summary_command(
                         # Fallback: if thread creation failed, send summary in main channel
                         logger.warning("Thread creation failed, sending summary in main channel")
                         await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
+                        
+                        # Send all text parts first
                         await response_sender.send_in_parts(summary_parts)
+                        
+                        # Send Mermaid files at the end if present
+                        if mermaid_files:
+                            logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as final message in channel")
+                            diagram_message = "📊 **Summary Visualizations:**"
+                            await response_sender.channel.send(content=diagram_message, files=mermaid_files)
 
                 except discord.HTTPException as e:
                     logger.warning(f"Failed to edit initial message: {e}")
