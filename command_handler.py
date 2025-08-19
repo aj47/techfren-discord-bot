@@ -58,7 +58,61 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     except Exception as e:
                         logger.warning(f"Failed to get message context: {e}")
 
-                response = await call_llm_api(query, message_context)
+                # Add Discord server context for better responses
+                discord_context = {
+                    'channel_id': str(message.channel.id),
+                    'channel_name': message.channel.name if hasattr(message.channel, 'name') else 'DM',
+                    'guild_id': str(message.guild.id) if message.guild else None,
+                    'guild_name': message.guild.name if message.guild else None,
+                    'author_id': str(message.author.id),
+                    'author_name': message.author.display_name,
+                    'query_type': query.lower()
+                }
+                
+                # Always fetch Discord server context for better responses in guild channels
+                query_lower = query.lower()
+                server_context_keywords = ['summary', 'summarize', 'users', 'members', 'activity', 'messages', 'message', 'channel', 'server', 'guild', 'who', 'what happened', 'recent', 'chat', 'conversation', 'discussion', 'talked', 'said', 'posted', 'wrote', 'discord', 'here', 'this channel', 'channel content']
+                needs_extensive_context = any(keyword in query_lower for keyword in server_context_keywords)
+                
+                # Debug log to track context requirements
+                matched_keywords = [kw for kw in server_context_keywords if kw in query_lower]
+                logger.info(f"Context check - Query: '{query}' | Extensive context: {needs_extensive_context} | Matched keywords: {matched_keywords}")
+                
+                # Always fetch recent messages for guild channels (smart context window sizing)
+                recent_messages = []
+                if message.guild:
+                    try:
+                        from datetime import datetime, timezone
+                        current_time = datetime.now(timezone.utc)
+                        
+                        # Smart context window sizing
+                        if needs_extensive_context:
+                            context_hours = 24  # Full context for summary-related queries
+                        else:
+                            context_hours = 4   # Light context for general interactions
+                        
+                        # Get messages from the appropriate time window
+                        recent_messages = database.get_channel_messages_for_hours(
+                            str(message.channel.id), current_time, context_hours
+                        )
+                        logger.info(f"Fetched {len(recent_messages)} recent messages ({context_hours}h context) for channel #{message.channel.name}")
+                        
+                        # Also get active channels if asking about server-wide activity
+                        if any(word in query_lower for word in ['server', 'guild', 'all channels', 'everywhere']):
+                            active_channels = database.get_active_channels(24)
+                            discord_context['active_channels'] = active_channels[:5]  # Limit to top 5
+                            logger.info(f"Added {len(active_channels)} active channels to context")
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch server context: {e}")
+                
+                # Enhance message_context with Discord server context and recent messages
+                if message_context is None:
+                    message_context = {}
+                message_context['discord_context'] = discord_context
+                message_context['recent_messages'] = recent_messages
+
+                response = await call_llm_api(query, message_context, bot_client)
                 logger.debug(f"Raw response length: {len(response)} characters")
                 logger.debug(f"Response ends with: ...{response[-100:] if len(response) > 100 else response}")
                 
@@ -73,10 +127,10 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                 if mermaid_files:
                     logger.info(f"Detected {len(mermaid_files)} Mermaid diagram(s) in LLM response")
                     
-                    # Split the modified response if needed
-                    if len(modified_response) > 900:
+                    # Split the modified response if needed (using 1900 to match summary commands)
+                    if len(modified_response) > 1900:
                         logger.info(f"Splitting response of {len(modified_response)} chars into multiple parts")
-                        message_parts = await split_long_message(modified_response, max_length=900)
+                        message_parts = await split_long_message(modified_response, max_length=1900)
                     else:
                         message_parts = [modified_response]
                     
@@ -89,20 +143,25 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                         if bot_response:
                             await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
                     
-                    # Send Mermaid diagram files at the end
-                    logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as final message")
-                    diagram_message = "📊 **Visualizations:**"
-                    bot_response = await thread.send(content=diagram_message, files=mermaid_files)
-                    if bot_response:
-                        await store_bot_response_db(bot_response, client_user, message.guild, thread, diagram_message)
+                    # Send each diagram separately for better visibility
+                    logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as separate messages")
+                    for idx, file in enumerate(mermaid_files):
+                        if idx == 0:
+                            diagram_message = "📊 **Flowchart Visualization:**"
+                        else:
+                            diagram_message = "📈 **Distribution Chart:**"
+                        
+                        bot_response = await thread.send(content=diagram_message, file=file)
+                        if bot_response:
+                            await store_bot_response_db(bot_response, client_user, message.guild, thread, diagram_message)
                 else:
                     # No Mermaid diagrams, send response normally
-                    # Force split if response is over 900 chars to ensure it doesn't get cut off
-                    if len(response) > 900:
-                        logger.info(f"Splitting response of {len(response)} chars into multiple parts")
-                        message_parts = await split_long_message(response, max_length=900)
+                    # Force split if response is over 1900 chars to ensure it doesn't get cut off (matches summary commands)
+                    if len(modified_response) > 1900:
+                        logger.info(f"Splitting response of {len(modified_response)} chars into multiple parts")
+                        message_parts = await split_long_message(modified_response, max_length=1900)
                     else:
-                        message_parts = [response]
+                        message_parts = [modified_response]
 
                     # Send all response parts in the thread
                     for i, part in enumerate(message_parts, 1):
@@ -179,8 +238,62 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
                 logger.debug(f"Retrieved message context in fallback: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
             except Exception as e:
                 logger.warning(f"Failed to get message context in fallback: {e}")
+        
+        # Add Discord server context for better responses (fallback)
+        discord_context = {
+            'channel_id': str(message.channel.id),
+            'channel_name': message.channel.name if hasattr(message.channel, 'name') else 'DM',
+            'guild_id': str(message.guild.id) if message.guild else None,
+            'guild_name': message.guild.name if message.guild else None,
+            'author_id': str(message.author.id),
+            'author_name': message.author.display_name,
+            'query_type': query.lower()
+        }
+        
+        # Always fetch Discord server context for better responses in guild channels (fallback)
+        query_lower = query.lower()
+        server_context_keywords = ['summary', 'summarize', 'users', 'members', 'activity', 'messages', 'message', 'channel', 'server', 'guild', 'who', 'what happened', 'recent', 'chat', 'conversation', 'discussion', 'talked', 'said', 'posted', 'wrote', 'discord', 'here', 'this channel', 'channel content']
+        needs_extensive_context = any(keyword in query_lower for keyword in server_context_keywords)
+        
+        # Debug log to track context requirements (fallback)
+        matched_keywords = [kw for kw in server_context_keywords if kw in query_lower]
+        logger.info(f"Context check (fallback) - Query: '{query}' | Extensive context: {needs_extensive_context} | Matched keywords: {matched_keywords}")
+        
+        # Always fetch recent messages for guild channels (fallback path)
+        recent_messages = []
+        if message.guild:
+            try:
+                from datetime import datetime, timezone
+                current_time = datetime.now(timezone.utc)
+                
+                # Smart context window sizing (fallback)
+                if needs_extensive_context:
+                    context_hours = 24  # Full context for summary-related queries
+                else:
+                    context_hours = 4   # Light context for general interactions
+                
+                # Get messages from the appropriate time window
+                recent_messages = database.get_channel_messages_for_hours(
+                    str(message.channel.id), current_time, context_hours
+                )
+                logger.info(f"Fetched {len(recent_messages)} recent messages ({context_hours}h context) for channel #{message.channel.name} (fallback)")
+                
+                # Also get active channels if asking about server-wide activity
+                if any(word in query_lower for word in ['server', 'guild', 'all channels', 'everywhere']):
+                    active_channels = database.get_active_channels(24)
+                    discord_context['active_channels'] = active_channels[:5]  # Limit to top 5
+                    logger.info(f"Added {len(active_channels)} active channels to context (fallback)")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to fetch server context in fallback: {e}")
+        
+        # Enhance message_context with Discord server context and recent messages (fallback)
+        if message_context is None:
+            message_context = {}
+        message_context['discord_context'] = discord_context
+        message_context['recent_messages'] = recent_messages
 
-        response = await call_llm_api(query, message_context)
+        response = await call_llm_api(query, message_context, bot_client)
         
         # Process Mermaid diagrams in the response
         modified_response, mermaid_files = await process_mermaid_in_response(
@@ -207,23 +320,28 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
                 if bot_response:
                     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
             
-            # Send Mermaid diagram files at the end
-            logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as final message")
-            diagram_message = "📊 **Visualizations:**"
-            bot_response = await message.channel.send(
-                content=diagram_message,
-                files=mermaid_files,
-                allowed_mentions=allowed_mentions,
-                suppress_embeds=True
-            )
-            if bot_response:
-                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, diagram_message)
+            # Send each diagram separately for better visibility
+            logger.info(f"Sending {len(mermaid_files)} Mermaid diagram(s) as separate messages")
+            for idx, file in enumerate(mermaid_files):
+                if idx == 0:
+                    diagram_message = "📊 **Flowchart Visualization:**"
+                else:
+                    diagram_message = "📈 **Distribution Chart:**"
+                
+                bot_response = await message.channel.send(
+                    content=diagram_message,
+                    file=file,
+                    allowed_mentions=allowed_mentions,
+                    suppress_embeds=True
+                )
+                if bot_response:
+                    await store_bot_response_db(bot_response, client_user, message.guild, message.channel, diagram_message)
         else:
             # No Mermaid diagrams, send response normally
-            if len(response) > 1900:
-                message_parts = await split_long_message(response, max_length=1900)
+            if len(modified_response) > 1900:
+                message_parts = await split_long_message(modified_response, max_length=1900)
             else:
-                message_parts = [response]
+                message_parts = [modified_response]
 
             for i, part in enumerate(message_parts, 1):
                 # Add continuation indicator if there are multiple parts
@@ -271,7 +389,7 @@ async def _send_error_response(message: discord.Message, client_user: discord.Cl
     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 # Helper function for message command handling
-async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24) -> None:
+async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24, bot_client: discord.Client = None) -> None:
     """Unified wrapper for message command handling with error management."""
     try:
         from command_abstraction import (
@@ -285,7 +403,7 @@ async def _handle_message_command_wrapper(message: discord.Message, client_user:
         response_sender = create_response_sender(message)
         thread_manager = create_thread_manager(message)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=client_user)
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=client_user, bot_client=bot_client)
 
     except Exception as e:
         logger.error(f"Error in handle_{command_name}_command: {str(e)}", exc_info=True)
@@ -293,11 +411,11 @@ async def _handle_message_command_wrapper(message: discord.Message, client_user:
         error_msg = config.ERROR_MESSAGES['summary_error']
         await _send_error_response(message, client_user, error_msg)
 
-async def handle_sum_day_command(message: discord.Message, client_user: discord.ClientUser) -> None:
+async def handle_sum_day_command(message: discord.Message, client_user: discord.ClientUser, bot_client: discord.Client = None) -> None:
     """Handles the /sum-day command using the abstraction layer."""
-    await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24)
+    await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24, bot_client=bot_client)
 
-async def handle_sum_hr_command(message: discord.Message, client_user: discord.ClientUser) -> None:
+async def handle_sum_hr_command(message: discord.Message, client_user: discord.ClientUser, bot_client: discord.Client = None) -> None:
     """Handles the /sum-hr <num_hours> command using the abstraction layer."""
     # Parse and validate hours parameter
     import config
@@ -321,7 +439,7 @@ async def handle_sum_hr_command(message: discord.Message, client_user: discord.C
         warning_msg = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours)
         await message.channel.send(warning_msg)
 
-    await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
+    await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours, bot_client=bot_client)
 
 async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: discord.ClientUser, guild: Optional[discord.Guild], channel: discord.abc.Messageable, content_to_store: str) -> None:
     """Helper function to store bot's own messages in the database."""

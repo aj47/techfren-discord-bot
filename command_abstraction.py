@@ -258,7 +258,8 @@ async def handle_summary_command(
     response_sender: ResponseSender,
     thread_manager: ThreadManager,
     hours: int = 24,
-    bot_user: Optional[discord.ClientUser] = None
+    bot_user: Optional[discord.ClientUser] = None,
+    bot_client: Optional[discord.Client] = None
 ) -> None:
     """
     Core logic for summary commands, abstracted from Discord-specific handling.
@@ -268,6 +269,8 @@ async def handle_summary_command(
         response_sender: Interface for sending responses
         thread_manager: Interface for thread creation
         hours: Number of hours to summarize (default 24)
+        bot_user: Bot user for database storage
+        bot_client: Bot client for Discord API access
     """
     from datetime import datetime, timezone
     from rate_limiter import check_rate_limit
@@ -338,7 +341,7 @@ async def handle_summary_command(
             return
 
         # Generate summary
-        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
+        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours, bot_client)
         
         # Process Mermaid diagrams in the summary
         from mermaid_handler import process_mermaid_in_response

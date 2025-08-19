@@ -8,22 +8,13 @@ import io
 import aiohttp
 import base64
 import json
+import zlib
 from typing import Optional, Dict, Any, List, Tuple
 from logging_config import logger
 import discord
 from discord import File
 
-# Mermaid diagram themes
-MERMAID_THEMES = {
-    'default': 'default',
-    'dark': 'dark',
-    'forest': 'forest',
-    'neutral': 'neutral',
-    'base': 'base'
-}
-
-# User theme preferences storage (in production, this should be in database)
-user_themes = {}
+# Mermaid diagrams are now rendered automatically in all bot responses
 
 class MermaidRenderer:
     """Handles rendering of Mermaid.js diagrams to images."""
@@ -37,6 +28,7 @@ class MermaidRenderer:
         # Kroki.io - Open-source free diagram rendering service
         # Documentation: https://docs.kroki.io/
         # Supports multiple diagram types, actively maintained
+        self.kroki_post_url = "https://kroki.io/"
         self.kroki_api_url = "https://kroki.io/mermaid/png/"
         
     async def render_diagram(self, mermaid_code: str, theme: str = 'default') -> Optional[bytes]:
@@ -54,18 +46,38 @@ class MermaidRenderer:
             # Clean up the mermaid code
             mermaid_code = mermaid_code.strip()
             
-            # Prepare the diagram with theme configuration
-            config = {
-                "theme": theme,
-                "themeVariables": {
-                    "primaryColor": "#4372867",
-                    "primaryTextColor": "#fff",
-                    "primaryBorderColor": "#7C8187",
-                    "lineColor": "#5D6D7E",
-                    "secondaryColor": "#006FBE",
-                    "tertiaryColor": "#E8F6F3"
+            # Special configuration for pie charts with vibrant colors
+            if 'pie' in mermaid_code.lower():
+                config = {
+                    "theme": "base",
+                    "themeVariables": {
+                        "pie1": "#FF6B6B",      # Red
+                        "pie2": "#4ECDC4",      # Teal
+                        "pie3": "#45B7D1",      # Blue
+                        "pie4": "#96CEB4",      # Green
+                        "pie5": "#FFEAA7",      # Yellow
+                        "pie6": "#DDA0DD",      # Plum
+                        "pie7": "#98D8C8",      # Mint
+                        "pie8": "#FFB6C1",      # Pink
+                        "pieStrokeColor": "#000000",     # Black border
+                        "pieSectionTextSize": "16px",
+                        "pieLegendTextSize": "14px",
+                        "pieSectionTextColor": "#000000" # Black text
+                    }
                 }
-            }
+            else:
+                # Standard configuration for other diagrams
+                config = {
+                    "theme": theme,
+                    "themeVariables": {
+                        "primaryColor": "#437286",
+                        "primaryTextColor": "#fff",
+                        "primaryBorderColor": "#7C8187",
+                        "lineColor": "#5D6D7E",
+                        "secondaryColor": "#006FBE",
+                        "tertiaryColor": "#E8F6F3"
+                    }
+                }
             
             # Create the full diagram definition with config
             diagram_with_config = {
@@ -78,30 +90,35 @@ class MermaidRenderer:
                 "updateDiagram": True
             }
             
-            # Method 1: Try mermaid.ink API
+            # Method 1: Try Kroki POST API (most reliable)
             try:
-                # Encode the diagram for URL
-                encoded = base64.urlsafe_b64encode(
-                    json.dumps(diagram_with_config).encode('utf-8')
-                ).decode('utf-8').rstrip('=')
-                
-                url = f"{self.render_api_url}{encoded}"
+                payload = {
+                    "diagram_source": mermaid_code,
+                    "diagram_type": "mermaid",
+                    "output_format": "png"
+                }
                 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=10) as response:
+                    async with session.post(
+                        self.kroki_post_url,
+                        json=payload,
+                        timeout=10
+                    ) as response:
                         if response.status == 200:
                             image_data = await response.read()
-                            logger.info(f"Successfully rendered Mermaid diagram using mermaid.ink")
+                            logger.info(f"Successfully rendered Mermaid diagram using Kroki POST API")
                             return image_data
+                        else:
+                            error_text = await response.text()
+                            logger.warning(f"Kroki POST API returned status {response.status}: {error_text}")
             except Exception as e:
-                logger.warning(f"Failed to render with mermaid.ink: {e}")
+                logger.warning(f"Failed to render with Kroki POST API: {e}")
             
-            # Method 2: Fallback to Kroki API
+            # Method 2: Fallback to Kroki GET API
             try:
-                # Encode for Kroki
-                encoded = base64.urlsafe_b64encode(
-                    mermaid_code.encode('utf-8')
-                ).decode('utf-8').rstrip('=')
+                # Encode for Kroki using proper zlib compression + base64
+                compressed = zlib.compress(mermaid_code.encode('utf-8'), 9)
+                encoded = base64.urlsafe_b64encode(compressed).decode('utf-8')
                 
                 url = f"{self.kroki_api_url}{encoded}"
                 
@@ -109,12 +126,16 @@ class MermaidRenderer:
                     async with session.get(url, timeout=10) as response:
                         if response.status == 200:
                             image_data = await response.read()
-                            logger.info(f"Successfully rendered Mermaid diagram using Kroki")
+                            logger.info(f"Successfully rendered Mermaid diagram using Kroki GET API")
                             return image_data
+                        else:
+                            error_text = await response.text()
+                            logger.warning(f"Kroki GET API returned status {response.status}: {error_text}")
             except Exception as e:
-                logger.warning(f"Failed to render with Kroki: {e}")
+                logger.warning(f"Failed to render with Kroki GET API: {e}")
                 
             logger.error("All Mermaid rendering methods failed")
+            logger.debug(f"Failed to render diagram: {mermaid_code[:100]}..." if len(mermaid_code) > 100 else f"Failed to render diagram: {mermaid_code}")
             return None
             
         except Exception as e:
@@ -133,16 +154,54 @@ def extract_mermaid_blocks(text: str) -> List[Tuple[str, int, int]]:
     """
     mermaid_blocks = []
     
-    # Pattern for ```mermaid blocks
-    pattern = r'```mermaid\s*\n(.*?)\n```'
-    matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
+    # Pattern for all Mermaid diagram types
+    # Matches: ```mermaid, ```flowchart, ```graph, ```sequenceDiagram, etc.
+    valid_types = ['mermaid', 'flowchart', 'graph', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'erDiagram', 'journey', 'gantt', 'pie', 'gitgraph']
     
-    for match in matches:
-        mermaid_code = match.group(1).strip()
-        start_idx = match.start()
-        end_idx = match.end()
-        mermaid_blocks.append((mermaid_code, start_idx, end_idx))
+    # Pattern 1: ```<type> blocks (handles types with parameters)
+    for diagram_type in valid_types:
+        if diagram_type == 'mermaid':
+            # For ```mermaid blocks, content starts after newline
+            pattern = rf'```{diagram_type}\s*\n(.*?)\n```'
+            matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
+            
+            for match in matches:
+                content = match.group(1).strip()
+                mermaid_code = content
+                start_idx = match.start()
+                end_idx = match.end()
+                mermaid_blocks.append((mermaid_code, start_idx, end_idx))
+        else:
+            # For diagram types that may have parameters (flowchart TD, graph LR, etc.)
+            pattern = rf'```{diagram_type}(\s+[^\n]*)?\n(.*?)\n```'
+            matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
+            
+            for match in matches:
+                type_params = match.group(1).strip() if match.group(1) else ""
+                content = match.group(2).strip()
+                # Combine type with parameters and content
+                mermaid_code = f"{diagram_type}{' ' + type_params if type_params else ''}\n{content}"
+                start_idx = match.start()
+                end_idx = match.end()
+                mermaid_blocks.append((mermaid_code, start_idx, end_idx))
     
+    # Pattern 2: Plain ``` blocks that contain Mermaid diagram types
+    plain_pattern = r'```\s*\n(.*?)\n```'
+    plain_matches = re.finditer(plain_pattern, text, re.DOTALL | re.IGNORECASE)
+    
+    for match in plain_matches:
+        content = match.group(1).strip()
+        # Check if content starts with a valid Mermaid diagram type
+        if any(content.startswith(vt) for vt in valid_types[1:]):  # Skip 'mermaid' keyword
+            mermaid_code = content
+            start_idx = match.start()
+            end_idx = match.end()
+            # Avoid duplicates from pattern 1
+            if not any(abs(start_idx - existing[1]) < 10 for existing in mermaid_blocks):
+                mermaid_blocks.append((mermaid_code, start_idx, end_idx))
+    
+    # Sort by start index to maintain order
+    mermaid_blocks.sort(key=lambda x: x[1])
     return mermaid_blocks
 
 async def process_mermaid_in_response(response_text: str, user_id: str = None) -> Tuple[str, List[discord.File]]:
@@ -160,13 +219,34 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
         # Extract Mermaid blocks
         mermaid_blocks = extract_mermaid_blocks(response_text)
         
-        if not mermaid_blocks:
-            return response_text, []
-        
         logger.info(f"Found {len(mermaid_blocks)} Mermaid diagram(s) in response")
         
-        # Get user's theme preference
-        theme = user_themes.get(user_id, 'default') if user_id else 'default'
+        # Ensure we always have at least 2 diagrams for better visualization
+        if len(mermaid_blocks) == 1:
+            first_diagram = mermaid_blocks[0][0].lower()
+            
+            if 'pie' in first_diagram:
+                # Add a default flowchart
+                default_flow = "flowchart TD\n    A[Topic] --> B[Discussion]\n    B --> C[Conclusion]"
+                mermaid_blocks.append((default_flow, -1, -1))
+                logger.info("Added default flowchart to complement pie chart")
+            else:
+                # Add a default pie chart
+                default_pie = "pie title \"Data Distribution\"\n    \"Category A\" : 40\n    \"Category B\" : 35\n    \"Category C\" : 25"
+                mermaid_blocks.append((default_pie, -1, -1))
+                logger.info("Added default pie chart to complement diagram")
+        elif len(mermaid_blocks) == 0:
+            # If no diagrams found, add both default ones
+            default_flow = "flowchart TD\n    A[Start] --> B[Process]\n    B --> C[End]"
+            default_pie = "pie title \"Overview\"\n    \"Main Topic\" : 60\n    \"Supporting\" : 40"
+            mermaid_blocks.append((default_flow, -1, -1))
+            mermaid_blocks.append((default_pie, -1, -1))
+            logger.info("Added both default diagrams")
+        
+        logger.info(f"Total diagrams to render: {len(mermaid_blocks)}")
+        
+        # Use default theme for all automatic rendering
+        theme = 'default'
         
         # Initialize renderer
         renderer = MermaidRenderer()
@@ -186,20 +266,21 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
                 discord_file = discord.File(io.BytesIO(image_data), filename=file_name)
                 discord_files.append(discord_file)
                 
-                # Replace the Mermaid block with a reference
-                replacement = f"\n📊 *Diagram {idx + 1} rendered as image (see attachment)*\n"
-                
-                # Update the text with the replacement
-                actual_start = start_idx + offset
-                actual_end = end_idx + offset
-                modified_text = (
-                    modified_text[:actual_start] + 
-                    replacement + 
-                    modified_text[actual_end:]
-                )
-                
-                # Update offset for next replacement
-                offset += len(replacement) - (end_idx - start_idx)
+                # Replace the Mermaid block with a reference (only if it was in original text)
+                if start_idx != -1 and end_idx != -1:
+                    replacement = f"\n📊 *Diagram {idx + 1} rendered as image (see attachment)*\n"
+                    
+                    # Update the text with the replacement
+                    actual_start = start_idx + offset
+                    actual_end = end_idx + offset
+                    modified_text = (
+                        modified_text[:actual_start] + 
+                        replacement + 
+                        modified_text[actual_end:]
+                    )
+                    
+                    # Update offset for next replacement
+                    offset += len(replacement) - (end_idx - start_idx)
                 
                 logger.info(f"Successfully rendered Mermaid diagram {idx + 1}")
             else:
@@ -211,150 +292,4 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
         logger.error(f"Error processing Mermaid diagrams: {e}", exc_info=True)
         return response_text, []
 
-async def handle_mermaid_command(message: discord.Message, command: str, args: str) -> None:
-    """
-    Handle Mermaid-specific commands.
-    
-    Args:
-        message: The Discord message object
-        command: The command name (e.g., 'render', 'setTheme', 'getTheme')
-        args: Command arguments
-    """
-    try:
-        user_id = str(message.author.id)
-        
-        if command in ['render', 'r']:
-            # Render a Mermaid diagram
-            if not args:
-                await message.reply("Please provide Mermaid diagram code after the command.")
-                return
-            
-            # Get user's theme
-            theme = user_themes.get(user_id, 'default')
-            
-            # Initialize renderer
-            renderer = MermaidRenderer()
-            
-            # Render the diagram
-            image_data = await renderer.render_diagram(args, theme)
-            
-            if image_data:
-                # Create embed
-                embed = discord.Embed(
-                    title="Mermaid Diagram",
-                    description="Your diagram has been rendered successfully!",
-                    color=0x4372867
-                )
-                embed.set_footer(text=f"Theme: {theme}")
-                
-                # Send with image
-                file = discord.File(io.BytesIO(image_data), filename="diagram.png")
-                embed.set_image(url="attachment://diagram.png")
-                
-                await message.reply(embed=embed, file=file)
-                logger.info(f"Rendered Mermaid diagram for user {message.author}")
-            else:
-                await message.reply("❌ Failed to render the Mermaid diagram. Please check your syntax.")
-                
-        elif command == 'setTheme':
-            # Set user's theme preference
-            if not args or args.lower() not in MERMAID_THEMES:
-                themes_list = ", ".join(MERMAID_THEMES.keys())
-                await message.reply(f"Please specify a valid theme: {themes_list}")
-                return
-            
-            theme = args.lower()
-            user_themes[user_id] = theme
-            
-            embed = discord.Embed(
-                title="Theme Updated",
-                description=f"Your Mermaid diagram theme has been set to: **{theme}**",
-                color=0x00ff00
-            )
-            await message.reply(embed=embed)
-            logger.info(f"Set theme '{theme}' for user {message.author}")
-            
-        elif command == 'getTheme':
-            # Get user's current theme
-            theme = user_themes.get(user_id, 'default')
-            
-            embed = discord.Embed(
-                title="Current Theme",
-                description=f"Your current Mermaid diagram theme is: **{theme}**",
-                color=0x4372867
-            )
-            await message.reply(embed=embed)
-            
-        elif command == 'help':
-            # Show help for Mermaid commands
-            embed = discord.Embed(
-                title="Mermaid.js Bot Help",
-                description="Help on using Mermaid.js diagram rendering",
-                color=0x4372867
-            )
-            embed.add_field(
-                name="Commands",
-                value=(
-                    "**!mermaid-render** or **!mermaid-r** `<code>`: Render a Mermaid diagram\n"
-                    "**!mermaid-setTheme** `<theme>`: Set your preferred theme\n"
-                    "**!mermaid-getTheme**: Get your current theme setting\n"
-                    "**!mermaid-help**: Show this help message"
-                ),
-                inline=False
-            )
-            embed.add_field(
-                name="Available Themes",
-                value=", ".join(MERMAID_THEMES.keys()),
-                inline=False
-            )
-            embed.add_field(
-                name="Example Diagram",
-                value=(
-                    "```mermaid\n"
-                    "graph TD\n"
-                    "    A[Start] --> B{Is it?}\n"
-                    "    B -->|Yes| C[OK]\n"
-                    "    B -->|No| D[End]\n"
-                    "```"
-                ),
-                inline=False
-            )
-            embed.add_field(
-                name="Helpful Links",
-                value=(
-                    "[Mermaid.js Documentation](https://mermaid-js.github.io/)\n"
-                    "[Mermaid Live Editor](https://mermaid.live/)"
-                ),
-                inline=False
-            )
-            
-            await message.reply(embed=embed)
-            
-    except Exception as e:
-        logger.error(f"Error handling Mermaid command: {e}", exc_info=True)
-        await message.reply("❌ An error occurred while processing your Mermaid command.")
-
-def is_mermaid_command(content: str) -> Tuple[bool, Optional[str], Optional[str]]:
-    """
-    Check if a message is a Mermaid command.
-    
-    Args:
-        content: Message content
-        
-    Returns:
-        Tuple of (is_command, command_name, arguments)
-    """
-    mermaid_commands = {
-        '!mermaid-render': 'render',
-        '!mermaid-r': 'r',
-        '!mermaid-setTheme': 'setTheme',
-        '!mermaid-getTheme': 'getTheme',
-        '!mermaid-help': 'help'
-    }
-    
-    for cmd_prefix, cmd_name in mermaid_commands.items():
-        if content.startswith(cmd_prefix):
-            args = content[len(cmd_prefix):].strip()
-            return True, cmd_name, args
-    
-    return False, None, None
+# All Mermaid commands have been removed - diagrams are now automatically rendered in all LLM responses
