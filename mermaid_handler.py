@@ -221,27 +221,28 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
         
         logger.info(f"Found {len(mermaid_blocks)} Mermaid diagram(s) in response")
         
-        # Ensure we always have at least 2 diagrams for better visualization
-        if len(mermaid_blocks) == 1:
-            first_diagram = mermaid_blocks[0][0].lower()
-            
-            if 'pie' in first_diagram:
-                # Add a default flowchart
-                default_flow = "flowchart TD\n    A[Topic] --> B[Discussion]\n    B --> C[Conclusion]"
-                mermaid_blocks.append((default_flow, -1, -1))
-                logger.info("Added default flowchart to complement pie chart")
-            else:
-                # Add a default pie chart
-                default_pie = "pie title \"Data Distribution\"\n    \"Category A\" : 40\n    \"Category B\" : 35\n    \"Category C\" : 25"
-                mermaid_blocks.append((default_pie, -1, -1))
-                logger.info("Added default pie chart to complement diagram")
-        elif len(mermaid_blocks) == 0:
-            # If no diagrams found, add both default ones
-            default_flow = "flowchart TD\n    A[Start] --> B[Process]\n    B --> C[End]"
-            default_pie = "pie title \"Overview\"\n    \"Main Topic\" : 60\n    \"Supporting\" : 40"
+        # Ensure we have both content and flow diagrams
+        if len(mermaid_blocks) == 0:
+            # Add both default diagrams - content and flow
+            default_content = "pie title \"Channel Activity\"\n    \"Discussion\" : 60\n    \"Questions\" : 25\n    \"General Chat\" : 15"
+            default_flow = "flowchart TD\n    A[User Posts] --> B[Discussion]\n    B --> C{Resolution?}\n    C -->|Yes| D[Conclusion]\n    C -->|No| E[Continued Chat]\n    E --> B"
+            mermaid_blocks.append((default_content, -1, -1))
             mermaid_blocks.append((default_flow, -1, -1))
-            mermaid_blocks.append((default_pie, -1, -1))
-            logger.info("Added both default diagrams")
+            logger.info("Added default content + flow diagrams - no diagrams found in response")
+        elif len(mermaid_blocks) == 1:
+            # Add complementary diagram based on what we have
+            first_diagram = mermaid_blocks[0][0].lower()
+            if 'pie' in first_diagram or 'timeline' in first_diagram or 'bar' in first_diagram:
+                # Have content, add flow
+                default_flow = "flowchart TD\n    A[Discussion Start] --> B[Main Topics]\n    B --> C[Community Input]\n    C --> D[Key Insights]"
+                mermaid_blocks.append((default_flow, -1, -1))
+                logger.info("Added complementary flow diagram")
+            else:
+                # Have flow, add content
+                default_content = "pie title \"Discussion Breakdown\"\n    \"Main Topic\" : 50\n    \"Questions\" : 30\n    \"General Chat\" : 20"
+                mermaid_blocks.insert(0, (default_content, -1, -1))
+                logger.info("Added complementary content diagram")
+        # If 2+ diagrams found, use them as-is
         
         logger.info(f"Total diagrams to render: {len(mermaid_blocks)}")
         
@@ -261,14 +262,37 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
             image_data = await renderer.render_diagram(mermaid_code, theme)
             
             if image_data:
-                # Create Discord file
-                file_name = f"diagram_{idx + 1}.png"
+                # Determine diagram type for better file naming
+                diagram_type = "flow"
+                mermaid_lower = mermaid_code.lower()
+                if 'pie' in mermaid_lower:
+                    diagram_type = "content_pie"
+                elif 'timeline' in mermaid_lower:
+                    diagram_type = "content_timeline" 
+                elif 'bar' in mermaid_lower or 'chart' in mermaid_lower:
+                    diagram_type = "content_chart"
+                elif 'flowchart' in mermaid_lower or 'graph' in mermaid_lower:
+                    diagram_type = "flow_process"
+                elif 'sequenceDiagram' in mermaid_lower:
+                    diagram_type = "flow_sequence"
+                elif 'stateDiagram' in mermaid_lower:
+                    diagram_type = "flow_state"
+                
+                # Create Discord file with descriptive name
+                file_name = f"{diagram_type}_{idx + 1}.png"
                 discord_file = discord.File(io.BytesIO(image_data), filename=file_name)
                 discord_files.append(discord_file)
                 
                 # Replace the Mermaid block with a reference (only if it was in original text)
                 if start_idx != -1 and end_idx != -1:
-                    replacement = f"\n📊 *Diagram {idx + 1} rendered as image (see attachment)*\n"
+                    if len(mermaid_blocks) >= 2:
+                        # Multiple diagrams - show combined reference
+                        if idx == 0:
+                            replacement = f"\n📊 *Content + Flow diagrams rendered (see attachments)*\n"
+                        else:
+                            replacement = ""  # Don't add text for subsequent diagrams
+                    else:
+                        replacement = f"\n📊 *{diagram_type.replace('_', ' ').title()} diagram rendered*\n"
                     
                     # Update the text with the replacement
                     actual_start = start_idx + offset
@@ -282,7 +306,7 @@ async def process_mermaid_in_response(response_text: str, user_id: str = None) -
                     # Update offset for next replacement
                     offset += len(replacement) - (end_idx - start_idx)
                 
-                logger.info(f"Successfully rendered Mermaid diagram {idx + 1}")
+                logger.info(f"Successfully rendered {diagram_type} diagram {idx + 1}")
             else:
                 logger.warning(f"Failed to render Mermaid diagram {idx + 1}, keeping original text")
         
