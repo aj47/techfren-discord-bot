@@ -186,6 +186,94 @@ async def process_url(message_id: str, url: str):
         )
 
 
+def _is_links_dump_channel(message: discord.Message, config) -> bool:
+    """Check if message is in the links dump channel."""
+    if str(message.channel.id) == config.links_dump_channel_id:
+        return True
+    elif (
+        isinstance(message.channel, discord.Thread)
+        and str(message.channel.parent_id) == config.links_dump_channel_id
+    ):
+        logger.info(
+            f"Message {message.id} is in a thread from links dump channel, allowing"
+        )
+        return False
+    return False
+
+
+def _should_allow_message(message: discord.Message) -> bool:
+    """Check if message should be allowed in links dump channel."""
+    # Don't handle bot messages or commands
+    if message.author.bot:
+        return True
+
+    # Check for URLs in the message content
+    url_pattern = (
+        r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?"
+    )
+    urls = re.findall(url_pattern, message.content)
+
+    # If message contains URLs, allow it
+    if urls:
+        logger.info(
+            f"Message {message.id} in links dump channel contains URL, allowing"
+        )
+        return True
+
+    # Always allow forwarded messages from other channels
+    if (
+        message.reference
+        and message.reference.message_id
+        and (message.reference.channel_id != message.channel.id)
+    ):
+        logger.info(
+            f"Message {message.id} is forwarded from another channel, allowing"
+        )
+        return True
+
+    return False
+
+
+async def _delete_non_link_message(message: discord.Message):
+    """Delete non-link message with warning."""
+    logger.info(f"Deleting non-link message {message.id} in links dump channel")
+
+    warning_msg = await message.channel.send(
+        f"{message.author.mention} We only allow sharing of links in this channel. "
+        "If you want to comment on a link please put it in a thread, "
+        "otherwise type your message in the appropriate channel. "
+        "This message will be deleted in 1 minute."
+    )
+
+    # Schedule deletion of both messages after 1 minute (60 seconds)
+    async def delete_messages():
+        await asyncio.sleep(60)  # 1 minute
+        try:
+            await message.delete()
+            logger.info(
+                f"Deleted original message {message.id} from links dump channel"
+            )
+        except discord.NotFound:
+            logger.info(f"Original message {message.id} already deleted")
+        except discord.Forbidden:
+            logger.warning(f"No permission to delete original message {message.id}")
+        except Exception as e:
+            logger.error(f"Error deleting original message {message.id}: {e}")
+
+        try:
+            await warning_msg.delete()
+            logger.info(f"Deleted warning message {warning_msg.id}")
+        except discord.NotFound:
+            logger.info(f"Warning message {warning_msg.id} already deleted")
+        except discord.Forbidden:
+            logger.warning(f"No permission to delete warning message {warning_msg.id}")
+        except Exception as e:
+            logger.error(f"Error deleting warning message {warning_msg.id}: {e}")
+
+    # Start the deletion task
+    asyncio.create_task(delete_messages())
+
+
 async def handle_links_dump_channel(message: discord.Message) -> bool:
     """
     Handle messages in the links dump channel.
@@ -208,96 +296,18 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         ):
             return False
 
-        # Check if this is the links dump channel or a thread within it
-        is_links_dump_channel = False
-
-        if str(message.channel.id) == config.links_dump_channel_id:
-            # Direct message in the links dump channel
-            is_links_dump_channel = True
-        elif (
-            isinstance(message.channel, discord.Thread)
-            and str(message.channel.parent_id) == config.links_dump_channel_id
-        ):
-            # Message in a thread created from the links dump channel - allow these
-            logger.info(
-                f"Message {message.id} is in a thread from links dump channel, allowing"
-            )
+        # Check if this is the links dump channel
+        is_links_dump = _is_links_dump_channel(message, config)
+        if not is_links_dump:
             return False
 
-        if not is_links_dump_channel:
+        # Check if message should be allowed
+        if _should_allow_message(message):
             return False
 
-        # Don't handle bot messages or commands
-        if message.author.bot:
-            return False
-
-        # Check for URLs in the message content using the same regex as process_url
-        url_pattern = (
-            r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?"
-        )
-        urls = re.findall(url_pattern, message.content)
-
-        # If message contains URLs, allow it
-        if urls:
-            logger.info(
-                f"Message {message.id} in links dump channel contains URL, allowing"
-            )
-            return False
-
-        # Always allow forwarded messages from other channels
-        if (
-            message.reference
-            and message.reference.message_id
-            and (message.reference.channel_id != message.channel.id)
-        ):
-            logger.info(
-                f"Message {message.id} is forwarded from another channel, allowing"
-            )
-            return False
-
-        # Message doesn't contain URLs, send warning and schedule deletion
-        logger.info(f"Deleting non-link message {message.id} in links dump channel")
-
-        warning_msg = await message.channel.send(
-            f"{message.author.mention} We only allow sharing of links in this channel. "
-            "If you want to comment on a link please put it in a thread, "
-            "otherwise type your message in the appropriate channel. "
-            "This message will be deleted in 1 minute."
-        )
-
-        # Schedule deletion of both messages after 1 minute (60 seconds)
-        async def delete_messages():
-            await asyncio.sleep(60)  # 1 minute
-            try:
-                await message.delete()
-                logger.info(
-                    f"Deleted original message {message.id} from links dump channel"
-                )
-            except discord.NotFound:
-                logger.info(f"Original message {message.id} already deleted")
-            except discord.Forbidden:
-                logger.warning(f"No permission to delete original message {message.id}")
-            except Exception as e:
-                logger.error(f"Error deleting original message {message.id}: {e}")
-
-            try:
-                await warning_msg.delete()
-                logger.info(
-                    f"Deleted warning message {warning_msg.id} from links dump channel"
-                )
-            except discord.NotFound:
-                logger.info(f"Warning message {warning_msg.id} already deleted")
-            except discord.Forbidden:
-                logger.warning(
-                    f"No permission to delete warning message {warning_msg.id}"
-                )
-            except Exception as e:
-                logger.error(f"Error deleting warning message {warning_msg.id}: {e}")
-
-        # Create background task for deletion
-        asyncio.create_task(delete_messages())
-
-        return True  # Message was handled
+        # Message doesn't contain URLs, delete it with warning
+        await _delete_non_link_message(message)
+        return True  # Message was handled (will be deleted)
 
     except Exception as e:
         logger.error(

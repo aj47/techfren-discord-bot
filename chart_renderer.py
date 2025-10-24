@@ -859,6 +859,56 @@ class ChartRenderer:
         qc.config = config
         return qc.get_url()
 
+    def _get_single_header_title(self, header: str, chart_type: str) -> str:
+        """Generate title for single header charts."""
+        if chart_type == "pie":
+            return f"{header} Distribution Analysis"
+        elif chart_type == "bar":
+            return f"{header} Comparison Chart"
+        elif chart_type == "line":
+            return f"{header} Trend Analysis"
+        else:
+            return f"{header} Analysis"
+
+    def _get_pie_chart_title(self, category_header: str, value_header: str) -> str:
+        """Generate title for pie charts."""
+        if "focus" in value_header.lower():
+            return f"Focus Level Distribution Across {category_header}"
+        elif "detail" in value_header.lower():
+            return f"Detail Level Breakdown by {category_header}"
+        elif "%" in value_header or "percent" in value_header.lower():
+            return f"{value_header} Share by {category_header}"
+        else:
+            return f"{value_header} Distribution by {category_header}"
+
+    def _get_bar_chart_title(self, category_header: str, value_header: str) -> str:
+        """Generate title for bar charts."""
+        if "focus" in value_header.lower():
+            return f"Focus Score Comparison: {category_header} Analysis"
+        elif "detail" in value_header.lower():
+            return f"Detail Level Analysis by {category_header}"
+        elif "score" in value_header.lower() or "rating" in value_header.lower():
+            return f"{value_header} Ratings Across {category_header}"
+        elif "count" in value_header.lower() or "number" in value_header.lower():
+            return f"{value_header} by {category_header}"
+        elif "year" in value_header.lower():
+            return f"{category_header} Timeline: {value_header}"
+        elif "goal" in value_header.lower():
+            return f"{category_header} Target Goals: {value_header}"
+        elif "power" in value_header.lower():
+            return f"{category_header} Power Analysis: {value_header}"
+        else:
+            return f"{value_header} Analysis by {category_header}"
+
+    def _get_line_chart_title(self, category_header: str, value_header: str) -> str:
+        """Generate title for line charts."""
+        if ("time" in category_header.lower() or
+            "date" in category_header.lower() or
+            "period" in category_header.lower()):
+            return f"{value_header} Trends Over {category_header}"
+        else:
+            return f"{value_header} Evolution Across {category_header}"
+
     def _generate_chart_title(self, headers: List[str], chart_type: str) -> str:
         """
         Generate a meaningful and detailed chart title based on headers and chart type.
@@ -875,63 +925,19 @@ class ChartRenderer:
 
         # For single header, make it more descriptive
         if len(headers) == 1:
-            header = headers[0]
-            if chart_type == "pie":
-                return f"{header} Distribution Analysis"
-            elif chart_type == "bar":
-                return f"{header} Comparison Chart"
-            elif chart_type == "line":
-                return f"{header} Trend Analysis"
-            else:
-                return f"{header} Analysis"
+            return self._get_single_header_title(headers[0], chart_type)
 
         # For two headers, create enhanced relationship titles
         if len(headers) == 2:
             category_header = headers[0]
             value_header = headers[1]
 
-            # Make titles more specific based on content
             if chart_type == "pie":
-                if "focus" in value_header.lower():
-                    return f"Focus Level Distribution Across {category_header}"
-                elif "detail" in value_header.lower():
-                    return f"Detail Level Breakdown by {category_header}"
-                elif "%" in value_header or "percent" in value_header.lower():
-                    return f"{value_header} Share by {category_header}"
-                else:
-                    return f"{value_header} Distribution by {category_header}"
-
+                return self._get_pie_chart_title(category_header, value_header)
             elif chart_type == "bar":
-                if "focus" in value_header.lower():
-                    return f"Focus Score Comparison: {category_header} Analysis"
-                elif "detail" in value_header.lower():
-                    return f"Detail Level Analysis by {category_header}"
-                elif (
-                    "score" in value_header.lower() or "rating" in value_header.lower()
-                ):
-                    return f"{value_header} Ratings Across {category_header}"
-                elif (
-                    "count" in value_header.lower() or "number" in value_header.lower()
-                ):
-                    return f"{value_header} by {category_header}"
-                elif "year" in value_header.lower():
-                    return f"{category_header} Timeline: {value_header}"
-                elif "goal" in value_header.lower():
-                    return f"{category_header} Target Goals: {value_header}"
-                elif "power" in value_header.lower():
-                    return f"{category_header} Power Analysis: {value_header}"
-                else:
-                    return f"{value_header} Analysis by {category_header}"
-
+                return self._get_bar_chart_title(category_header, value_header)
             elif chart_type == "line":
-                if (
-                    "time" in category_header.lower()
-                    or "date" in category_header.lower()
-                    or "period" in category_header.lower()
-                ):
-                    return f"{value_header} Trends Over {category_header}"
-                else:
-                    return f"{value_header} Evolution Across {category_header}"
+                return self._get_line_chart_title(category_header, value_header)
             else:
                 return f"{category_header} vs {value_header} Analysis"
 

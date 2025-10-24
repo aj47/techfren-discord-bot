@@ -325,6 +325,46 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         )
 
 
+def _filter_messages_for_summary(messages):
+    """Filter out command messages but include bot responses."""
+    return [
+        msg
+        for msg in messages
+        if not msg.get("is_command", False)
+        and not msg.get("content", "").startswith("/sum-day")
+        and not msg.get("content", "").startswith("/sum-hr")
+    ]
+
+
+def _format_message_for_summary(msg):
+    """Format a single message for summarization."""
+    # Ensure created_at is a datetime object before calling strftime
+    created_at_time = msg.get("created_at")
+    if hasattr(created_at_time, "strftime"):
+        time_str = created_at_time.strftime("%H:%M:%S")
+    else:
+        time_str = "Unknown Time"
+
+    author_name = msg.get("author_name", "Unknown Author")
+    content = msg.get("content", "")
+    message_id = msg.get("id", "")
+    guild_id = msg.get("guild_id", "")
+    channel_id = msg.get("channel_id", "")
+
+    # Generate Discord message link
+    message_link = ""
+    if message_id and channel_id:
+        message_link = generate_discord_message_link(
+            guild_id, channel_id, message_id
+        )
+
+    # Format the message with the basic content and clickable Discord link
+    if message_link:
+        return f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
+    else:
+        return f"[{time_str}] {author_name}: {content}"
+
+
 async def call_llm_for_summary(
     messages, channel_name, date, hours=24, force_charts=False
 ):
@@ -343,17 +383,7 @@ async def call_llm_for_summary(
     """
     try:
         # Filter out command messages but include bot responses
-        filtered_messages = [
-            msg
-            for msg in messages
-            if not msg.get("is_command", False)  # Use .get for safety
-            and not (
-                msg.get("content", "").startswith("/sum-day")
-            )  # Explicitly filter out /sum-day commands
-            and not (
-                msg.get("content", "").startswith("/sum-hr")
-            )  # Explicitly filter out /sum-hr commands
-        ]
+        filtered_messages = _filter_messages_for_summary(messages)
 
         if not filtered_messages:
             time_period = (
@@ -366,37 +396,13 @@ async def call_llm_for_summary(
         # Prepare the messages for summarization
         formatted_messages_text = []
         for msg in filtered_messages:
-            # Ensure created_at is a datetime object before calling strftime
-            created_at_time = msg.get("created_at")
-            if hasattr(created_at_time, "strftime"):
-                time_str = created_at_time.strftime("%H:%M:%S")
-            else:
-                time_str = "Unknown Time"  # Fallback if created_at is not as expected
-
-            author_name = msg.get("author_name", "Unknown Author")
-            content = msg.get("content", "")
-            message_id = msg.get("id", "")
-            guild_id = msg.get("guild_id", "")
-            channel_id = msg.get("channel_id", "")
-
-            # Generate Discord message link
-            message_link = ""
-            if message_id and channel_id:
-                message_link = generate_discord_message_link(
-                    guild_id, channel_id, message_id
-                )
+            # Format the basic message
+            message_text = _format_message_for_summary(msg)
 
             # Check if this message has scraped content from a URL
             scraped_url = msg.get("scraped_url")
             scraped_summary = msg.get("scraped_content_summary")
             scraped_key_points = msg.get("scraped_content_key_points")
-
-            # Format the message with the basic content and clickable Discord link
-            if message_link:
-                # Format as clickable Discord link that the LLM will understand
-                message_text = f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
-            else:
-                message_text = f"[{time_str}] {author_name}: {content}"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
