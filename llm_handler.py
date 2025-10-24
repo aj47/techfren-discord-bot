@@ -97,6 +97,112 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _prepare_user_content_with_context(query, message_context):
+    """Prepare user content with message context."""
+    user_content = query
+    if not message_context:
+        return user_content
+
+    context_parts = []
+
+    # Add thread context if available (from thread memory)
+    if message_context.get("thread_context"):
+        thread_context = message_context["thread_context"]
+        context_parts.append(
+            f"**Thread Conversation History:**\n{thread_context}"
+        )
+        logger.debug("Added thread memory context to LLM prompt")
+
+    # Add referenced message (reply) context
+    if message_context.get("referenced_message"):
+        ref_msg = message_context["referenced_message"]
+        ref_author = getattr(ref_msg, "author", None)
+        ref_author_name = str(ref_author) if ref_author else "Unknown"
+        ref_content = getattr(ref_msg, "content", "")
+        ref_timestamp = getattr(ref_msg, "created_at", None)
+        ref_time_str = (
+            ref_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+            if ref_timestamp
+            else "Unknown time"
+        )
+
+        context_parts.append(
+            f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}"
+        )
+
+    # Add linked messages context
+    if message_context.get("linked_messages"):
+        for i, linked_msg in enumerate(message_context["linked_messages"]):
+            linked_author = getattr(linked_msg, "author", None)
+            linked_author_name = (
+                str(linked_author) if linked_author else "Unknown"
+            )
+            linked_content = getattr(linked_msg, "content", "")
+            linked_timestamp = getattr(linked_msg, "created_at", None)
+            linked_time_str = (
+                linked_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+                if linked_timestamp
+                else "Unknown time"
+            )
+
+            context_parts.append(
+                f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}"
+            )
+
+    if context_parts:
+        context_text = "\n\n".join(context_parts)
+        user_content = (
+            f"{context_text}\n\n**User's Question/Request:**\n{query}"
+        )
+        logger.debug(
+            f"Added message context to LLM prompt: {len(context_parts)} context message(s)"
+        )
+
+    return user_content
+
+
+async def _get_scraped_content_for_urls(urls_in_query, context_urls):
+    """Get scraped content for all URLs found in query and context."""
+    all_urls = urls_in_query + context_urls
+    if not all_urls:
+        return ""
+
+    scraped_content_parts = []
+    for url in all_urls:
+        try:
+            scraped_content = await asyncio.to_thread(
+                get_scraped_content_by_url, url
+            )
+            if scraped_content:
+                logger.info(f"Found scraped content for URL: {url}")
+                content_section = f"**Scraped Content for {url}:**\n"
+                content_section += f"Summary: {scraped_content['summary']}\n"
+                if scraped_content["key_points"]:
+                    content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
+                scraped_content_parts.append(content_section)
+            else:
+                # URL not found in database, try to scrape it now
+                logger.info(f"No scraped content found for URL {url}, attempting to scrape now...")
+                scraped_content = await scrape_url_on_demand(url)
+                if scraped_content:
+                    logger.info(f"Successfully scraped content for URL: {url}")
+                    content_section = f"**Scraped Content for {url}:**\n"
+                    content_section += f"Summary: {scraped_content['summary']}\n"
+                    if scraped_content["key_points"]:
+                        content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
+                    scraped_content_parts.append(content_section)
+                else:
+                    logger.warning(f"Failed to scrape content for URL: {url}")
+        except Exception as e:
+            logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
+
+    if scraped_content_parts:
+        scraped_content_text = "\n\n".join(scraped_content_parts)
+        logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
+        return f"{scraped_content_text}\n\n"
+    return ""
+
+
 async def call_llm_api(query, message_context=None, force_charts=False):
     """
     Call the LLM API with the user's query and return the response
@@ -131,73 +237,16 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         model = config.llm_model
 
         # Prepare the user content with message context if available
-        user_content = query
-        if message_context:
-            context_parts = []
-
-            # Add thread context if available (from thread memory)
-            if message_context.get("thread_context"):
-                thread_context = message_context["thread_context"]
-                context_parts.append(
-                    f"**Thread Conversation History:**\n{thread_context}"
-                )
-                logger.debug("Added thread memory context to LLM prompt")
-
-            # Add referenced message (reply) context
-            if message_context.get("referenced_message"):
-                ref_msg = message_context["referenced_message"]
-                ref_author = getattr(ref_msg, "author", None)
-                ref_author_name = str(ref_author) if ref_author else "Unknown"
-                ref_content = getattr(ref_msg, "content", "")
-                ref_timestamp = getattr(ref_msg, "created_at", None)
-                ref_time_str = (
-                    ref_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
-                    if ref_timestamp
-                    else "Unknown time"
-                )
-
-                context_parts.append(
-                    f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}"
-                )
-
-            # Add linked messages context
-            if message_context.get("linked_messages"):
-                for i, linked_msg in enumerate(message_context["linked_messages"]):
-                    linked_author = getattr(linked_msg, "author", None)
-                    linked_author_name = (
-                        str(linked_author) if linked_author else "Unknown"
-                    )
-                    linked_content = getattr(linked_msg, "content", "")
-                    linked_timestamp = getattr(linked_msg, "created_at", None)
-                    linked_time_str = (
-                        linked_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
-                        if linked_timestamp
-                        else "Unknown time"
-                    )
-
-                    context_parts.append(
-                        f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}"
-                    )
-
-            if context_parts:
-                context_text = "\n\n".join(context_parts)
-                user_content = (
-                    f"{context_text}\n\n**User's Question/Request:**\n{query}"
-                )
-                logger.debug(
-                    f"Added message context to LLM prompt: {len(context_parts)} context message(s)"
-                )
+        user_content = _prepare_user_content_with_context(query, message_context)
 
         # Check for URLs in the query and message context, add scraped content if available
         urls_in_query = extract_urls_from_text(query)
 
-        # Also check for URLs in message context (referenced messages, linked messages)
+        # Get URLs from message context
         context_urls = []
         if message_context:
             if message_context.get("referenced_message"):
-                ref_content = getattr(
-                    message_context["referenced_message"], "content", ""
-                )
+                ref_content = getattr(message_context["referenced_message"], "content", "")
                 context_urls.extend(extract_urls_from_text(ref_content))
 
             if message_context.get("linked_messages"):
@@ -205,55 +254,13 @@ async def call_llm_api(query, message_context=None, force_charts=False):
                     linked_content = getattr(linked_msg, "content", "")
                     context_urls.extend(extract_urls_from_text(linked_content))
 
-        # Combine all URLs found
-        all_urls = urls_in_query + context_urls
-        if all_urls:
-            scraped_content_parts = []
-            for url in all_urls:
-                try:
-                    scraped_content = await asyncio.to_thread(
-                        get_scraped_content_by_url, url
-                    )
-                    if scraped_content:
-                        logger.info(f"Found scraped content for URL: {url}")
-                        content_section = f"**Scraped Content for {url}:**\n"
-                        content_section += f"Summary: {scraped_content['summary']}\n"
-                        if scraped_content["key_points"]:
-                            content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
-                        scraped_content_parts.append(content_section)
-                    else:
-                        # URL not found in database, try to scrape it now
-                        logger.info(
-                            f"No scraped content found for URL {url}, attempting to scrape now..."
-                        )
-                        scraped_content = await scrape_url_on_demand(url)
-                        if scraped_content:
-                            logger.info(f"Successfully scraped content for URL: {url}")
-                            content_section = f"**Scraped Content for {url}:**\n"
-                            content_section += (
-                                f"Summary: {scraped_content['summary']}\n"
-                            )
-                            if scraped_content["key_points"]:
-                                content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
-                            scraped_content_parts.append(content_section)
-                        else:
-                            logger.warning(f"Failed to scrape content for URL: {url}")
-                except Exception as e:
-                    logger.warning(
-                        f"Error retrieving scraped content for URL {url}: {e}"
-                    )
-
-            if scraped_content_parts:
-                scraped_content_text = "\n\n".join(scraped_content_parts)
-                if message_context:
-                    # If we already have message context, add scraped content to it
-                    user_content = f"{scraped_content_text}\n\n{user_content}"
-                else:
-                    # If no message context, add scraped content before the query
-                    user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
-                logger.debug(
-                    f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content"
-                )
+        # Add scraped content if URLs are found
+        scraped_content_text = await _get_scraped_content_for_urls(urls_in_query, context_urls)
+        if scraped_content_text:
+            if message_context:
+                user_content = f"{scraped_content_text}{user_content}"
+            else:
+                user_content = f"{scraped_content_text}**User's Question/Request:**\n{query}"
 
         # Choose system prompt based on analysis type
         if force_charts or _should_use_chart_system(query, user_content):

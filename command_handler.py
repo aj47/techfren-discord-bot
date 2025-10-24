@@ -9,12 +9,8 @@ import re
 from typing import Optional
 
 
-async def handle_bot_command(
-    message: discord.Message,
-    client_user: discord.ClientUser,
-    bot_client: discord.Client = None,
-) -> None:
-    """Handles the mention command with thread-based replies."""
+async def _validate_bot_command_input(message, client_user):
+    """Validate input for bot command and return cleaned query."""
     bot_mention = f"<@{client_user.id}>"
     bot_mention_alt = f"<@!{client_user.id}>"
     query = (
@@ -25,29 +21,132 @@ async def handle_bot_command(
 
     if not query:
         import config
-
         error_msg = config.ERROR_MESSAGES["no_query"]
         await _send_error_response_thread(message, client_user, error_msg)
+        return None
+
+    return query
+
+
+async def _check_bot_command_rate_limit(message, client_user):
+    """Check rate limits for bot command."""
+    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
+    if is_limited:
+        import config
+        if reason == "cooldown":
+            error_msg = config.ERROR_MESSAGES["rate_limit_cooldown"].format(wait_time=wait_time)
+        else:
+            error_msg = config.ERROR_MESSAGES["rate_limit_exceeded"].format(wait_time=wait_time)
+
+        await _send_error_response_thread(message, client_user, error_msg)
+        logger.info(f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s")
+        return False
+    return True
+
+
+async def _get_bot_command_context(message, bot_client):
+    """Get thread and message context for bot command."""
+    thread_context = ""
+    thread_id = None
+    message_context = None
+
+    # Check if we're in a thread and get thread memory
+    if hasattr(message.channel, "parent") and message.channel.parent is not None:
+        thread_id = str(message.channel.id)
+        if has_thread_memory(thread_id):
+            thread_context = get_thread_context(thread_id, max_exchanges=4)
+            logger.debug(f"Retrieved thread context for thread {thread_id}")
+
+    # Get message context (referenced messages and linked messages)
+    if bot_client and (message.reference or "discord.com/channels/" in message.content):
+        try:
+            message_context = await get_message_context(message, bot_client)
+            logger.debug(
+                f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get message context: {e}")
+
+    return thread_context, thread_id, message_context
+
+
+async def _combine_contexts(thread_context, message_context):
+    """Combine thread and message contexts."""
+    if thread_context and message_context:
+        if "thread_context" not in message_context:
+            message_context["thread_context"] = thread_context
+    elif thread_context:
+        message_context = {"thread_context": thread_context}
+    return message_context
+
+
+async def _store_thread_memory(message, thread_id, query, response, force_charts, chart_data):
+    """Store thread memory if in a thread."""
+    if thread_id:
+        try:
+            store_thread_exchange(
+                thread_id=thread_id,
+                user_id=str(message.author.id),
+                user_name=str(message.author),
+                user_message=query,
+                bot_response=response,
+                guild_id=str(message.guild.id) if message.guild else None,
+                channel_id=(
+                    str(message.channel.parent.id)
+                    if hasattr(message.channel, "parent")
+                    and message.channel.parent
+                    else None
+                ),
+                is_chart_analysis=force_charts or bool(chart_data),
+            )
+            logger.debug(f"Stored thread exchange for thread {thread_id}")
+        except Exception as e:
+            logger.warning(f"Failed to store thread exchange: {e}")
+
+
+async def _send_bot_response(thread_sender, response, chart_data, processing_msg):
+    """Send bot response with charts if available."""
+    try:
+        parts = await split_long_message(response)
+
+        if chart_data and parts:
+            await thread_sender.send_with_charts(parts[0], chart_data)
+            if len(parts) > 1:
+                await thread_sender.send_in_parts(parts[1:])
+        else:
+            await thread_sender.send_in_parts(parts)
+
+        if processing_msg:
+            try:
+                await processing_msg.delete()
+            except Exception as e:
+                logger.debug(f"Could not delete processing message: {e}")
+
+    except Exception as e:
+        logger.error(f"Error sending bot response: {e}")
+        if processing_msg:
+            try:
+                await processing_msg.edit(
+                    content="Sorry, there was an error processing your request."
+                )
+            except Exception as edit_e:
+                logger.debug(f"Could not edit processing message: {edit_e}")
+
+
+async def handle_bot_command(
+    message: discord.Message,
+    client_user: discord.ClientUser,
+    bot_client: discord.Client = None,
+) -> None:
+    """Handles the mention command with thread-based replies."""
+    # Validate input and check rate limits
+    query = await _validate_bot_command_input(message, client_user)
+    if not query:
         return
 
     logger.info(f"Executing mention command - Requested by {message.author}")
 
-    is_limited, wait_time, reason = check_rate_limit(str(message.author.id))
-    if is_limited:
-        import config
-
-        if reason == "cooldown":
-            error_msg = config.ERROR_MESSAGES["rate_limit_cooldown"].format(
-                wait_time=wait_time
-            )
-        else:
-            error_msg = config.ERROR_MESSAGES["rate_limit_exceeded"].format(
-                wait_time=wait_time
-            )
-        await _send_error_response_thread(message, client_user, error_msg)
-        logger.info(
-            f"Rate limited user {message.author} ({reason}): wait time {wait_time:.1f}s"
-        )
+    if not await _check_bot_command_rate_limit(message, client_user):
         return
 
     # Create thread from the user's message for the bot response
@@ -72,118 +171,23 @@ async def handle_bot_command(
                 # Check if this is a chart analysis request
                 force_charts = _should_force_charts(query)
 
-                # Check if we're in a thread and get thread memory
-                thread_context = ""
-                thread_id = None
-                if (
-                    hasattr(message.channel, "parent")
-                    and message.channel.parent is not None
-                ):
-                    # We're in a thread
-                    thread_id = str(message.channel.id)
-                    if has_thread_memory(thread_id):
-                        thread_context = get_thread_context(thread_id, max_exchanges=4)
-                        logger.debug(f"Retrieved thread context for thread {thread_id}")
+                # Get all context information
+                thread_context, thread_id, message_context = await _get_bot_command_context(message, bot_client)
 
-                # Get message context (referenced messages and linked messages)
-                message_context = None
-                if bot_client and (
-                    message.reference or "discord.com/channels/" in message.content
-                ):
-                    try:
-                        message_context = await get_message_context(message, bot_client)
-                        logger.debug(
-                            f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to get message context: {e}")
+                # Combine contexts
+                message_context = await _combine_contexts(thread_context, message_context)
 
-                # Add thread context to message context if available
-                if thread_context and message_context:
-                    # Combine thread context with message context
-                    if "thread_context" not in message_context:
-                        message_context["thread_context"] = thread_context
-                elif thread_context:
-                    # Create message context with just thread context
-                    message_context = {"thread_context": thread_context}
-
-                response, chart_data = await call_llm_api(
-                    query, message_context, force_charts
-                )
+                # Get LLM response
+                response, chart_data = await call_llm_api(query, message_context, force_charts)
                 logger.debug(f"Raw response length: {len(response)} characters")
-                logger.debug(
-                    f"Response ends with: ...{response[-100:] if len(response) > 100 else response}"
-                )
 
-                # Store thread memory if we're in a thread
-                if thread_id:
-                    try:
-                        store_thread_exchange(
-                            thread_id=thread_id,
-                            user_id=str(message.author.id),
-                            user_name=str(message.author),
-                            user_message=query,
-                            bot_response=response,
-                            guild_id=str(message.guild.id) if message.guild else None,
-                            channel_id=(
-                                str(message.channel.parent.id)
-                                if hasattr(message.channel, "parent")
-                                and message.channel.parent
-                                else None
-                            ),
-                            is_chart_analysis=force_charts or bool(chart_data),
-                        )
-                        logger.debug(f"Stored thread exchange for thread {thread_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to store thread exchange: {e}")
+                # Store thread memory
+                await _store_thread_memory(message, thread_id, query, response, force_charts, chart_data)
 
-                # Check if we have charts to send
-                if chart_data:
-                    logger.info(f"Sending response with {len(chart_data)} chart(s)")
-                    # Send response with charts - no need to split since charts are separate
-                    bot_response = await thread_sender.send_with_charts(
-                        response, chart_data
-                    )
-                    if bot_response:
-                        await store_bot_response_db(
-                            bot_response, client_user, message.guild, thread, response
-                        )
+                # Send response
+                await _send_bot_response(thread_sender, response, chart_data, processing_msg)
 
-                    # Delete processing message
-                    if processing_msg:
-                        await processing_msg.delete()
-
-                    logger.info(
-                        f"Command executed successfully: mention - Response length: {len(response)} - With {len(chart_data)} chart(s) - Posted in thread"
-                    )
-                else:
-                    # Split if response is over 1800 chars to ensure it doesn't get cut off
-                    # Leave room for Discord's 2000 char limit
-                    if len(response) > 1800:
-                        logger.info(
-                            f"Splitting response of {len(response)} chars into multiple parts"
-                        )
-                        message_parts = await split_long_message(
-                            response, max_length=1800
-                        )
-                    else:
-                        message_parts = [response]
-
-                    # Send all response parts in the thread
-                    for part in message_parts:
-                        bot_response = await thread_sender.send(part)
-                        if bot_response:
-                            await store_bot_response_db(
-                                bot_response, client_user, message.guild, thread, part
-                            )
-
-                    # Delete processing message
-                    if processing_msg:
-                        await processing_msg.delete()
-
-                    logger.info(
-                        f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts - Posted in thread"
-                    )
+                logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Posted in thread")
             except Exception as e:
                 logger.error(
                     f"Error processing mention command: {str(e)}", exc_info=True
