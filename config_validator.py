@@ -23,14 +23,31 @@ def validate_config(config_module):
         # This is a warning, not a critical error, as token length can vary.
         logger.warning("Discord token in config.py appears to be invalid (too short or not a string).")
 
-    # Check Perplexity API key
-    if not hasattr(config_module, 'perplexity') or not config_module.perplexity:
-        logger.error("Perplexity API key not found in config.py or is empty")
-        raise ValueError("Perplexity API key is missing or empty in config.py")
+    # Check LLM API key (generic, works with any OpenAI-compatible provider)
+    if not hasattr(config_module, 'llm_api_key') or not config_module.llm_api_key:
+        logger.error("LLM API key not found in config.py or is empty")
+        raise ValueError("LLM API key is missing or empty in config.py")
 
-    if not isinstance(config_module.perplexity, str) or len(config_module.perplexity) < 20:
-        # This is a warning.
-        logger.warning("Perplexity API key in config.py appears to be invalid (too short or not a string).")
+    if not isinstance(config_module.llm_api_key, str) or len(config_module.llm_api_key) < 10:
+        logger.warning("LLM API key in config.py appears to be invalid (too short or not a string).")
+
+    # Check LLM Base URL (required for provider endpoint)
+    if not hasattr(config_module, 'llm_base_url') or not config_module.llm_base_url:
+        logger.error("LLM Base URL not found in config.py or is empty")
+        raise ValueError("LLM Base URL is missing or empty in config.py")
+
+    if not isinstance(config_module.llm_base_url, str) or not config_module.llm_base_url.startswith('http'):
+        logger.warning("LLM Base URL in config.py appears to be invalid (should be a valid HTTP/HTTPS URL).")
+
+    # Check LLM Model (required)
+    if not hasattr(config_module, 'llm_model') or not config_module.llm_model:
+        logger.error("LLM Model not found in config.py or is empty")
+        raise ValueError("LLM Model is missing or empty in config.py")
+
+    if not isinstance(config_module.llm_model, str) or len(config_module.llm_model.strip()) == 0:
+        logger.warning("LLM Model in config.py appears to be invalid (empty or not a string).")
+    else:
+        logger.info(f"Using LLM model: {config_module.llm_model} at {config_module.llm_base_url}")
         
     # Check Firecrawl API key
     if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
@@ -75,15 +92,6 @@ def validate_config(config_module):
         new_max_requests_per_minute = 6
 
     update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute)
-    
-    # Check for optional LLM model
-    if hasattr(config_module, 'llm_model') and config_module.llm_model:
-        if isinstance(config_module.llm_model, str) and len(config_module.llm_model.strip()) > 0:
-            logger.info(f"Using custom LLM model from config: {config_module.llm_model}")
-        else:
-            logger.warning(f"llm_model in config.py is present but invalid. Using default model.")
-    else:
-        logger.info("No custom llm_model in config.py. Using default model.")
 
     # Check for optional reports channel ID
     if hasattr(config_module, 'reports_channel_id') and config_module.reports_channel_id:
