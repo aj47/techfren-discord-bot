@@ -610,7 +610,8 @@ def get_channel_messages_for_hours(
             # Query messages for the channel within the time range
             # Use datetime comparison that works with SQLite's text storage
             # Handle both timezone-aware and naive datetime strings in the database
-            cursor.execute(  # noqa: E501
+            # noqa: E501
+            cursor.execute(
                 """
                 SELECT id, author_name, content, created_at, is_bot, is_command,
                        scraped_url, scraped_content_summary, scraped_content_key_points,
