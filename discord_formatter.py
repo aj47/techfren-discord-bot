@@ -6,8 +6,9 @@ including bold, italics, code blocks, quotes, embeds, and more.
 """
 
 import re
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import logging
+from chart_renderer import extract_tables_for_rendering
 
 logger = logging.getLogger(__name__)
 
@@ -15,20 +16,33 @@ class DiscordFormatter:
     """Enhanced Discord message formatter with rich markdown support."""
     
     @staticmethod
-    def format_llm_response(content: str, citations: Optional[List[str]] = None) -> str:
+    def format_llm_response(content: str, citations: Optional[List[str]] = None) -> Tuple[str, List[Dict]]:
         """
-        Format an LLM response with enhanced Discord markdown.
+        Format an LLM response with enhanced Discord markdown and extract charts.
 
         Args:
             content: The raw LLM response content
             citations: Optional list of citation URLs
 
         Returns:
-            Formatted string with Discord markdown
+            Tuple of (formatted_string, chart_data_list)
+            - formatted_string: Content with Discord markdown
+            - chart_data_list: List of chart data dicts with 'url', 'type', 'placeholder' keys
         """
         formatted = content
+        chart_data_list = []
 
-        # Convert markdown tables to ASCII tables before other formatting
+        # Extract tables for chart rendering BEFORE converting to ASCII
+        # This allows us to render nice chart images instead of messy ASCII tables
+        try:
+            formatted, chart_data_list = extract_tables_for_rendering(formatted)
+            if chart_data_list:
+                logger.info(f"Extracted {len(chart_data_list)} chart(s) from response")
+        except Exception as e:
+            logger.error(f"Error extracting charts: {e}", exc_info=True)
+            # Continue with normal processing if chart extraction fails
+
+        # Convert any remaining markdown tables to ASCII tables
         formatted = DiscordFormatter._convert_markdown_tables_to_ascii(formatted)
 
         # Replace Perplexity-style citations [1], [2] with clickable links if citations provided
@@ -70,33 +84,33 @@ class DiscordFormatter:
             else:
                 formatted = re.sub(pattern, replacement, formatted)
 
-        return formatted
+        return formatted, chart_data_list
     
     @staticmethod
-    def format_summary_response(summary: str, channel_name: str, hours: int) -> str:
+    def format_summary_response(summary: str, channel_name: str, hours: int) -> Tuple[str, List[Dict]]:
         """
         Format a channel summary response with enhanced styling.
-        
+
         Args:
             summary: The raw summary text
             channel_name: Name of the channel
             hours: Number of hours summarized
-            
+
         Returns:
-            Formatted summary with Discord markdown
+            Tuple of (formatted_summary, chart_data_list)
         """
         time_period = f"{hours} hour{'s' if hours != 1 else ''}"
-        
+
         # Add a styled header
         header = f"📊 **Summary of #{channel_name}** *(past {time_period})*\n{'━' * 30}\n\n"
-        
+
         # Process the summary content
-        formatted_summary = DiscordFormatter.format_llm_response(summary)
-        
+        formatted_summary, chart_data_list = DiscordFormatter.format_llm_response(summary)
+
         # Enhance specific patterns in summaries
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
-        
-        return header + formatted_summary
+
+        return header + formatted_summary, chart_data_list
     
     @staticmethod
     def _enhance_summary_sections(content: str) -> str:

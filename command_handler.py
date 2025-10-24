@@ -57,23 +57,31 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     except Exception as e:
                         logger.warning(f"Failed to get message context: {e}")
 
-                response = await call_llm_api(query, message_context)
+                response, chart_data = await call_llm_api(query, message_context)
                 logger.debug(f"Raw response length: {len(response)} characters")
                 logger.debug(f"Response ends with: ...{response[-100:] if len(response) > 100 else response}")
-                
-                # Force split if response is over 900 chars to ensure it doesn't get cut off
-                # Discord has issues with messages near the 2000 char limit
-                if len(response) > 900:
-                    logger.info(f"Splitting response of {len(response)} chars into multiple parts")
-                    message_parts = await split_long_message(response, max_length=900)
-                else:
-                    message_parts = [response]
 
-                # Send all response parts in the thread
-                for part in message_parts:
-                    bot_response = await thread_sender.send(part)
+                # Check if we have charts to send
+                if chart_data:
+                    logger.info(f"Sending response with {len(chart_data)} chart(s)")
+                    # Send response with charts - no need to split since charts are separate
+                    bot_response = await thread_sender.send_with_charts(response, chart_data)
                     if bot_response:
-                        await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
+                        await store_bot_response_db(bot_response, client_user, message.guild, thread, response)
+                else:
+                    # Force split if response is over 900 chars to ensure it doesn't get cut off
+                    # Discord has issues with messages near the 2000 char limit
+                    if len(response) > 900:
+                        logger.info(f"Splitting response of {len(response)} chars into multiple parts")
+                        message_parts = await split_long_message(response, max_length=900)
+                    else:
+                        message_parts = [response]
+
+                    # Send all response parts in the thread
+                    for part in message_parts:
+                        bot_response = await thread_sender.send(part)
+                        if bot_response:
+                            await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
 
                 # Delete processing message
                 if processing_msg:
@@ -142,20 +150,33 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
             except Exception as e:
                 logger.warning(f"Failed to get message context in fallback: {e}")
 
-        response = await call_llm_api(query, message_context)
-        # Always split if response is over 1900 chars to ensure it doesn't get cut off
-        if len(response) > 1900:
-            message_parts = await split_long_message(response, max_length=1900)
+        response, chart_data = await call_llm_api(query, message_context)
+
+        # Check if we have charts to send
+        if chart_data:
+            logger.info(f"Sending fallback response with {len(chart_data)} chart(s)")
+            # Use MessageResponseSender for chart support
+            from command_abstraction import MessageResponseSender
+            channel_sender = MessageResponseSender(message.channel)
+            bot_response = await channel_sender.send_with_charts(response, chart_data)
+            if bot_response:
+                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, response)
+            await processing_msg.delete()
+            logger.info(f"Command executed successfully (fallback): mention - Response length: {len(response)} - With {len(chart_data)} chart(s)")
         else:
-            message_parts = [response]
+            # Always split if response is over 1900 chars to ensure it doesn't get cut off
+            if len(response) > 1900:
+                message_parts = await split_long_message(response, max_length=1900)
+            else:
+                message_parts = [response]
 
-        for part in message_parts:
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
-            await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
+            for part in message_parts:
+                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+                bot_response = await message.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
+                await store_bot_response_db(bot_response, client_user, message.guild, message.channel, part)
 
-        await processing_msg.delete()
-        logger.info(f"Command executed successfully (fallback): mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
+            await processing_msg.delete()
+            logger.info(f"Command executed successfully (fallback): mention - Response length: {len(response)} - Split into {len(message_parts)} parts")
     except Exception as e:
         logger.error(f"Error processing mention command (fallback): {str(e)}", exc_info=True)
         import config

@@ -241,19 +241,23 @@ async def call_llm_api(query, message_context=None):
             logger.info(f"Found {len(completion.citations)} citations from Perplexity")
             citations = completion.citations
 
-        # Apply Discord formatting enhancements
+        # Apply Discord formatting enhancements and extract charts
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
-        formatted_message = DiscordFormatter.format_llm_response(message, citations)
-        
+        # and extract any markdown tables for chart rendering
+        formatted_message, chart_data = DiscordFormatter.format_llm_response(message, citations)
+
         logger.info(f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
-        return formatted_message
+        if chart_data:
+            logger.info(f"Extracted {len(chart_data)} chart(s) from LLM response")
+
+        return formatted_message, chart_data
 
     except asyncio.TimeoutError:
         logger.error("LLM API request timed out")
-        return "Sorry, the request timed out. Please try again later."
+        return "Sorry, the request timed out. Please try again later.", []
     except Exception as e:
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while processing your request. Please try again later."
+        return "Sorry, I encountered an error while processing your request. Please try again later.", []
 
 async def call_llm_for_summary(messages, channel_name, date, hours=24):
     """
@@ -403,23 +407,26 @@ At the end, include a section with the top 3 most interesting or notable one-lin
             logger.info(f"Found {len(completion.citations)} citations from Perplexity for summary")
             citations = completion.citations
 
-        # Apply Discord formatting enhancements to the summary
+        # Apply Discord formatting enhancements to the summary and extract charts
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
-        formatted_summary = DiscordFormatter.format_llm_response(summary, citations)
-        
+        # and extract any markdown tables for chart rendering
+        formatted_summary, chart_data = DiscordFormatter.format_llm_response(summary, citations)
+
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
-        
+
         logger.info(f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
-        
-        return formatted_summary
+        if chart_data:
+            logger.info(f"Extracted {len(chart_data)} chart(s) from summary")
+
+        return formatted_summary, chart_data
 
     except asyncio.TimeoutError:
         logger.error("LLM API request timed out during summary generation")
-        return "Sorry, the summary request timed out. Please try again later."
+        return "Sorry, the summary request timed out. Please try again later.", []
     except Exception as e:
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while generating the summary. Please try again later."
+        return "Sorry, I encountered an error while generating the summary. Please try again later.", []
 
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[Dict[str, Any]]:
     """

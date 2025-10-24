@@ -6,9 +6,11 @@ and interaction-based commands without relying on mocking Discord objects.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Union, Protocol
+from typing import Optional, Union, Protocol, List, Dict
 import discord
 import logging
+import aiohttp
+import io
 
 
 @dataclass
@@ -35,12 +37,17 @@ class ResponseSender(Protocol):
         """Send multiple message parts."""
         ...
 
+    async def send_with_charts(self, content: str, chart_data: List[Dict], ephemeral: bool = False) -> Optional[discord.Message]:
+        """Send a message with chart attachments."""
+        ...
+
 
 class MessageResponseSender:
     """Response sender for regular Discord messages."""
 
     def __init__(self, channel: discord.TextChannel):
         self.channel = channel
+        self.logger = logging.getLogger(__name__)
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
         # `ephemeral` has no meaning for regular messages; we silently ignore it.
@@ -53,12 +60,71 @@ class MessageResponseSender:
         for part in parts:
             await self.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
 
+    async def send_with_charts(self, content: str, chart_data: List[Dict], ephemeral: bool = False) -> Optional[discord.Message]:
+        """Send a message with chart image attachments."""
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+
+        try:
+            # Download chart images and create Discord file objects
+            files = await self._download_chart_files(chart_data)
+
+            if files:
+                # Send content with file attachments
+                return await self.channel.send(content, files=files, allowed_mentions=allowed_mentions, suppress_embeds=True)
+            else:
+                # Fallback to regular send if no files downloaded successfully
+                self.logger.warning("No chart files downloaded, sending message without attachments")
+                return await self.send(content, ephemeral)
+
+        except Exception as e:
+            self.logger.error(f"Error sending message with charts: {e}", exc_info=True)
+            # Fallback to regular send without charts
+            return await self.send(content, ephemeral)
+
+    async def _download_chart_files(self, chart_data: List[Dict]) -> List[discord.File]:
+        """Download chart images from URLs and create Discord File objects."""
+        files = []
+
+        async with aiohttp.ClientSession() as session:
+            for idx, chart in enumerate(chart_data):
+                try:
+                    chart_url = chart.get('url')
+                    chart_type = chart.get('type', 'chart')
+
+                    if not chart_url:
+                        self.logger.warning(f"Chart {idx + 1} has no URL, skipping")
+                        continue
+
+                    # Download the image
+                    async with session.get(chart_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        if response.status == 200:
+                            image_data = await response.read()
+
+                            # Create a file object from the image data
+                            image_file = io.BytesIO(image_data)
+                            filename = f"{chart_type}_{idx + 1}.png"
+
+                            # Create Discord file object
+                            discord_file = discord.File(image_file, filename=filename)
+                            files.append(discord_file)
+
+                            self.logger.info(f"Downloaded chart {idx + 1}: {chart_type}")
+                        else:
+                            self.logger.warning(f"Failed to download chart {idx + 1}: HTTP {response.status}")
+
+                except Exception as e:
+                    self.logger.error(f"Error downloading chart {idx + 1}: {e}", exc_info=True)
+                    continue
+
+        return files
+
 
 class InteractionResponseSender:
     """Response sender for Discord slash command interactions."""
 
     def __init__(self, interaction: discord.Interaction):
         self.interaction = interaction
+        self.logger = logging.getLogger(__name__)
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
@@ -69,6 +135,72 @@ class InteractionResponseSender:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
         for part in parts:
             await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+    async def send_with_charts(self, content: str, chart_data: List[Dict], ephemeral: bool = False) -> Optional[discord.Message]:
+        """Send a message with chart image attachments."""
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+
+        try:
+            # Download chart images and create Discord file objects
+            files = await self._download_chart_files(chart_data)
+
+            if files:
+                # Send content with file attachments
+                message = await self.interaction.followup.send(
+                    content,
+                    files=files,
+                    ephemeral=ephemeral,
+                    allowed_mentions=allowed_mentions,
+                    suppress_embeds=True,
+                    wait=True
+                )
+                return message if not ephemeral else None
+            else:
+                # Fallback to regular send if no files downloaded successfully
+                self.logger.warning("No chart files downloaded, sending message without attachments")
+                return await self.send(content, ephemeral)
+
+        except Exception as e:
+            self.logger.error(f"Error sending interaction response with charts: {e}", exc_info=True)
+            # Fallback to regular send without charts
+            return await self.send(content, ephemeral)
+
+    async def _download_chart_files(self, chart_data: List[Dict]) -> List[discord.File]:
+        """Download chart images from URLs and create Discord File objects."""
+        files = []
+
+        async with aiohttp.ClientSession() as session:
+            for idx, chart in enumerate(chart_data):
+                try:
+                    chart_url = chart.get('url')
+                    chart_type = chart.get('type', 'chart')
+
+                    if not chart_url:
+                        self.logger.warning(f"Chart {idx + 1} has no URL, skipping")
+                        continue
+
+                    # Download the image
+                    async with session.get(chart_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        if response.status == 200:
+                            image_data = await response.read()
+
+                            # Create a file object from the image data
+                            image_file = io.BytesIO(image_data)
+                            filename = f"{chart_type}_{idx + 1}.png"
+
+                            # Create Discord file object
+                            discord_file = discord.File(image_file, filename=filename)
+                            files.append(discord_file)
+
+                            self.logger.info(f"Downloaded chart {idx + 1}: {chart_type}")
+                        else:
+                            self.logger.warning(f"Failed to download chart {idx + 1}: HTTP {response.status}")
+
+                except Exception as e:
+                    self.logger.error(f"Error downloading chart {idx + 1}: {e}", exc_info=True)
+                    continue
+
+        return files
 
 
 class ThreadManager:
@@ -338,7 +470,7 @@ async def handle_summary_command(
             return
 
         # Generate summary
-        summary = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
+        summary, chart_data = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
         summary_parts = await split_long_message(summary)
 
         # Send summary efficiently with thread creation
@@ -354,7 +486,15 @@ async def handle_summary_command(
                     if thread:
                         # Send all summary content in the thread
                         thread_sender = MessageResponseSender(thread)
-                        await thread_sender.send_in_parts(summary_parts)
+
+                        # If we have charts, send them with the first part
+                        if chart_data and summary_parts:
+                            await thread_sender.send_with_charts(summary_parts[0], chart_data)
+                            # Send remaining parts without charts
+                            if len(summary_parts) > 1:
+                                await thread_sender.send_in_parts(summary_parts[1:])
+                        else:
+                            await thread_sender.send_in_parts(summary_parts)
 
                         # Edit the initial message to just indicate the summary is in the thread
                         await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
@@ -362,7 +502,14 @@ async def handle_summary_command(
                         # Fallback: if thread creation failed, send summary in main channel
                         logger.warning("Thread creation failed, sending summary in main channel")
                         await initial_message.edit(content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**")
-                        await response_sender.send_in_parts(summary_parts)
+
+                        # Send with charts if available
+                        if chart_data and summary_parts:
+                            await response_sender.send_with_charts(summary_parts[0], chart_data)
+                            if len(summary_parts) > 1:
+                                await response_sender.send_in_parts(summary_parts[1:])
+                        else:
+                            await response_sender.send_in_parts(summary_parts)
 
                 except discord.HTTPException as e:
                     logger.warning(f"Failed to edit initial message: {e}")
@@ -370,24 +517,55 @@ async def handle_summary_command(
                     thread = await thread_manager.create_thread(thread_name)
                     if thread:
                         thread_sender = MessageResponseSender(thread)
-                        await thread_sender.send_in_parts(summary_parts)
+
+                        # Send with charts if available
+                        if chart_data and summary_parts:
+                            await thread_sender.send_with_charts(summary_parts[0], chart_data)
+                            if len(summary_parts) > 1:
+                                await thread_sender.send_in_parts(summary_parts[1:])
+                        else:
+                            await thread_sender.send_in_parts(summary_parts)
+
                         await response_sender.send(f"Summary posted in thread: {thread.mention}")
                     else:
                         # Ultimate fallback: send summary parts directly
-                        await response_sender.send_in_parts(summary_parts)
+                        if chart_data and summary_parts:
+                            await response_sender.send_with_charts(summary_parts[0], chart_data)
+                            if len(summary_parts) > 1:
+                                await response_sender.send_in_parts(summary_parts[1:])
+                        else:
+                            await response_sender.send_in_parts(summary_parts)
             else:
                 # No initial message, create thread and send summary
                 thread = await thread_manager.create_thread(thread_name)
                 if thread:
                     thread_sender = MessageResponseSender(thread)
-                    await thread_sender.send_in_parts(summary_parts)
+
+                    # Send with charts if available
+                    if chart_data and summary_parts:
+                        await thread_sender.send_with_charts(summary_parts[0], chart_data)
+                        if len(summary_parts) > 1:
+                            await thread_sender.send_in_parts(summary_parts[1:])
+                    else:
+                        await thread_sender.send_in_parts(summary_parts)
+
                     await response_sender.send(f"📊 Summary generated - see thread: {thread.mention}")
                 else:
                     # Fallback: send summary parts directly
-                    await response_sender.send_in_parts(summary_parts)
+                    if chart_data and summary_parts:
+                        await response_sender.send_with_charts(summary_parts[0], chart_data)
+                        if len(summary_parts) > 1:
+                            await response_sender.send_in_parts(summary_parts[1:])
+                    else:
+                        await response_sender.send_in_parts(summary_parts)
         else:
             # For DMs: send summary parts directly
-            await response_sender.send_in_parts(summary_parts)
+            if chart_data and summary_parts:
+                await response_sender.send_with_charts(summary_parts[0], chart_data)
+                if len(summary_parts) > 1:
+                    await response_sender.send_in_parts(summary_parts[1:])
+            else:
+                await response_sender.send_in_parts(summary_parts)
 
             # Store bot responses in database for DMs
             if context.source_type == 'message' and not context.guild_id:
