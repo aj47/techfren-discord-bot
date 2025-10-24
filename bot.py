@@ -16,7 +16,8 @@ from message_utils import split_long_message # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command, handle_chart_day_command, handle_chart_hr_command # Import command handlers
+from thread_memory import process_thread_memory_command
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 
@@ -368,6 +369,15 @@ async def on_message(message):
         elif message.content.startswith('/sum-hr'):
             is_command = True
             command_type = "/sum-hr"
+        elif message.content.startswith('/chart-day'):
+            is_command = True
+            command_type = "/chart-day"
+        elif message.content.startswith('/chart-hr'):
+            is_command = True
+            command_type = "/chart-hr"
+        elif message.content.startswith('/thread-memory'):
+            is_command = True
+            command_type = "/thread-memory"
 
         # Store in database
         guild_id = str(message.guild.id) if message.guild else None
@@ -408,6 +418,9 @@ async def on_message(message):
     is_mention_command = bot_mention in message.content or bot_mention_alt in message.content
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
+    is_chart_day_command = message.content.startswith('/chart-day')
+    is_chart_hr_command = message.content.startswith('/chart-hr')
+    is_thread_memory_command = message.content.startswith('/thread-memory')
 
     # Process mention commands in any channel
     if is_mention_command:
@@ -416,7 +429,7 @@ async def on_message(message):
         return
 
     # If not a command we recognize, ignore
-    if not (is_sum_day_command or is_sum_hr_command):
+    if not (is_sum_day_command or is_sum_hr_command or is_chart_day_command or is_chart_hr_command or is_thread_memory_command):
         return
 
     # Process commands
@@ -425,6 +438,18 @@ async def on_message(message):
             await handle_sum_day_command(message, bot.user)
         elif is_sum_hr_command:
             await handle_sum_hr_command(message, bot.user)
+        elif is_chart_day_command:
+            await handle_chart_day_command(message, bot.user)
+        elif is_chart_hr_command:
+            await handle_chart_hr_command(message, bot.user)
+        elif is_thread_memory_command:
+            try:
+                command_parts = message.content.split()
+                response = await process_thread_memory_command(message, command_parts)
+                await message.channel.send(response)
+            except Exception as e:
+                logger.error(f"Error processing thread memory command: {e}")
+                await message.channel.send("Sorry, an error occurred while processing the thread memory command.")
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
@@ -435,7 +460,8 @@ async def _handle_slash_command_wrapper(
     interaction: discord.Interaction,
     command_name: str,
     hours: int = 24,
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    force_charts: bool = False
 ) -> None:
     """Unified wrapper for slash command handling with error management."""
     # Note: Interaction should already be deferred by the slash command handler
@@ -454,8 +480,8 @@ async def _handle_slash_command_wrapper(
     if error_message is None:
         error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
 
-    # Validate hours parameter for sum-hr command
-    if command_name == "sum-hr":
+    # Validate hours parameter for sum-hr and chart-hr commands
+    if command_name in ["sum-hr", "chart-hr"]:
         import config
         if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
             try:
@@ -470,6 +496,10 @@ async def _handle_slash_command_wrapper(
         if hours > config.LARGE_SUMMARY_THRESHOLD:
             error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
 
+    # Similar validation for chart-day command
+    if command_name == "chart-day":
+        hours = 24  # Ensure hours is set for chart-day
+
     try:
         from command_abstraction import (
             create_context_from_interaction,
@@ -482,7 +512,7 @@ async def _handle_slash_command_wrapper(
         response_sender = create_response_sender(interaction)
         thread_manager = create_thread_manager(interaction)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user)
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user, force_charts=force_charts)
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
@@ -526,6 +556,34 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         logger.error(f"Failed to defer sum-hr interaction: {e}")
         return
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+
+@bot.tree.command(name="chart-day", description="Generate data analysis with charts for today's messages")
+async def chart_day_slash(interaction: discord.Interaction):
+    """Slash command version of /chart-day for data visualization"""
+    # Defer IMMEDIATELY to avoid 3-second timeout
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound as e:
+        logger.error(f"chart-day interaction not found during defer: {e}")
+        return
+    except Exception as e:
+        logger.error(f"Failed to defer chart-day interaction: {e}")
+        return
+    await _handle_slash_command_wrapper(interaction, "chart-day", hours=24, force_charts=True)
+
+@bot.tree.command(name="chart-hr", description="Generate data analysis with charts for the past N hours")
+async def chart_hr_slash(interaction: discord.Interaction, hours: int):
+    """Slash command version of /chart-hr for data visualization"""
+    # Defer IMMEDIATELY to avoid 3-second timeout
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound as e:
+        logger.error(f"chart-hr interaction not found during defer: {e}")
+        return
+    except Exception as e:
+        logger.error(f"Failed to defer chart-hr interaction: {e}")
+        return
+    await _handle_slash_command_wrapper(interaction, "chart-hr", hours=hours, force_charts=True)
 
 try:
     logger.info("Starting bot...")

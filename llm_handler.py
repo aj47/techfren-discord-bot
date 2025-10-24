@@ -12,10 +12,10 @@ from discord_formatter import DiscordFormatter
 def extract_urls_from_text(text: str) -> list[str]:
     """
     Extract URLs from text using regex.
-    
+
     Args:
         text (str): Text to search for URLs
-        
+
     Returns:
         list[str]: List of URLs found in the text
     """
@@ -25,10 +25,10 @@ def extract_urls_from_text(text: str) -> list[str]:
 async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
     """
     Scrape a URL on-demand and return summarized content.
-    
+
     Args:
         url (str): The URL to scrape
-        
+
     Returns:
         Optional[Dict[str, Any]]: Dictionary containing summary and key_points, or None if failed
     """
@@ -38,7 +38,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         from firecrawl_handler import scrape_url_content
         from apify_handler import is_twitter_url, scrape_twitter_content
         import config
-        
+
         # Check if the URL is from YouTube
         if await is_youtube_url(url):
             logger.info(f"Scraping YouTube URL on-demand: {url}")
@@ -47,7 +47,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
                 logger.warning(f"Failed to scrape YouTube content: {url}")
                 return None
             markdown_content = scraped_result.get('markdown', '')
-            
+
         # Check if the URL is from Twitter/X.com
         elif await is_twitter_url(url):
             logger.info(f"Scraping Twitter/X.com URL on-demand: {url}")
@@ -62,39 +62,40 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
             else:
                 scraped_result = await scrape_url_content(url)
                 markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-                
+
         else:
             # For other URLs, use Firecrawl
             logger.info(f"Scraping URL with Firecrawl on-demand: {url}")
             scraped_result = await scrape_url_content(url)
             markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-        
+
         if not markdown_content:
             logger.warning(f"No content scraped for URL: {url}")
             return None
-            
+
         # Summarize the scraped content
         summarized_data = await summarize_scraped_content(markdown_content, url)
         if not summarized_data:
             logger.warning(f"Failed to summarize scraped content for URL: {url}")
             return None
-            
+
         return {
             'summary': summarized_data.get('summary', ''),
             'key_points': summarized_data.get('key_points', [])
         }
-        
+
     except Exception as e:
         logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
         return None
 
-async def call_llm_api(query, message_context=None):
+async def call_llm_api(query, message_context=None, force_charts=False):
     """
     Call the LLM API with the user's query and return the response
 
     Args:
         query (str): The user's query text
         message_context (dict, optional): Context containing referenced and linked messages
+        force_charts (bool): If True, use chart-focused analysis system
 
     Returns:
         str: The LLM's response or an error message
@@ -113,14 +114,20 @@ async def call_llm_api(query, message_context=None):
             api_key=config.llm_api_key,
             timeout=60.0
         )
-        
+
         # Get the model from config
         model = config.llm_model
-        
+
         # Prepare the user content with message context if available
         user_content = query
         if message_context:
             context_parts = []
+
+            # Add thread context if available (from thread memory)
+            if message_context.get('thread_context'):
+                thread_context = message_context['thread_context']
+                context_parts.append(f"**Thread Conversation History:**\n{thread_context}")
+                logger.debug("Added thread memory context to LLM prompt")
 
             # Add referenced message (reply) context
             if message_context.get('referenced_message'):
@@ -151,19 +158,19 @@ async def call_llm_api(query, message_context=None):
 
         # Check for URLs in the query and message context, add scraped content if available
         urls_in_query = extract_urls_from_text(query)
-        
+
         # Also check for URLs in message context (referenced messages, linked messages)
         context_urls = []
         if message_context:
             if message_context.get('referenced_message'):
                 ref_content = getattr(message_context['referenced_message'], 'content', '')
                 context_urls.extend(extract_urls_from_text(ref_content))
-            
+
             if message_context.get('linked_messages'):
                 for linked_msg in message_context['linked_messages']:
                     linked_content = getattr(linked_msg, 'content', '')
                     context_urls.extend(extract_urls_from_text(linked_content))
-        
+
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
         if all_urls:
@@ -193,7 +200,7 @@ async def call_llm_api(query, message_context=None):
                             logger.warning(f"Failed to scrape content for URL: {url}")
                 except Exception as e:
                     logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
-            
+
             if scraped_content_parts:
                 scraped_content_text = "\n\n".join(scraped_content_parts)
                 if message_context:
@@ -203,6 +210,12 @@ async def call_llm_api(query, message_context=None):
                     # If no message context, add scraped content before the query
                     user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
                 logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
+
+        # Choose system prompt based on analysis type
+        if force_charts or _should_use_chart_system(query, user_content):
+            system_prompt = _get_chart_analysis_system_prompt()
+        else:
+            system_prompt = _get_regular_system_prompt()
 
         # Make the API request
         completion = await openai_client.chat.completions.create(
@@ -214,91 +227,7 @@ async def call_llm_api(query, message_context=None):
             messages=[
                 {
                     "role": "system",
-                    "content": """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
-
-═══════════════════════════════════════════════════════════
-TECHFREN BOT CONSTITUTION - MANDATORY RESPONSE LAWS
-═══════════════════════════════════════════════════════════
-
-ARTICLE I - CORE BEHAVIOR
-Be direct and concise. Get straight to the point without introductory or concluding paragraphs. Answer questions directly.
-Users can use /sum-day or /sum-hr <hours> to get summaries. When users reference or link messages, use that context in your response.
-
-ARTICLE II - DATA VISUALIZATION MANDATE (CRITICAL)
-LAW 2.1: ANY response containing numbers, counts, percentages, or quantifiable data MUST include a markdown table.
-LAW 2.2: Tables are REQUIRED (not optional) for: comparisons, rankings, statistics, counts, frequencies, measurements, top lists.
-LAW 2.3: EXACT TABLE FORMAT (CHARACTER-BY-CHARACTER):
-  Line 1 (Header): | Header1 | Header2 |
-  Line 2 (Separator): | --- | --- |
-  Line 3+ (Data): | value1 | value2 |
-
-  CRITICAL FORMAT RULES:
-  ✓ ALWAYS start row with pipe: |
-  ✓ ALWAYS end row with pipe: |
-  ✓ Separator MUST be: | --- | --- | (with spaces around dashes)
-  ✓ Same number of columns in every row
-  ✓ One space after opening | and before closing |
-
-  CORRECT EXAMPLE (COPY EXACTLY):
-  | User | Messages |
-  | --- | --- |
-  | alice | 45 |
-  | bob | 32 |
-
-  WRONG FORMATS (WILL BREAK):
-  ✗ User | Messages (missing leading/trailing pipes)
-  ✗ |User|Messages| (missing spaces)
-  ✗ |-----|-----| (missing spaces in separator)
-  ✗ | User | Messages | (then data without separator row)
-
-LAW 2.4: Keep tables simple: 2-3 columns maximum.
-
-ARTICLE III - AUTOMATIC TABLE TRIGGERS
-You MUST create a table when your response includes:
-✓ "X users/people did Y" → REQUIRED FORMAT:
-  | User | Count |
-  | --- | --- |
-  | alice | 45 |
-
-✓ "top N items/topics" → REQUIRED FORMAT:
-  | Item | Rank |
-  | --- | --- |
-  | Python | 1 |
-
-✓ "activity by time/hour/day" → REQUIRED FORMAT:
-  | Period | Activity |
-  | --- | --- |
-  | 10:00 | High |
-
-✓ "comparison of X vs Y" → REQUIRED FORMAT:
-  | Item | Metric |
-  | --- | --- |
-  | Option A | 85% |
-
-✓ "statistics/metrics/analytics" → REQUIRED FORMAT:
-  | Metric | Value |
-  | --- | --- |
-  | Total | 127 |
-
-CREATION STEPS:
-1. Count columns (e.g., 2 columns: User + Count)
-2. Write header with pipes: | User | Count |
-3. Write separator (same # of columns): | --- | --- |
-4. Write data rows: | alice | 45 |
-
-ARTICLE IV - ENFORCEMENT RULES
-PROHIBITED ACTIONS:
-✗ NEVER describe quantifiable data in prose when table format is possible
-✗ NEVER use bullet lists when data has numbers/values (use tables instead)
-✗ NEVER wrap tables or large responses in code blocks (```)
-✗ NEVER skip tables because "data is simple" - tables = automatic charts
-
-WHY THIS MATTERS: Tables automatically become visual charts/graphs for Discord users.
-This dramatically improves user experience. Compliance is MANDATORY.
-
-ARTICLE V - CODE BLOCKS
-Code blocks (```) are ONLY for actual code snippets. Never use them for tables, data, or regular text.
-"""
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
@@ -337,7 +266,7 @@ Code blocks (```) are ONLY for actual code snippets. Never use them for tables, 
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while processing your request. Please try again later.", []
 
-async def call_llm_for_summary(messages, channel_name, date, hours=24):
+async def call_llm_for_summary(messages, channel_name, date, hours=24, force_charts=False):
     """
     Call the LLM API to summarize a list of messages from a channel
 
@@ -346,6 +275,7 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
         channel_name (str): Name of the channel
         date (datetime): Date of the messages
         hours (int): Number of hours the summary covers (default: 24)
+        force_charts (bool): If True, use chart-focused analysis
 
     Returns:
         str: The LLM's summary or an error message
@@ -420,67 +350,50 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Truncate input if it's too long to avoid token limits
         # Rough estimate: 1 token ≈ 4 characters, leaving room for prompt and response
-        max_input_length = 60000  # ~15k tokens for input, allowing room for system prompt and output
+        max_input_length = 50000  # Reduced to leave more room for thread context and response
         if len(messages_text) > max_input_length:
             original_length = len('\n'.join(formatted_messages_text))
             messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
             logger.info(f"Truncated conversation input from {original_length} to {len(messages_text)} characters")
 
-        # Create the prompt for the LLM
+        # Create the prompt for the LLM based on analysis type
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
+
+        if force_charts:
+            prompt = f"""Analyze the following conversation data from #{channel_name} for the past {time_period}:
 
 {messages_text}
 
-═══════════════════════════════════════════════════════════
-SUMMARY REQUIREMENTS (MANDATORY)
-═══════════════════════════════════════════════════════════
+CHART ANALYSIS TASK: Provide quantitative insights with data visualization.
 
-STRUCTURE:
-1. Provide concise summary with short bullet points for main topics (no introductory paragraph)
-2. Highlight all user names/aliases with backticks (e.g., `username`)
-3. Preserve Discord message links: [Source](https://discord.com/channels/...)
-4. End with top 3 notable quotes with source links
+REQUIREMENTS:
+1. Create 1-2 data tables showing the most meaningful patterns
+2. Count accurately - verify all numbers
+3. Use descriptive headers with units
+4. Provide brief insights about the patterns
 
-MANDATORY DATA VISUALIZATION:
-You MUST analyze the conversation and create AT LEAST ONE markdown table showing patterns.
-Choose the MOST relevant metric from these options:
+ANALYSIS OPTIONS (choose most relevant):
+- User activity: Username | Message Count
+- Time patterns: Time Range | Messages
+- Topic frequency: Discussion Topic | Mentions
+- Content sharing: Content Type | Count
+- Technology focus: Technology | References
 
-REQUIRED OPTIONS (pick at least one):
+FORMAT: Brief summary + data table(s) + key insights"""
+        else:
+            prompt = f"""Summarize the following conversation from #{channel_name} for the past {time_period}:
 
-OPTION 1 - User participation:
-| User | Messages |
-| --- | --- |
-| alice | 45 |
-| bob | 32 |
+{messages_text}
 
-OPTION 2 - Time distribution:
-| Hour | Activity |
-| --- | --- |
-| 10:00 | 15 |
-| 11:00 | 23 |
+SUMMARY REQUIREMENTS:
+1. Conversational summary of main topics and discussions
+2. Highlight usernames with backticks: `username`
+3. Include notable quotes or insights
+4. Preserve Discord message links: [Source](https://discord.com/channels/...)
+5. Focus on qualitative insights and community interactions
 
-OPTION 3 - Topic frequency:
-| Topic | Mentions |
-| --- | --- |
-| AI | 12 |
-| Coding | 8 |
+Keep it natural and engaging - this is for community members to understand what they missed."""
 
-OPTION 4 - URL sharing:
-| User | Links |
-| --- | --- |
-| alice | 5 |
-| bob | 3 |
-
-COPY THE EXACT FORMAT ABOVE including:
-- Pipes at start and end of every line: | xxx |
-- Separator row: | --- | --- |
-- Spaces around content: | alice | not |alice|
-
-WHY: Tables automatically become visual charts for users. This is REQUIRED, not optional.
-Failure to include a table means users miss critical data visualization.
-"""
-        
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
         # Check if LLM API key exists
@@ -508,7 +421,7 @@ Failure to include a table means users miss critical data visualization.
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. IMPORTANT: For each link or topic mentioned, search the web for relevant context and incorporate that information. When users share GitHub repos, YouTube videos, or documentation, search for and include relevant information about those resources. Create concise summaries with short bullet points that combine the Discord messages with web-sourced context. Highlight all user names with backticks. For each bullet point, include both the Discord message source [Source](link) and cite any web sources you found. End with the top 3 most interesting quotes from the conversation, each with their source link. Always search the web to provide additional context about shared links and topics. If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. Keep tables simple with 2-3 columns max. For complex comparisons, use a list format instead of tables. CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting. Bold, h2, etc is good"
+                    "content": _get_chart_analysis_system_prompt() if force_charts else _get_regular_summary_system_prompt()
                 },
                 {
                     "role": "user",
@@ -549,6 +462,194 @@ Failure to include a table means users miss critical data visualization.
     except Exception as e:
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later.", []
+
+
+def _get_regular_summary_system_prompt() -> str:
+    """Get the regular summary system prompt focused on qualitative analysis."""
+    return """You are a Discord conversation summarizer for the techfren community. Focus on creating engaging, qualitative summaries.
+
+SUMMARY APPROACH:
+- Conversational and community-focused tone
+- Highlight main discussion topics and themes
+- Capture the "feel" of the conversation
+- Include interesting insights and notable moments
+
+THREAD CONTEXT AWARENESS:
+If thread conversation history is provided, acknowledge ongoing discussions and build upon previous summaries when relevant.
+
+STRUCTURE:
+1. Brief overview of main topics discussed
+2. Key highlights and interesting points
+3. Notable quotes or insights with sources
+4. Community interactions and collaborations
+
+FORMATTING:
+- Use natural language, not rigid bullet points
+- Highlight usernames with backticks: `username`
+- Include Discord message links: [Source](https://discord.com/channels/...)
+- Focus on storytelling rather than data analysis
+
+TONE: Friendly, informative, and engaging - like telling a friend what they missed in the conversation.
+
+Note: Only include data tables if the conversation naturally contains specific metrics that users shared or discussed."""
+
+def _should_use_chart_system(query: str, full_content: str) -> bool:
+    """
+    Determine if the query should use the chart analysis system.
+
+    Args:
+        query: User's original query
+        full_content: Full content including context
+
+    Returns:
+        bool: True if chart system should be used
+    """
+    # Keywords that indicate data analysis requests
+    chart_keywords = [
+        'analyze', 'chart', 'graph', 'data', 'statistics', 'metrics',
+        'count', 'frequency', 'distribution', 'comparison', 'trends',
+        'activity', 'usage', 'breakdown', 'top', 'most', 'ranking',
+        'percentage', 'ratio', 'numbers', 'quantify', 'measure'
+    ]
+
+    # Phrases that strongly indicate chart requests
+    chart_phrases = [
+        'show me the data', 'create a chart', 'visualize', 'data analysis',
+        'how much', 'how many', 'what percentage', 'top users', 'most active',
+        'breakdown by', 'activity by time', 'usage statistics'
+    ]
+
+    combined_text = (query + " " + full_content).lower()
+
+    # Check for explicit chart keywords
+    keyword_matches = sum(1 for keyword in chart_keywords if keyword in combined_text)
+
+    # Check for chart phrases
+    phrase_matches = sum(1 for phrase in chart_phrases if phrase in combined_text)
+
+    # Use chart system if multiple indicators or strong phrases
+    return keyword_matches >= 2 or phrase_matches >= 1
+
+
+def _get_chart_analysis_system_prompt() -> str:
+    """Get the chart analysis system prompt focused on data visualization."""
+    return """You are a data analysis assistant for the techfren community Discord server. Your specialty is creating accurate charts and visualizations.
+
+═══════════════════════════════════════════════════════════
+CHART ANALYSIS SYSTEM - DATA VISUALIZATION FOCUS
+═══════════════════════════════════════════════════════════
+
+CORE MISSION: Transform conversation data into accurate, meaningful visualizations.
+
+THREAD MEMORY AWARENESS:
+If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:
+- Reference previous discussions naturally
+- Build upon earlier analyses
+- Avoid repeating information already covered
+- Continue the conversation flow logically
+
+MANDATORY TABLE CREATION:
+You MUST create AT LEAST ONE data table for every analysis request.
+
+TABLE FORMAT RULES (CHARACTER-BY-CHARACTER):
+✓ Line 1 (Header): | Header1 | Header2 |
+✓ Line 2 (Separator): | --- | --- |
+✓ Line 3+ (Data): | value1 | value2 |
+
+CRITICAL FORMAT REQUIREMENTS:
+✓ ALWAYS start/end rows with pipes: | data |
+✓ Separator MUST be: | --- | --- | (spaces around dashes)
+✓ Same number of columns in every row
+✓ One space after opening | and before closing |
+
+DATA ACCURACY LAWS:
+1. COUNT PRECISELY: Actually count occurrences, don't estimate
+2. VERIFY TOTALS: Ensure numbers add up correctly
+3. CONSISTENT UNITS: All values in same column use same units
+4. MEANINGFUL HEADERS: Use descriptive names with units
+
+HEADER REQUIREMENTS:
+✓ "Username | Message Count" NOT "User | Count"
+✓ "Technology | Mentions" NOT "Item | Value"
+✓ "Time Period | Activity" NOT "Time | Data"
+✓ Include units: "Usage (%)", "Messages (Count)", "Time (Hours)"
+
+VALUE FORMATTING:
+✓ Percentages: "85%" not "0.85"
+✓ Large numbers: "1,234" with commas
+✓ Time: "14:30" consistent format
+✓ Currency: "$100", "€50" with symbols
+
+CHART TYPE OPTIMIZATION:
+✓ Percentages that sum to ~100% → Perfect for pie charts
+✓ User/item comparisons → Great for bar charts
+✓ Time-based data → Ideal for line charts
+✓ Rankings → Sort by value, include ranks
+
+ANALYSIS OPTIONS (choose most relevant):
+1. User Activity: | Username | Message Count |
+2. Time Patterns: | Time Range | Messages |
+3. Topic Analysis: | Discussion Topic | Mentions |
+4. Content Sharing: | Content Type | Count |
+5. Technology Focus: | Technology | References |
+6. Engagement: | Metric | Value |
+
+RESPONSE STRUCTURE:
+1. Brief context (1-2 sentences)
+2. Data table(s) with accurate counts
+3. Key insights from the data
+4. Notable patterns or trends
+
+PROHIBITED:
+✗ Generic headers like "Item", "Value", "Data"
+✗ Unverified numbers or estimates
+✗ Missing percentage symbols or units
+✗ Tables without proper formatting
+✗ Code blocks around tables (```table```)
+
+REMEMBER: Tables automatically become visual charts. Accurate data + clear labels = meaningful insights."""
+
+
+def _get_regular_system_prompt() -> str:
+    """Get the regular system prompt for general conversations."""
+    return """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
+
+CORE BEHAVIOR:
+- Be direct and concise
+- Get straight to the point without lengthy introductions
+- Answer questions directly and helpfully
+- Use context from referenced/linked messages when available
+
+THREAD MEMORY AWARENESS:
+If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:
+- Continue conversations naturally without reintroducing yourself
+- Reference previous points and build upon them
+- Maintain conversation continuity and flow
+- Avoid repeating information already discussed
+
+COMMUNITY FOCUS:
+- Support AI, coding, and open source discussions
+- Help with technical questions and projects
+- Foster collaboration and knowledge sharing
+- Maintain a friendly, professional tone
+
+FORMATTING:
+- Use Discord markdown effectively
+- Highlight usernames with backticks: `username`
+- Include relevant links and references
+- Use code blocks for actual code snippets only
+- Keep responses conversational and engaging
+
+WHEN TO INCLUDE TABLES:
+Only create data tables if:
+✓ User explicitly asks for data analysis
+✓ Response contains specific metrics/statistics
+✓ Comparing quantifiable information is essential
+
+OTHERWISE: Focus on qualitative insights, explanations, and natural conversation.
+
+Note: For data analysis requests, use /chart-analysis or similar commands to get detailed visualizations."""
+
 
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[Dict[str, Any]]:
     """

@@ -11,6 +11,134 @@ from quickchart import QuickChart
 logger = logging.getLogger(__name__)
 
 
+class ChartDataValidator:
+    """Utility class for validating and normalizing chart data."""
+
+    @staticmethod
+    def validate_numeric_data(values: List[str]) -> Tuple[List[float], bool]:
+        """
+        Validate and convert string values to numeric data with aggressive extraction.
+
+        Args:
+            values: List of string values to validate
+
+        Returns:
+            Tuple of (cleaned_values, has_percentages)
+        """
+        import re
+        cleaned_values = []
+        has_percentages = False
+
+        for value_str in values:
+            try:
+                clean_str = str(value_str).strip()
+                if '%' in clean_str:
+                    has_percentages = True
+
+                # Remove formatting characters
+                numeric_str = clean_str.replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+
+                # Try direct conversion first
+                try:
+                    cleaned_values.append(float(numeric_str))
+                    continue
+                except ValueError:
+                    pass
+
+                # If direct conversion fails, try to extract first number from text
+                # This handles cases like "High (85)", "Level 3", "Score: 92", etc.
+                number_match = re.search(r'(\d+(?:\.\d+)?)', numeric_str)
+                if number_match:
+                    cleaned_values.append(float(number_match.group(1)))
+                    continue
+
+                # If no number found, try mapping text to numbers
+                text_lower = clean_str.lower()
+                if 'high' in text_lower or 'excellent' in text_lower:
+                    cleaned_values.append(3.0)
+                elif 'medium' in text_lower or 'good' in text_lower:
+                    cleaned_values.append(2.0)
+                elif 'low' in text_lower or 'poor' in text_lower:
+                    cleaned_values.append(1.0)
+                elif 'yes' in text_lower or 'true' in text_lower or 'active' in text_lower:
+                    cleaned_values.append(1.0)
+                elif 'no' in text_lower or 'false' in text_lower or 'inactive' in text_lower:
+                    cleaned_values.append(0.0)
+                else:
+                    # Last resort: use string length as a proxy for "size" of data
+                    cleaned_values.append(float(len(clean_str)))
+
+            except (ValueError, AttributeError, TypeError):
+                cleaned_values.append(0.0)
+
+        return cleaned_values, has_percentages
+
+    @staticmethod
+    def get_color_palette(count: int, chart_type: str = 'default') -> List[str]:
+        """
+        Get an appropriate color palette for the given number of data points.
+
+        Args:
+            count: Number of colors needed
+            chart_type: Type of chart ('pie', 'bar', 'line', 'default')
+
+        Returns:
+            List of color strings
+        """
+        # Enhanced color palettes for different chart types
+        if chart_type == 'pie':
+            colors = [
+                'rgba(255, 99, 132, 0.8)',   # Red
+                'rgba(54, 162, 235, 0.8)',   # Blue
+                'rgba(255, 206, 86, 0.8)',   # Yellow
+                'rgba(75, 192, 192, 0.8)',   # Teal
+                'rgba(153, 102, 255, 0.8)',  # Purple
+                'rgba(255, 159, 64, 0.8)',   # Orange
+                'rgba(199, 199, 199, 0.8)',  # Grey
+                'rgba(83, 102, 255, 0.8)',   # Indigo
+                'rgba(255, 192, 203, 0.8)',  # Pink
+                'rgba(144, 238, 144, 0.8)',  # Light Green
+                'rgba(255, 182, 193, 0.8)',  # Light Pink
+                'rgba(173, 216, 230, 0.8)'   # Light Blue
+            ]
+        elif chart_type == 'bar':
+            colors = [
+                'rgba(54, 162, 235, 0.8)',   # Blue
+                'rgba(255, 99, 132, 0.8)',   # Red
+                'rgba(75, 192, 192, 0.8)',   # Teal
+                'rgba(153, 102, 255, 0.8)',  # Purple
+                'rgba(255, 206, 86, 0.8)',   # Yellow
+                'rgba(255, 159, 64, 0.8)',   # Orange
+                'rgba(199, 199, 199, 0.8)',  # Grey
+                'rgba(83, 102, 255, 0.8)'    # Indigo
+            ]
+        elif chart_type == 'line':
+            colors = [
+                'rgba(255, 99, 132, 1)',     # Red
+                'rgba(54, 162, 235, 1)',     # Blue
+                'rgba(75, 192, 192, 1)',     # Teal
+                'rgba(153, 102, 255, 1)',    # Purple
+                'rgba(255, 206, 86, 1)',     # Yellow
+                'rgba(255, 159, 64, 1)',     # Orange
+                'rgba(199, 199, 199, 1)',    # Grey
+                'rgba(83, 102, 255, 1)'      # Indigo
+            ]
+        else:
+            colors = [
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(255, 206, 86, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)',
+                'rgba(255, 159, 64, 0.8)',
+                'rgba(199, 199, 199, 0.8)',
+                'rgba(83, 102, 255, 0.8)'
+            ]
+
+        # Repeat colors if we need more than available
+        return colors[:count] if count <= len(colors) else colors * ((count // len(colors)) + 1)
+
+
 class ChartRenderer:
     """Handles detection and rendering of tables/charts from LLM responses."""
 
@@ -127,7 +255,7 @@ class ChartRenderer:
 
     def _infer_chart_type(self, table_data: Dict) -> str:
         """
-        Analyze table data to determine the best chart type.
+        Analyze table data to determine the best chart type based on content patterns.
 
         Args:
             table_data: Parsed table with 'headers' and 'rows'
@@ -138,60 +266,126 @@ class ChartRenderer:
         headers = table_data['headers']
         rows = table_data['rows']
 
-        # If only 2 columns and second column is numeric, could be bar/pie
+        # If only 2 columns, analyze the content type
         if len(headers) == 2:
             # Check if second column is mostly numeric
             numeric_count = 0
             total_rows = len(rows)
+            has_percentages = False
+            has_time_data = False
 
+            # Analyze data patterns
             for row in rows:
                 if len(row) >= 2:
+                    value_str = row[1].strip()
+
+                    # Check for percentage indicators
+                    if '%' in value_str:
+                        has_percentages = True
+
+                    # Check for time patterns (HH:MM, dates, etc.)
+                    if any(pattern in row[0].lower() for pattern in ['time', 'hour', 'day', 'date', ':']):
+                        has_time_data = True
+
                     try:
                         # Try to parse as number (removing % signs and commas)
-                        value = row[1].replace('%', '').replace(',', '').strip()
-                        float(value)
+                        clean_value = value_str.replace('%', '').replace(',', '').strip()
+                        float(clean_value)
                         numeric_count += 1
                     except ValueError:
                         pass
 
-            # If more than 70% numeric, use chart
-            if numeric_count / total_rows > 0.7:
-                # Check if values are percentages or sum to ~100
-                try:
-                    values = [float(row[1].replace('%', '').replace(',', '').strip()) for row in rows]
-                    total = sum(values)
+            # If more than 30% numeric, choose appropriate chart type (lowered threshold)
+            if numeric_count / total_rows > 0.3:
+                # For percentage data or data that sums to ~100, use pie chart
+                if has_percentages:
+                    try:
+                        values = [float(row[1].replace('%', '').replace(',', '').strip()) for row in rows]
+                        total = sum(values)
+                        # If percentages sum to roughly 100%, it's distribution data
+                        if 95 <= total <= 105:
+                            return 'pie'
+                    except:
+                        pass
 
-                    # If values sum to roughly 100, use pie chart
-                    if 95 <= total <= 105 or any('%' in row[1] for row in rows):
-                        return 'pie'
-                except:
-                    pass
+                # For time-based data, prefer line chart if it makes sense
+                if has_time_data and len(rows) >= 3:
+                    return 'line'
 
-                # Default to bar chart for numeric data
+                # Default to bar chart for numeric comparisons
                 return 'bar'
 
-        # If 3+ columns with numeric data, could be line chart (time series)
+        # If 3+ columns with numeric data, analyze for time series
         if len(headers) >= 3:
-            # Check if we have numeric columns
+            # Check first column for time indicators
+            first_col_time = any(
+                pattern in headers[0].lower()
+                for pattern in ['time', 'hour', 'day', 'date', 'period']
+            )
+
+            # Check if we have numeric columns with enhanced detection
             numeric_cols = []
             for col_idx in range(1, len(headers)):
                 numeric_count = 0
                 for row in rows:
                     if len(row) > col_idx:
                         try:
-                            value = row[col_idx].replace('%', '').replace(',', '').strip()
-                            float(value)
-                            numeric_count += 1
-                        except ValueError:
+                            # More aggressive numeric detection
+                            value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                            # Try to extract numbers from text like "High (85%)" or "Level 3"
+                            import re
+                            number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+                            if number_match:
+                                float(number_match.group(1))
+                                numeric_count += 1
+                            else:
+                                float(value)
+                                numeric_count += 1
+                        except (ValueError, AttributeError):
                             pass
 
-                if numeric_count / len(rows) > 0.7:
+                # Lowered threshold to 30% for more aggressive detection
+                if numeric_count / len(rows) > 0.3:
                     numeric_cols.append(col_idx)
 
-            # If we have multiple numeric columns, use line chart
-            if len(numeric_cols) >= 2:
+            # If we have time data and multiple numeric columns, use line chart
+            if first_col_time and len(numeric_cols) >= 2:
+                return 'line'
+            elif len(numeric_cols) >= 2:
                 return 'line'
             elif len(numeric_cols) == 1:
+                return 'bar'
+
+        # For multi-column tables, try to find any visualizable data with enhanced detection
+        # Look for any numeric columns that could be charted
+        for col_idx in range(1, len(headers)):
+            numeric_count = 0
+            for row in rows:
+                if len(row) > col_idx:
+                    try:
+                        # Enhanced numeric extraction
+                        value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                        # Try to extract numbers from text
+                        import re
+                        number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+                        if number_match:
+                            float(number_match.group(1))
+                            numeric_count += 1
+                        else:
+                            float(value)
+                            numeric_count += 1
+                    except (ValueError, AttributeError):
+                        pass
+
+            # If we find any column with >20% numeric data, use bar chart (very aggressive)
+            if numeric_count / len(rows) > 0.2:
+                return 'bar'
+
+        # If no numeric data, but we have categorical data that varies, still try bar chart
+        if len(headers) >= 2 and len(rows) > 1:
+            # Check if first column has varied categorical data
+            unique_values = set(str(row[0]) for row in rows if len(row) > 0)
+            if len(unique_values) > 1 and len(unique_values) <= 10:  # Good for categorical visualization
                 return 'bar'
 
         # Default to table image for complex/text data
@@ -210,7 +404,12 @@ class ChartRenderer:
         """
         try:
             if chart_type == 'table':
-                return self._generate_table_chart(table_data)
+                table_url = self._generate_table_chart(table_data)
+                # If table chart returns None, try to generate a bar chart instead
+                if table_url is None:
+                    logger.info("Table chart generation returned None, attempting bar chart fallback")
+                    return self._generate_bar_chart(table_data)
+                return table_url
             elif chart_type == 'bar':
                 return self._generate_bar_chart(table_data)
             elif chart_type == 'pie':
@@ -227,46 +426,82 @@ class ChartRenderer:
 
     def _generate_table_chart(self, table_data: Dict) -> Optional[str]:
         """Generate a formatted table image using QuickChart."""
-        qc = QuickChart()
-        qc.width = 800
-        qc.height = 400
-        qc.device_pixel_ratio = 2.0
-
         headers = table_data['headers']
         rows = table_data['rows']
 
-        # Create a simple table visualization using Chart.js table plugin
-        # For now, we'll create a simple bar chart to represent the table
-        # A true table rendering would require custom HTML or a different approach
+        # For complex tables with many columns, try to find the best 2 columns to visualize
+        if len(headers) > 2:
+            # Look for the first column (usually labels) and best numeric column
+            label_col_idx = 0
+            value_col_idx = None
+            best_numeric_ratio = 0
 
-        # Alternative: Use a simple visual representation
-        config = {
-            'type': 'bar',
-            'data': {
-                'labels': [f"Row {i+1}" for i in range(len(rows))],
-                'datasets': [{
-                    'label': 'Table Data (visual representation)',
-                    'data': [i+1 for i in range(len(rows))]
-                }]
-            },
-            'options': {
-                'title': {
-                    'display': True,
-                    'text': f"Table: {' | '.join(headers)}"
-                },
-                'plugins': {
-                    'datalabels': {
-                        'display': False
-                    }
+            # Find the column with the highest ratio of numeric values
+            for col_idx in range(1, len(headers)):
+                numeric_count = 0
+                for row in rows:
+                    if len(row) > col_idx:
+                        try:
+                            # More aggressive cleaning for numeric detection
+                            value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                            # Also try to extract numbers from text like "High (85%)" or "Level 3"
+                            import re
+                            number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+                            if number_match:
+                                float(number_match.group(1))
+                                numeric_count += 1
+                            else:
+                                float(value)
+                                numeric_count += 1
+                        except (ValueError, AttributeError):
+                            pass
+
+                numeric_ratio = numeric_count / len(rows) if len(rows) > 0 else 0
+
+                # Use column if it has any numeric data (lowered threshold to 30%)
+                if numeric_ratio > 0.3 and numeric_ratio > best_numeric_ratio:
+                    value_col_idx = col_idx
+                    best_numeric_ratio = numeric_ratio
+
+            # If we found any numeric column, create a simplified 2-column table for charting
+            if value_col_idx is not None:
+                simplified_table = {
+                    'headers': [headers[label_col_idx], headers[value_col_idx]],
+                    'rows': [[row[label_col_idx], row[value_col_idx]] for row in rows if len(row) > value_col_idx]
                 }
-            }
-        }
 
-        qc.config = config
-        return qc.get_url()
+                # Determine chart type for the simplified data
+                chart_type = self._infer_chart_type(simplified_table)
+
+                # Generate appropriate chart based on the simplified data
+                if chart_type == 'bar':
+                    return self._generate_bar_chart(simplified_table)
+                elif chart_type == 'pie':
+                    return self._generate_pie_chart(simplified_table)
+                elif chart_type == 'line':
+                    return self._generate_line_chart(simplified_table)
+
+            # If no numeric data found, try to create a categorical distribution chart
+            # Use the first column as categories and count occurrences or create frequency chart
+            if len(rows) > 1:
+                # Create a frequency distribution of the first column values
+                from collections import Counter
+                category_counts = Counter([row[0] if len(row) > 0 else 'Unknown' for row in rows])
+
+                # Only create chart if we have varied data (not all the same)
+                if len(category_counts) > 1 and len(category_counts) <= 10:
+                    simplified_table = {
+                        'headers': [headers[0], 'Count'],
+                        'rows': [[category, str(count)] for category, count in category_counts.most_common()]
+                    }
+                    return self._generate_bar_chart(simplified_table)
+
+        # Final fallback: return None to indicate no chart should be generated
+        # This prevents meaningless "row count" charts
+        return None
 
     def _generate_bar_chart(self, table_data: Dict) -> Optional[str]:
-        """Generate a bar chart using QuickChart."""
+        """Generate a bar chart using QuickChart with enhanced labeling."""
         qc = QuickChart()
         qc.width = 800
         qc.height = 500
@@ -275,51 +510,112 @@ class ChartRenderer:
         headers = table_data['headers']
         rows = table_data['rows']
 
-        # Extract labels and values
-        labels = [row[0] for row in rows]
-        values = []
+        # For multi-column tables, find the best numeric column to chart
+        label_col_idx = 0
+        value_col_idx = 1
 
+        # If table has more than 2 columns, find the first numeric column
+        if len(headers) > 2:
+            for col_idx in range(1, len(headers)):
+                numeric_count = 0
+                test_values = [row[col_idx] if len(row) > col_idx else '0' for row in rows]
+
+                for val in test_values:
+                    try:
+                        clean_val = val.replace('%', '').replace(',', '').strip()
+                        float(clean_val)
+                        numeric_count += 1
+                    except (ValueError, AttributeError):
+                        pass
+
+                # Use this column if >30% numeric (lowered threshold)
+                if numeric_count / len(rows) > 0.3:
+                    value_col_idx = col_idx
+                    break
+
+        # Extract labels and values using the determined columns
+        labels = [str(row[label_col_idx]) if len(row) > label_col_idx else f"Item {i+1}" for i, row in enumerate(rows)]
+        raw_values = []
+
+        # Enhanced value extraction with better numeric parsing
         for row in rows:
-            if len(row) >= 2:
-                try:
-                    value = row[1].replace('%', '').replace(',', '').strip()
-                    values.append(float(value))
-                except ValueError:
-                    values.append(0)
+            if len(row) > value_col_idx:
+                value_str = str(row[value_col_idx])
+                # Try to extract numeric value from text using regex
+                import re
+                number_match = re.search(r'(\d+(?:\.\d+)?)', value_str.replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', ''))
+                if number_match:
+                    raw_values.append(number_match.group(1))
+                else:
+                    raw_values.append(value_str)
+            else:
+                raw_values.append('0')
+
+        # Validate and clean numeric data
+        values, has_percentages = ChartDataValidator.validate_numeric_data(raw_values)
+
+        # Generate a more descriptive title using the selected columns
+        selected_headers = [headers[label_col_idx], headers[value_col_idx]] if len(headers) > value_col_idx else headers
+        title = self._generate_chart_title(selected_headers, 'bar')
+
+        # Get appropriate colors
+        colors = ChartDataValidator.get_color_palette(len(values), 'bar')
+
+        # Determine if values should show percentages
+        value_suffix = '%' if has_percentages else ''
 
         config = {
             'type': 'bar',
             'data': {
                 'labels': labels,
                 'datasets': [{
-                    'label': headers[1] if len(headers) > 1 else 'Value',
+                    'label': headers[value_col_idx] if len(headers) > value_col_idx else 'Value',
                     'data': values,
-                    'backgroundColor': 'rgba(54, 162, 235, 0.8)',
-                    'borderColor': 'rgba(54, 162, 235, 1)',
+                    'backgroundColor': colors,
+                    'borderColor': [color.replace('0.8', '1') for color in colors],
                     'borderWidth': 1
                 }]
             },
             'options': {
-                'title': {
-                    'display': True,
-                    'text': f"{headers[0]} vs {headers[1]}" if len(headers) > 1 else 'Data Comparison',
-                    'fontSize': 16
-                },
-                'legend': {
-                    'display': True
-                },
-                'scales': {
-                    'yAxes': [{
-                        'ticks': {
-                            'beginAtZero': True
-                        }
-                    }]
-                },
+                'responsive': True,
                 'plugins': {
+                    'title': {
+                        'display': True,
+                        'text': title,
+                        'font': {
+                            'size': 16,
+                            'weight': 'bold'
+                        }
+                    },
+                    'legend': {
+                        'display': len(selected_headers) > 2,
+                        'position': 'top'
+                    },
                     'datalabels': {
                         'anchor': 'end',
                         'align': 'top',
-                        'formatter': '(value) => value'
+                        'formatter': f'(value) => value + "{value_suffix}"',
+                        'font': {
+                            'weight': 'bold'
+                        }
+                    }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': headers[label_col_idx] if len(headers) > label_col_idx else 'Category'
+                        }
+                    },
+                    'y': {
+                        'beginAtZero': True,
+                        'title': {
+                            'display': True,
+                            'text': headers[value_col_idx] if len(headers) > value_col_idx else 'Value'
+                        },
+                        'ticks': {
+                            'callback': f'(value) => value + "{value_suffix}"'
+                        }
                     }
                 }
             }
@@ -329,38 +625,31 @@ class ChartRenderer:
         return qc.get_url()
 
     def _generate_pie_chart(self, table_data: Dict) -> Optional[str]:
-        """Generate a pie chart using QuickChart."""
+        """Generate a pie chart using QuickChart with enhanced labeling."""
         qc = QuickChart()
-        qc.width = 600
-        qc.height = 600
+        qc.width = 700
+        qc.height = 500
         qc.device_pixel_ratio = 2.0
 
         headers = table_data['headers']
         rows = table_data['rows']
 
-        # Extract labels and values
+        # Extract labels and values using validation
         labels = [row[0] for row in rows]
-        values = []
+        raw_values = [row[1] if len(row) >= 2 else '0' for row in rows]
 
-        for row in rows:
-            if len(row) >= 2:
-                try:
-                    value = row[1].replace('%', '').replace(',', '').strip()
-                    values.append(float(value))
-                except ValueError:
-                    values.append(0)
+        # Validate and clean numeric data
+        values, has_percentages = ChartDataValidator.validate_numeric_data(raw_values)
 
-        # Generate colors
-        colors = [
-            'rgba(255, 99, 132, 0.8)',
-            'rgba(54, 162, 235, 0.8)',
-            'rgba(255, 206, 86, 0.8)',
-            'rgba(75, 192, 192, 0.8)',
-            'rgba(153, 102, 255, 0.8)',
-            'rgba(255, 159, 64, 0.8)',
-            'rgba(199, 199, 199, 0.8)',
-            'rgba(83, 102, 255, 0.8)',
-        ]
+        # Generate a more descriptive title
+        title = self._generate_chart_title(headers, 'pie')
+
+        # Get appropriate colors for pie chart
+        colors = ChartDataValidator.get_color_palette(len(values), 'pie')
+
+        # Calculate percentages for display
+        total = sum(values)
+        percentages = [round((v/total)*100, 1) if total > 0 else 0 for v in values]
 
         config = {
             'type': 'pie',
@@ -368,27 +657,38 @@ class ChartRenderer:
                 'labels': labels,
                 'datasets': [{
                     'data': values,
-                    'backgroundColor': colors[:len(values)]
+                    'backgroundColor': colors,
+                    'borderColor': '#fff',
+                    'borderWidth': 2
                 }]
             },
             'options': {
-                'title': {
-                    'display': True,
-                    'text': headers[1] if len(headers) > 1 else 'Distribution',
-                    'fontSize': 16
-                },
-                'legend': {
-                    'display': True,
-                    'position': 'right'
-                },
+                'responsive': True,
                 'plugins': {
+                    'title': {
+                        'display': True,
+                        'text': title,
+                        'font': {
+                            'size': 16,
+                            'weight': 'bold'
+                        }
+                    },
+                    'legend': {
+                        'display': True,
+                        'position': 'right',
+                        'labels': {
+                            'padding': 20,
+                            'usePointStyle': True
+                        }
+                    },
                     'datalabels': {
                         'color': '#fff',
                         'font': {
                             'weight': 'bold',
-                            'size': 14
+                            'size': 12
                         },
-                        'formatter': '(value, ctx) => { const label = ctx.chart.data.labels[ctx.dataIndex]; return label + ": " + value + "%"; }'
+                        'formatter': '(value, ctx) => { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); const percentage = Math.round((value / total) * 100); return percentage + "%"; }',
+                        'display': '(ctx) => ctx.dataset.data[ctx.dataIndex] > 0'
                     }
                 }
             }
@@ -398,7 +698,7 @@ class ChartRenderer:
         return qc.get_url()
 
     def _generate_line_chart(self, table_data: Dict) -> Optional[str]:
-        """Generate a line chart using QuickChart."""
+        """Generate a line chart using QuickChart with enhanced labeling."""
         qc = QuickChart()
         qc.width = 800
         qc.height = 500
@@ -410,34 +710,33 @@ class ChartRenderer:
         # Extract labels (first column)
         labels = [row[0] for row in rows]
 
-        # Extract datasets (remaining columns)
+        # Extract datasets (remaining columns) with validation
         datasets = []
-        colors = [
-            'rgba(255, 99, 132, 1)',
-            'rgba(54, 162, 235, 1)',
-            'rgba(255, 206, 86, 1)',
-            'rgba(75, 192, 192, 1)',
-            'rgba(153, 102, 255, 1)',
-        ]
+
+        # Get colors for line chart
+        colors = ChartDataValidator.get_color_palette(len(headers) - 1, 'line')
 
         for col_idx in range(1, len(headers)):
-            values = []
-            for row in rows:
-                if len(row) > col_idx:
-                    try:
-                        value = row[col_idx].replace('%', '').replace(',', '').strip()
-                        values.append(float(value))
-                    except ValueError:
-                        values.append(0)
+            raw_values = [row[col_idx] if len(row) > col_idx else '0' for row in rows]
+            values, _ = ChartDataValidator.validate_numeric_data(raw_values)
 
+            color = colors[(col_idx - 1) % len(colors)]
             datasets.append({
                 'label': headers[col_idx],
                 'data': values,
-                'borderColor': colors[(col_idx - 1) % len(colors)],
-                'backgroundColor': colors[(col_idx - 1) % len(colors)].replace('1)', '0.2)'),
+                'borderColor': color,
+                'backgroundColor': color.replace('1)', '0.1)'),
                 'fill': False,
-                'tension': 0.1
+                'tension': 0.3,
+                'pointRadius': 5,
+                'pointHoverRadius': 7,
+                'pointBackgroundColor': color,
+                'pointBorderColor': '#fff',
+                'pointBorderWidth': 2
             })
+
+        # Generate a more descriptive title
+        title = self._generate_chart_title(headers, 'line')
 
         config = {
             'type': 'line',
@@ -446,31 +745,82 @@ class ChartRenderer:
                 'datasets': datasets
             },
             'options': {
-                'title': {
-                    'display': True,
-                    'text': f"{headers[0]} Trends",
-                    'fontSize': 16
-                },
-                'legend': {
-                    'display': True
-                },
-                'scales': {
-                    'yAxes': [{
-                        'ticks': {
-                            'beginAtZero': True
-                        }
-                    }]
-                },
+                'responsive': True,
                 'plugins': {
+                    'title': {
+                        'display': True,
+                        'text': title,
+                        'font': {
+                            'size': 16,
+                            'weight': 'bold'
+                        }
+                    },
+                    'legend': {
+                        'display': len(datasets) > 1,
+                        'position': 'top'
+                    },
                     'datalabels': {
                         'display': False
                     }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': headers[0] if headers else 'Time Period'
+                        }
+                    },
+                    'y': {
+                        'beginAtZero': True,
+                        'title': {
+                            'display': True,
+                            'text': 'Value'
+                        }
+                    }
+                },
+                'interaction': {
+                    'intersect': False,
+                    'mode': 'index'
                 }
             }
         }
 
         qc.config = config
         return qc.get_url()
+    def _generate_chart_title(self, headers: List[str], chart_type: str) -> str:
+        """
+        Generate a meaningful chart title based on headers and chart type.
+
+        Args:
+            headers: List of column headers
+            chart_type: Type of chart being generated
+
+        Returns:
+            str: Descriptive chart title
+        """
+        if not headers:
+            return f"{chart_type.title()} Chart"
+
+        # For single header, use it directly
+        if len(headers) == 1:
+            return headers[0]
+
+        # For two headers, create a relationship title
+        if len(headers) == 2:
+            if chart_type == 'pie':
+                return f"{headers[1]} Distribution by {headers[0]}"
+            elif chart_type == 'bar':
+                return f"{headers[1]} by {headers[0]}"
+            elif chart_type == 'line':
+                return f"{headers[1]} Trends Over {headers[0]}"
+            else:
+                return f"{headers[0]} vs {headers[1]}"
+
+        # For multiple headers, focus on the relationship
+        if chart_type == 'line':
+            return f"Trends Over {headers[0]}"
+        else:
+            return f"Comparison by {headers[0]}"
 
 
 # Singleton instance

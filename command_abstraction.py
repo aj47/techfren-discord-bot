@@ -11,6 +11,7 @@ import discord
 import logging
 import aiohttp
 import io
+from thread_memory import get_thread_context, store_thread_exchange, has_thread_memory
 
 
 @dataclass
@@ -53,7 +54,22 @@ class MessageResponseSender:
         # `ephemeral` has no meaning for regular messages; we silently ignore it.
         # Allow user mentions but disable everyone/here and role mentions for safety
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        return await self.channel.send(content, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+        # Check content length and split if necessary
+        if len(content) > 2000:
+            from message_utils import split_long_message
+            parts = await split_long_message(content, max_length=1900)
+
+            # Send first part and return its message object
+            first_response = await self.channel.send(parts[0], allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+            # Send remaining parts
+            for part in parts[1:]:
+                await self.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+            return first_response
+        else:
+            return await self.channel.send(content, allowed_mentions=allowed_mentions, suppress_embeds=True)
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
@@ -69,13 +85,37 @@ class MessageResponseSender:
             files = await self._download_chart_files(chart_data)
 
             if files:
-                # Send content with file attachments
-                return await self.channel.send(content, files=files, allowed_mentions=allowed_mentions, suppress_embeds=True)
+                # Check content length and split if necessary
+                if len(content) > 1900:  # Leave room for chart placeholders
+                    # Split content into parts and send charts with first part
+                    from message_utils import split_long_message
+                    parts = await split_long_message(content, max_length=1900)
+
+                    # Send first part with charts
+                    first_response = await self.channel.send(parts[0], files=files, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+                    # Send remaining parts without charts
+                    for part in parts[1:]:
+                        await self.channel.send(part, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+                    return first_response
+                else:
+                    # Content is short enough, send with charts
+                    return await self.channel.send(content, files=files, allowed_mentions=allowed_mentions, suppress_embeds=True)
             else:
                 # Fallback to regular send if no files downloaded successfully
                 self.logger.warning("No chart files downloaded, sending message without attachments")
                 return await self.send(content, ephemeral)
 
+        except discord.HTTPException as e:
+            if "Must be 2000 or fewer in length" in str(e):
+                self.logger.warning("Message too long for charts, falling back to split send")
+                # Split the message and send without charts
+                await self.send_in_parts([content], ephemeral)
+                return None
+            else:
+                self.logger.error(f"Discord HTTP error sending message with charts: {e}", exc_info=True)
+                return await self.send(content, ephemeral)
         except Exception as e:
             self.logger.error(f"Error sending message with charts: {e}", exc_info=True)
             # Fallback to regular send without charts
@@ -128,8 +168,23 @@ class InteractionResponseSender:
 
     async def send(self, content: str, ephemeral: bool = False) -> Optional[discord.Message]:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-        message = await self.interaction.followup.send(content, ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True, wait=True)
-        return message if not ephemeral else None  # Can't create threads from ephemeral messages
+
+        # Check content length and split if necessary
+        if len(content) > 2000:
+            from message_utils import split_long_message
+            parts = await split_long_message(content, max_length=1900)
+
+            # Send first part and return its message object
+            first_message = await self.interaction.followup.send(parts[0], ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True, wait=True)
+
+            # Send remaining parts
+            for part in parts[1:]:
+                await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+            return first_message if not ephemeral else None
+        else:
+            message = await self.interaction.followup.send(content, ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True, wait=True)
+            return message if not ephemeral else None  # Can't create threads from ephemeral messages
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
@@ -145,21 +200,52 @@ class InteractionResponseSender:
             files = await self._download_chart_files(chart_data)
 
             if files:
-                # Send content with file attachments
-                message = await self.interaction.followup.send(
-                    content,
-                    files=files,
-                    ephemeral=ephemeral,
-                    allowed_mentions=allowed_mentions,
-                    suppress_embeds=True,
-                    wait=True
-                )
-                return message if not ephemeral else None
+                # Check content length and split if necessary
+                if len(content) > 1900:  # Leave room for chart placeholders
+                    # Split content into parts and send charts with first part
+                    from message_utils import split_long_message
+                    parts = await split_long_message(content, max_length=1900)
+
+                    # Send first part with charts
+                    first_message = await self.interaction.followup.send(
+                        parts[0],
+                        files=files,
+                        ephemeral=ephemeral,
+                        allowed_mentions=allowed_mentions,
+                        suppress_embeds=True,
+                        wait=True
+                    )
+
+                    # Send remaining parts without charts
+                    for part in parts[1:]:
+                        await self.interaction.followup.send(part, ephemeral=ephemeral, allowed_mentions=allowed_mentions, suppress_embeds=True)
+
+                    return first_message if not ephemeral else None
+                else:
+                    # Content is short enough, send with charts
+                    message = await self.interaction.followup.send(
+                        content,
+                        files=files,
+                        ephemeral=ephemeral,
+                        allowed_mentions=allowed_mentions,
+                        suppress_embeds=True,
+                        wait=True
+                    )
+                    return message if not ephemeral else None
             else:
                 # Fallback to regular send if no files downloaded successfully
                 self.logger.warning("No chart files downloaded, sending message without attachments")
                 return await self.send(content, ephemeral)
 
+        except discord.HTTPException as e:
+            if "Must be 2000 or fewer in length" in str(e):
+                self.logger.warning("Interaction message too long for charts, falling back to split send")
+                # Split the message and send without charts
+                await self.send_in_parts([content], ephemeral)
+                return None
+            else:
+                self.logger.error(f"Discord HTTP error sending interaction with charts: {e}", exc_info=True)
+                return await self.send(content, ephemeral)
         except Exception as e:
             self.logger.error(f"Error sending interaction response with charts: {e}", exc_info=True)
             # Fallback to regular send without charts
@@ -291,8 +377,13 @@ class ThreadManager:
 
 
 def create_context_from_message(message: discord.Message) -> CommandContext:
-    """Create CommandContext from a Discord message."""
-    return CommandContext(
+    """Create a CommandContext from a Discord message."""
+    # Check if we're in a thread and add thread_id if so
+    thread_id = None
+    if hasattr(message.channel, 'parent') and message.channel.parent is not None:
+        thread_id = str(message.channel.id)
+
+    context = CommandContext(
         user_id=message.author.id,
         user_name=str(message.author),
         channel_id=message.channel.id,
@@ -303,19 +394,36 @@ def create_context_from_message(message: discord.Message) -> CommandContext:
         source_type='message'
     )
 
+    # Add thread_id as a dynamic attribute if we're in a thread
+    if thread_id:
+        context.thread_id = thread_id
+
+    return context
+
 
 def create_context_from_interaction(interaction: discord.Interaction, content: str) -> CommandContext:
-    """Create CommandContext from a Discord interaction."""
-    return CommandContext(
+    """Create a CommandContext from a Discord interaction."""
+    # Check if we're in a thread and add thread_id if so
+    thread_id = None
+    if interaction.channel and hasattr(interaction.channel, 'parent') and interaction.channel.parent is not None:
+        thread_id = str(interaction.channel.id)
+
+    context = CommandContext(
         user_id=interaction.user.id,
         user_name=str(interaction.user),
-        channel_id=interaction.channel.id,
-        channel_name=getattr(interaction.channel, 'name', None),
-        guild_id=interaction.guild.id if interaction.guild else None,
+        channel_id=interaction.channel_id,
+        channel_name=getattr(interaction.channel, 'name', None) if interaction.channel else None,
+        guild_id=interaction.guild_id,
         guild_name=interaction.guild.name if interaction.guild else None,
         content=content,
         source_type='interaction'
     )
+
+    # Add thread_id as a dynamic attribute if we're in a thread
+    if thread_id:
+        context.thread_id = thread_id
+
+    return context
 
 
 def create_response_sender(source: Union[discord.Message, discord.Interaction]) -> ResponseSender:
@@ -345,18 +453,18 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext,
         # Get bot user ID from the provided bot_user - raise error if missing
         if bot_user is None:
             raise ValueError("bot_user parameter is required for storing DM responses")
-        
+
         bot_user_id = str(bot_user.id)
         bot_user_name = str(bot_user)
 
         # Use transaction for multiple database operations
         messages_to_store = []
         base_timestamp = datetime.now()
-        
+
         for i, part in enumerate(summary_parts):
             # Generate a unique message ID for each part
             message_id = f"bot_dm_response_{context.user_id}_{base_timestamp.timestamp()}_{i}"
-            
+
             messages_to_store.append({
                 'message_id': message_id,
                 'author_id': bot_user_id,
@@ -371,7 +479,7 @@ async def _store_dm_responses(summary_parts: list[str], context: CommandContext,
                 'is_command': False,
                 'command_type': None
             })
-        
+
         # Store all messages in a single transaction
         await database.store_messages_batch(messages_to_store)
     except (ValueError, TypeError) as e:
@@ -390,16 +498,19 @@ async def handle_summary_command(
     response_sender: ResponseSender,
     thread_manager: ThreadManager,
     hours: int = 24,
-    bot_user: Optional[discord.ClientUser] = None
+    bot_user: Optional[discord.ClientUser] = None,
+    force_charts: bool = False
 ) -> None:
     """
     Core logic for summary commands, abstracted from Discord-specific handling.
-    
+
     Args:
         context: Command execution context
         response_sender: Interface for sending responses
         thread_manager: Interface for thread creation
         hours: Number of hours to summarize (default 24)
+        bot_user: Bot user for database operations
+        force_charts: If True, use chart-focused analysis system
     """
     from datetime import datetime, timezone
     from rate_limiter import check_rate_limit
@@ -408,22 +519,22 @@ async def handle_summary_command(
     from message_utils import split_long_message
     import database
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     # Input validation
     if not isinstance(hours, int) or hours < 1:
         logger.warning(f"Invalid hours parameter: {hours} (must be positive integer)")
         await response_sender.send("Invalid hours parameter. Must be a positive number.", ephemeral=True)
         return
-    
+
     import config
     if hours > config.MAX_SUMMARY_HOURS:
         logger.warning(f"Hours parameter {hours} exceeds maximum {config.MAX_SUMMARY_HOURS}")
         error_msg = config.ERROR_MESSAGES['invalid_hours_range']
         await response_sender.send(error_msg, ephemeral=True)
         return
-    
+
     # Rate limiting
     is_limited, wait_time, reason = check_rate_limit(str(context.user_id))
     if is_limited:
@@ -434,7 +545,7 @@ async def handle_summary_command(
         await response_sender.send(error_msg, ephemeral=True)
         logger.info(f"Rate limited user {context.user_name} ({reason}): wait time {wait_time:.1f}s")
         return
-    
+
     # Send initial response
     initial_message = await response_sender.send("Generating channel summary, please wait... This may take a moment.")
 
@@ -469,8 +580,26 @@ async def handle_summary_command(
             await response_sender.send(error_msg, ephemeral=True)
             return
 
-        # Generate summary
-        summary, chart_data = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours)
+        # Check for thread context if we're in a thread
+        thread_context = ""
+        thread_id = None
+        if context.source_type == 'message':
+            # For message-based commands, we might be in a thread
+            # We'll get the thread ID from the context if available
+            if hasattr(context, 'thread_id') and context.thread_id:
+                thread_id = context.thread_id
+                if has_thread_memory(thread_id):
+                    thread_context = get_thread_context(thread_id, max_exchanges=3)
+                    logger.debug(f"Retrieved thread context for summary in thread {thread_id}")
+
+        # Generate summary with thread context if available
+        if thread_context:
+            # Add thread context to the summary generation
+            enhanced_messages = messages_for_summary.copy()
+            # We could add the thread context as a synthetic message, but for now just log it
+            logger.info(f"Generating summary with thread context awareness for {len(enhanced_messages)} messages")
+
+        summary, chart_data = await call_llm_for_summary(messages_for_summary, channel_name_str, today, hours, force_charts)
         summary_parts = await split_long_message(summary)
 
         # Send summary efficiently with thread creation
@@ -570,7 +699,27 @@ async def handle_summary_command(
             # Store bot responses in database for DMs
             if context.source_type == 'message' and not context.guild_id:
                 await _store_dm_responses(summary_parts, context, bot_user)
-        
+
+            # Store thread memory if we're in a thread
+            if thread_id and summary:
+                try:
+                    # Create a concise user query for thread memory
+                    command_description = f"Requested {hours}h summary" + (" with charts" if force_charts else "")
+
+                    store_thread_exchange(
+                        thread_id=thread_id,
+                        user_id=str(context.user_id),
+                        user_name=context.user_name,
+                        user_message=command_description,
+                        bot_response=summary[:500] + "..." if len(summary) > 500 else summary,  # Store truncated version
+                        guild_id=str(context.guild_id) if context.guild_id else None,
+                        channel_id=str(context.channel_id),
+                        is_chart_analysis=force_charts
+                    )
+                    logger.debug(f"Stored summary thread exchange for thread {thread_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to store summary thread exchange: {e}")
+
         # Store summary in database
         try:
             # Extract unique users from messages for active_users list
@@ -589,7 +738,7 @@ async def handle_summary_command(
             )
         except Exception as e:
             logger.error(f"Failed to store summary in database: {str(e)}")
-    
+
     except Exception as e:
         logger.error(f"Error in handle_summary_command: {str(e)}", exc_info=True)
         import config

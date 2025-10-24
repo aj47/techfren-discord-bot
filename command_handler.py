@@ -4,6 +4,7 @@ from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message, get_message_context
+from thread_memory import get_thread_context, store_thread_exchange, has_thread_memory
 import re
 from typing import Optional
 
@@ -48,6 +49,19 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
             processing_msg = await thread_sender.send("Processing your request, please wait...")
 
             try:
+                # Check if this is a chart analysis request
+                force_charts = _should_force_charts(query)
+
+                # Check if we're in a thread and get thread memory
+                thread_context = ""
+                thread_id = None
+                if hasattr(message.channel, 'parent') and message.channel.parent is not None:
+                    # We're in a thread
+                    thread_id = str(message.channel.id)
+                    if has_thread_memory(thread_id):
+                        thread_context = get_thread_context(thread_id, max_exchanges=4)
+                        logger.debug(f"Retrieved thread context for thread {thread_id}")
+
                 # Get message context (referenced messages and linked messages)
                 message_context = None
                 if bot_client and (message.reference or 'discord.com/channels/' in message.content):
@@ -57,9 +71,35 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     except Exception as e:
                         logger.warning(f"Failed to get message context: {e}")
 
-                response, chart_data = await call_llm_api(query, message_context)
+                # Add thread context to message context if available
+                if thread_context and message_context:
+                    # Combine thread context with message context
+                    if 'thread_context' not in message_context:
+                        message_context['thread_context'] = thread_context
+                elif thread_context:
+                    # Create message context with just thread context
+                    message_context = {'thread_context': thread_context}
+
+                response, chart_data = await call_llm_api(query, message_context, force_charts)
                 logger.debug(f"Raw response length: {len(response)} characters")
                 logger.debug(f"Response ends with: ...{response[-100:] if len(response) > 100 else response}")
+
+                # Store thread memory if we're in a thread
+                if thread_id:
+                    try:
+                        store_thread_exchange(
+                            thread_id=thread_id,
+                            user_id=str(message.author.id),
+                            user_name=str(message.author),
+                            user_message=query,
+                            bot_response=response,
+                            guild_id=str(message.guild.id) if message.guild else None,
+                            channel_id=str(message.channel.parent.id) if hasattr(message.channel, 'parent') and message.channel.parent else None,
+                            is_chart_analysis=force_charts or bool(chart_data)
+                        )
+                        logger.debug(f"Stored thread exchange for thread {thread_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to store thread exchange: {e}")
 
                 # Check if we have charts to send
                 if chart_data:
@@ -75,11 +115,11 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
 
                     logger.info(f"Command executed successfully: mention - Response length: {len(response)} - With {len(chart_data)} chart(s) - Posted in thread")
                 else:
-                    # Force split if response is over 900 chars to ensure it doesn't get cut off
-                    # Discord has issues with messages near the 2000 char limit
-                    if len(response) > 900:
+                    # Split if response is over 1800 chars to ensure it doesn't get cut off
+                    # Leave room for Discord's 2000 char limit
+                    if len(response) > 1800:
                         logger.info(f"Splitting response of {len(response)} chars into multiple parts")
-                        message_parts = await split_long_message(response, max_length=900)
+                        message_parts = await split_long_message(response, max_length=1800)
                     else:
                         message_parts = [response]
 
@@ -199,12 +239,20 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
 # Helper functions for parameter validation
 def _parse_and_validate_hours(content: str) -> Optional[int]:
     """Parse hours parameter from message content."""
-    match = re.match(r'/sum-hr\s+(\d+)', content.strip())
-    if not match:
-        return None
+    # Support both regular and chart commands
+    patterns = [
+        r'/sum-hr\s+(\d+)',
+        r'/chart-hr\s+(\d+)',
+        r'/sum-hr-chart\s+(\d+)'
+    ]
 
-    hours = int(match.group(1))
-    return hours if hours > 0 else None
+    for pattern in patterns:
+        match = re.match(pattern, content.strip())
+        if match:
+            hours = int(match.group(1))
+            return hours if hours > 0 else None
+
+    return None
 
 def _validate_hours_range(hours: int) -> bool:
     """Validate that hours is within acceptable range."""
@@ -219,7 +267,7 @@ async def _send_error_response(message: discord.Message, client_user: discord.Cl
     await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
 
 # Helper function for message command handling
-async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24) -> None:
+async def _handle_message_command_wrapper(message: discord.Message, client_user: discord.ClientUser, command_name: str, hours: int = 24, force_charts: bool = False) -> None:
     """Unified wrapper for message command handling with error management."""
     try:
         from command_abstraction import (
@@ -233,7 +281,7 @@ async def _handle_message_command_wrapper(message: discord.Message, client_user:
         response_sender = create_response_sender(message)
         thread_manager = create_thread_manager(message)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=client_user)
+        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=client_user, force_charts=force_charts)
 
     except Exception as e:
         logger.error(f"Error in handle_{command_name}_command: {str(e)}", exc_info=True)
@@ -243,7 +291,8 @@ async def _handle_message_command_wrapper(message: discord.Message, client_user:
 
 async def handle_sum_day_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the /sum-day command using the abstraction layer."""
-    await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24)
+    force_charts = '/sum-day-chart' in message.content or '/chart' in message.content
+    await _handle_message_command_wrapper(message, client_user, "sum_day", hours=24, force_charts=force_charts)
 
 async def handle_sum_hr_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the /sum-hr <num_hours> command using the abstraction layer."""
@@ -269,7 +318,39 @@ async def handle_sum_hr_command(message: discord.Message, client_user: discord.C
         warning_msg = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours)
         await message.channel.send(warning_msg)
 
-    await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours)
+    # Check if this is a chart analysis request
+    force_charts = '/sum-hr-chart' in message.content or '/chart' in message.content
+    await _handle_message_command_wrapper(message, client_user, "sum_hr", hours=hours, force_charts=force_charts)
+
+async def handle_chart_day_command(message: discord.Message, client_user: discord.ClientUser) -> None:
+    """Handles the /chart-day command for chart-focused daily analysis."""
+    await _handle_message_command_wrapper(message, client_user, "chart_day", hours=24, force_charts=True)
+
+async def handle_chart_hr_command(message: discord.Message, client_user: discord.ClientUser) -> None:
+    """Handles the /chart-hr <num_hours> command for chart-focused hourly analysis."""
+    # Parse and validate hours parameter
+    import config
+    hours = _parse_and_validate_hours(message.content.replace('/chart-hr', '/sum-hr'))
+    if hours is None:
+        await _send_error_response(
+            message, client_user,
+            config.ERROR_MESSAGES['invalid_hours_format']
+        )
+        return
+
+    if not _validate_hours_range(hours):
+        await _send_error_response(
+            message, client_user,
+            config.ERROR_MESSAGES['invalid_hours_range']
+        )
+        return
+
+    # Warn for large summaries that may take longer
+    if hours > config.LARGE_SUMMARY_THRESHOLD:
+        warning_msg = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours)
+        await message.channel.send(warning_msg)
+
+    await _handle_message_command_wrapper(message, client_user, "chart_hr", hours=hours, force_charts=True)
 
 async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: discord.ClientUser, guild: Optional[discord.Guild], channel: discord.abc.Messageable, content_to_store: str) -> None:
     """Helper function to store bot's own messages in the database."""
@@ -301,5 +382,49 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
         logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
 
 
+def _should_force_charts(query: str) -> bool:
+    """
+    Determine if the query should force chart analysis mode.
 
+    Args:
+        query: User's query text
 
+    Returns:
+        bool: True if chart analysis should be forced
+    """
+    # Explicit chart command patterns
+    chart_commands = [
+        '/chart', '/analyze', '/data', '/stats', '/metrics',
+        'chart analysis', 'data analysis', 'show charts', 'visualize data'
+    ]
+
+    # Strong chart request indicators
+    chart_indicators = [
+        'create a chart', 'show me data', 'breakdown of', 'activity analysis',
+        'user statistics', 'time analysis', 'usage patterns', 'frequency analysis',
+        'top users', 'most active', 'activity by time', 'distribution of'
+    ]
+
+    query_lower = query.lower().strip()
+
+    # Check for explicit commands
+    for command in chart_commands:
+        if query_lower.startswith(command) or command in query_lower:
+            return True
+
+    # Check for strong indicators
+    for indicator in chart_indicators:
+        if indicator in query_lower:
+            return True
+
+    # Check for quantitative question patterns
+    quantitative_patterns = [
+        'how many', 'how much', 'what percentage', 'count of',
+        'number of', 'total', 'average', 'compare'
+    ]
+
+    for pattern in quantitative_patterns:
+        if pattern in query_lower:
+            return True
+
+    return False
