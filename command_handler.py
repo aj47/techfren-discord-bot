@@ -68,6 +68,12 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     bot_response = await thread_sender.send_with_charts(response, chart_data)
                     if bot_response:
                         await store_bot_response_db(bot_response, client_user, message.guild, thread, response)
+
+                    # Delete processing message
+                    if processing_msg:
+                        await processing_msg.delete()
+
+                    logger.info(f"Command executed successfully: mention - Response length: {len(response)} - With {len(chart_data)} chart(s) - Posted in thread")
                 else:
                     # Force split if response is over 900 chars to ensure it doesn't get cut off
                     # Discord has issues with messages near the 2000 char limit
@@ -83,11 +89,11 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                         if bot_response:
                             await store_bot_response_db(bot_response, client_user, message.guild, thread, part)
 
-                # Delete processing message
-                if processing_msg:
-                    await processing_msg.delete()
+                    # Delete processing message
+                    if processing_msg:
+                        await processing_msg.delete()
 
-                logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts - Posted in thread")
+                    logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Split into {len(message_parts)} parts - Posted in thread")
             except Exception as e:
                 logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
                 import config
