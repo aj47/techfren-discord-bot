@@ -218,10 +218,18 @@ async def call_llm_api(query, message_context=None):
                     Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
                     Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
                     When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant. \
-                    IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. \
-                    Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables. \
-                    Wide tables or tables with long content will be automatically reformatted into a card-style vertical layout for better mobile readability. \
-                    CRITICAL:Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."
+                    CRITICAL - CHARTS & GRAPHS: When presenting ANY data, statistics, comparisons, rankings, or lists with values, ALWAYS use markdown tables. \
+                    Tables are automatically converted to beautiful charts and graphs for Discord users. \
+                    Examples when you MUST use tables: \
+                    - Message counts (e.g., messages per user, per hour, per day) \
+                    - Activity statistics (e.g., most active users, busiest times) \
+                    - Topic breakdowns (e.g., discussion topics with frequency) \
+                    - Comparisons of any kind with numbers or percentages \
+                    - Rankings or top lists with values \
+                    - Any data that would benefit from visualization \
+                    Table format: | Category | Value | \
+                    Keep tables simple with 2-3 columns max. \
+                    CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."
                 },
                 {
                     "role": "user",
@@ -359,6 +367,11 @@ Provide a concise summary with short bullet points for main topics. Do not inclu
 Highlight all user names/aliases with backticks (e.g., `username`).
 IMPORTANT: Each message has a [Jump to message](discord_link) link. For each bullet point, preserve these Discord message links at the end in the format: [Source](https://discord.com/channels/...)
 At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link in the same [Source](https://discord.com/channels/...) format.
+
+CRITICAL - CREATE VISUALIZATIONS: If there are patterns in the data (like message counts, activity by time, topic frequency, user participation, etc.),
+create a markdown table to visualize it. Tables are automatically converted to beautiful charts.
+Example: | User | Messages | or | Hour | Activity | or | Topic | Count |
+Always look for opportunities to present data visually with tables.
 """
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
