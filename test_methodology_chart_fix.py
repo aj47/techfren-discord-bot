@@ -5,9 +5,11 @@ This test replicates the exact problem the user reported and verifies it's fixed
 
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from chart_renderer import ChartRenderer
+
 
 def test_methodology_table_fix():
     """Test the specific case that was generating 'Total Rows in **Methodology**' charts."""
@@ -33,7 +35,9 @@ def test_methodology_table_fix():
         print("   ✗ FAILED to parse table")
         return False
 
-    print(f"   ✓ Parsed successfully: {len(table_data['headers'])} columns, {len(table_data['rows'])} rows")
+    print(
+        f"   ✓ Parsed successfully: {len(table_data['headers'])} columns, {len(table_data['rows'])} rows"
+    )
     print(f"   Headers: {table_data['headers']}")
 
     # Infer chart type
@@ -73,6 +77,7 @@ def test_methodology_table_fix():
     print("   No longer shows 'Total Rows in **Methodology**'")
     return True
 
+
 def test_specific_user_scenario():
     """Test the complete scenario as the user would experience it."""
     print("\n=== Testing Complete User Scenario ===")
@@ -95,7 +100,9 @@ Each methodology has its strengths and should be chosen based on project context
     renderer = ChartRenderer()
 
     print("1. Processing LLM response with methodology table...")
-    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(llm_response)
+    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(
+        llm_response
+    )
 
     print(f"   Original response: {len(llm_response)} characters")
     print(f"   Cleaned content: {len(cleaned_content)} characters")
@@ -108,15 +115,17 @@ Each methodology has its strengths and should be chosen based on project context
     # Check each generated chart
     for i, chart_data in enumerate(chart_data_list, 1):
         print(f"\n2. Analyzing Chart {i}...")
-        chart_url = chart_data.get('url', '')
-        chart_type = chart_data.get('type', 'unknown')
+        chart_url = chart_data.get("url", "")
+        chart_type = chart_data.get("type", "unknown")
 
         print(f"   Type: {chart_type}")
         print(f"   Placeholder: {chart_data.get('placeholder', 'N/A')}")
 
         # The critical test: make sure it's NOT the problematic chart
         if "Total Rows" in chart_url and "Methodology" in chart_url:
-            print("   ✗ CRITICAL FAILURE: Generated 'Total Rows in **Methodology**' chart!")
+            print(
+                "   ✗ CRITICAL FAILURE: Generated 'Total Rows in **Methodology**' chart!"
+            )
             print("   This is exactly the bug the user reported!")
             return False
 
@@ -124,7 +133,14 @@ Each methodology has its strengths and should be chosen based on project context
             print("   ✓ Chart generated successfully")
 
             # Check if it uses real data
-            methodology_terms = ["Agile", "Waterfall", "DevOps", "Lean", "Iterative", "Sequential"]
+            methodology_terms = [
+                "Agile",
+                "Waterfall",
+                "DevOps",
+                "Lean",
+                "Iterative",
+                "Sequential",
+            ]
             if any(term in chart_url for term in methodology_terms):
                 print("   ✓ EXCELLENT: Chart uses actual methodology data!")
             else:
@@ -135,6 +151,7 @@ Each methodology has its strengths and should be chosen based on project context
     print("\n✓ SUCCESS: No 'Total Rows in **Methodology**' charts generated!")
     return True
 
+
 def test_edge_cases():
     """Test edge cases that might trigger the old problematic behavior."""
     print("\n=== Testing Edge Cases ===")
@@ -143,24 +160,31 @@ def test_edge_cases():
 
     edge_cases = [
         # All text data
-        ("All Text Table", """| Category | Description | Notes |
+        (
+            "All Text Table",
+            """| Category | Description | Notes |
 | --- | --- | --- |
 | Design | User interface | Important |
 | Backend | Server logic | Complex |
-| Testing | Quality assurance | Critical |"""),
-
+| Testing | Quality assurance | Critical |""",
+        ),
         # Mixed qualitative data
-        ("Qualitative Data", """| Feature | Priority | Status | Complexity |
+        (
+            "Qualitative Data",
+            """| Feature | Priority | Status | Complexity |
 | --- | --- | --- | --- |
 | Login | High | Done | Low |
 | Dashboard | Medium | In Progress | High |
-| Reports | Low | Planned | Medium |"""),
-
+| Reports | Low | Planned | Medium |""",
+        ),
         # Very wide table
-        ("Wide Table", """| A | B | C | D | E | F | G | H |
+        (
+            "Wide Table",
+            """| A | B | C | D | E | F | G | H |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Data | More | Info | Details | Extra | Additional | Final |
-| 2 | Text | Content | Material | Data | Information | Content | End |""")
+| 2 | Text | Content | Material | Data | Information | Content | End |""",
+        ),
     ]
 
     success_count = 0
@@ -186,6 +210,7 @@ def test_edge_cases():
     print(f"\nEdge cases passed: {success_count}/{len(edge_cases)}")
     return success_count == len(edge_cases)
 
+
 def main():
     """Run all tests for the methodology chart fix."""
     print("METHODOLOGY CHART FIX VERIFICATION")
@@ -196,7 +221,7 @@ def main():
     tests = [
         ("Methodology Table Fix", test_methodology_table_fix),
         ("Complete User Scenario", test_specific_user_scenario),
-        ("Edge Cases", test_edge_cases)
+        ("Edge Cases", test_edge_cases),
     ]
 
     results = []
@@ -235,6 +260,7 @@ def main():
         print("The problematic chart generation may still occur.")
 
     return passed == len(results)
+
 
 if __name__ == "__main__":
     success = main()

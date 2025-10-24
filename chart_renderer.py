@@ -26,17 +26,25 @@ class ChartDataValidator:
             Tuple of (cleaned_values, has_percentages)
         """
         import re
+
         cleaned_values = []
         has_percentages = False
 
         for value_str in values:
             try:
                 clean_str = str(value_str).strip()
-                if '%' in clean_str:
+                if "%" in clean_str:
                     has_percentages = True
 
                 # Remove formatting characters
-                numeric_str = clean_str.replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                numeric_str = (
+                    clean_str.replace("%", "")
+                    .replace(",", "")
+                    .replace("$", "")
+                    .replace("€", "")
+                    .replace("£", "")
+                    .strip()
+                )
 
                 # Try direct conversion first
                 try:
@@ -47,22 +55,30 @@ class ChartDataValidator:
 
                 # If direct conversion fails, try to extract first number from text
                 # This handles cases like "High (85)", "Level 3", "Score: 92", etc.
-                number_match = re.search(r'(\d+(?:\.\d+)?)', numeric_str)
+                number_match = re.search(r"(\d+(?:\.\d+)?)", numeric_str)
                 if number_match:
                     cleaned_values.append(float(number_match.group(1)))
                     continue
 
                 # If no number found, try mapping text to numbers
                 text_lower = clean_str.lower()
-                if 'high' in text_lower or 'excellent' in text_lower:
+                if "high" in text_lower or "excellent" in text_lower:
                     cleaned_values.append(3.0)
-                elif 'medium' in text_lower or 'good' in text_lower:
+                elif "medium" in text_lower or "good" in text_lower:
                     cleaned_values.append(2.0)
-                elif 'low' in text_lower or 'poor' in text_lower:
+                elif "low" in text_lower or "poor" in text_lower:
                     cleaned_values.append(1.0)
-                elif 'yes' in text_lower or 'true' in text_lower or 'active' in text_lower:
+                elif (
+                    "yes" in text_lower
+                    or "true" in text_lower
+                    or "active" in text_lower
+                ):
                     cleaned_values.append(1.0)
-                elif 'no' in text_lower or 'false' in text_lower or 'inactive' in text_lower:
+                elif (
+                    "no" in text_lower
+                    or "false" in text_lower
+                    or "inactive" in text_lower
+                ):
                     cleaned_values.append(0.0)
                 else:
                     # Last resort: use string length as a proxy for "size" of data
@@ -74,7 +90,7 @@ class ChartDataValidator:
         return cleaned_values, has_percentages
 
     @staticmethod
-    def get_color_palette(count: int, chart_type: str = 'default') -> List[str]:
+    def get_color_palette(count: int, chart_type: str = "default") -> List[str]:
         """
         Get an appropriate color palette for the given number of data points.
 
@@ -86,57 +102,61 @@ class ChartDataValidator:
             List of color strings
         """
         # Enhanced color palettes for different chart types
-        if chart_type == 'pie':
+        if chart_type == "pie":
             colors = [
-                'rgba(255, 99, 132, 0.8)',   # Red
-                'rgba(54, 162, 235, 0.8)',   # Blue
-                'rgba(255, 206, 86, 0.8)',   # Yellow
-                'rgba(75, 192, 192, 0.8)',   # Teal
-                'rgba(153, 102, 255, 0.8)',  # Purple
-                'rgba(255, 159, 64, 0.8)',   # Orange
-                'rgba(199, 199, 199, 0.8)',  # Grey
-                'rgba(83, 102, 255, 0.8)',   # Indigo
-                'rgba(255, 192, 203, 0.8)',  # Pink
-                'rgba(144, 238, 144, 0.8)',  # Light Green
-                'rgba(255, 182, 193, 0.8)',  # Light Pink
-                'rgba(173, 216, 230, 0.8)'   # Light Blue
+                "rgba(255, 99, 132, 0.8)",  # Red
+                "rgba(54, 162, 235, 0.8)",  # Blue
+                "rgba(255, 206, 86, 0.8)",  # Yellow
+                "rgba(75, 192, 192, 0.8)",  # Teal
+                "rgba(153, 102, 255, 0.8)",  # Purple
+                "rgba(255, 159, 64, 0.8)",  # Orange
+                "rgba(199, 199, 199, 0.8)",  # Grey
+                "rgba(83, 102, 255, 0.8)",  # Indigo
+                "rgba(255, 192, 203, 0.8)",  # Pink
+                "rgba(144, 238, 144, 0.8)",  # Light Green
+                "rgba(255, 182, 193, 0.8)",  # Light Pink
+                "rgba(173, 216, 230, 0.8)",  # Light Blue
             ]
-        elif chart_type == 'bar':
+        elif chart_type == "bar":
             colors = [
-                'rgba(54, 162, 235, 0.8)',   # Blue
-                'rgba(255, 99, 132, 0.8)',   # Red
-                'rgba(75, 192, 192, 0.8)',   # Teal
-                'rgba(153, 102, 255, 0.8)',  # Purple
-                'rgba(255, 206, 86, 0.8)',   # Yellow
-                'rgba(255, 159, 64, 0.8)',   # Orange
-                'rgba(199, 199, 199, 0.8)',  # Grey
-                'rgba(83, 102, 255, 0.8)'    # Indigo
+                "rgba(54, 162, 235, 0.8)",  # Blue
+                "rgba(255, 99, 132, 0.8)",  # Red
+                "rgba(75, 192, 192, 0.8)",  # Teal
+                "rgba(153, 102, 255, 0.8)",  # Purple
+                "rgba(255, 206, 86, 0.8)",  # Yellow
+                "rgba(255, 159, 64, 0.8)",  # Orange
+                "rgba(199, 199, 199, 0.8)",  # Grey
+                "rgba(83, 102, 255, 0.8)",  # Indigo
             ]
-        elif chart_type == 'line':
+        elif chart_type == "line":
             colors = [
-                'rgba(255, 99, 132, 1)',     # Red
-                'rgba(54, 162, 235, 1)',     # Blue
-                'rgba(75, 192, 192, 1)',     # Teal
-                'rgba(153, 102, 255, 1)',    # Purple
-                'rgba(255, 206, 86, 1)',     # Yellow
-                'rgba(255, 159, 64, 1)',     # Orange
-                'rgba(199, 199, 199, 1)',    # Grey
-                'rgba(83, 102, 255, 1)'      # Indigo
+                "rgba(255, 99, 132, 1)",  # Red
+                "rgba(54, 162, 235, 1)",  # Blue
+                "rgba(75, 192, 192, 1)",  # Teal
+                "rgba(153, 102, 255, 1)",  # Purple
+                "rgba(255, 206, 86, 1)",  # Yellow
+                "rgba(255, 159, 64, 1)",  # Orange
+                "rgba(199, 199, 199, 1)",  # Grey
+                "rgba(83, 102, 255, 1)",  # Indigo
             ]
         else:
             colors = [
-                'rgba(54, 162, 235, 0.8)',
-                'rgba(255, 99, 132, 0.8)',
-                'rgba(255, 206, 86, 0.8)',
-                'rgba(75, 192, 192, 0.8)',
-                'rgba(153, 102, 255, 0.8)',
-                'rgba(255, 159, 64, 0.8)',
-                'rgba(199, 199, 199, 0.8)',
-                'rgba(83, 102, 255, 0.8)'
+                "rgba(54, 162, 235, 0.8)",
+                "rgba(255, 99, 132, 0.8)",
+                "rgba(255, 206, 86, 0.8)",
+                "rgba(75, 192, 192, 0.8)",
+                "rgba(153, 102, 255, 0.8)",
+                "rgba(255, 159, 64, 0.8)",
+                "rgba(199, 199, 199, 0.8)",
+                "rgba(83, 102, 255, 0.8)",
             ]
 
         # Repeat colors if we need more than available
-        return colors[:count] if count <= len(colors) else colors * ((count // len(colors)) + 1)
+        return (
+            colors[:count]
+            if count <= len(colors)
+            else colors * ((count // len(colors)) + 1)
+        )
 
 
 class ChartRenderer:
@@ -144,13 +164,11 @@ class ChartRenderer:
 
     # Regex pattern to detect markdown tables
     TABLE_PATTERN = re.compile(
-        r'(\|.+\|[\r\n]+\|[\s\-:|]+\|[\r\n]+(?:\|.+\|[\r\n]*)+)',
-        re.MULTILINE
+        r"(\|.+\|[\r\n]+\|[\s\-:|]+\|[\r\n]+(?:\|.+\|[\r\n]*)+)", re.MULTILINE
     )
 
     def __init__(self):
         """Initialize the chart renderer."""
-        pass
 
     def extract_tables_for_rendering(self, content: str) -> Tuple[str, List[Dict]]:
         """
@@ -194,14 +212,18 @@ class ChartRenderer:
                     placeholder = f"[Chart {idx + 1}: {chart_type.title()}]"
 
                     # Replace table with placeholder in content
-                    cleaned_content = cleaned_content.replace(table_text, placeholder, 1)
+                    cleaned_content = cleaned_content.replace(
+                        table_text, placeholder, 1
+                    )
 
-                    chart_data_list.append({
-                        'url': chart_url,
-                        'type': chart_type,
-                        'placeholder': placeholder,
-                        'original_table': table_text
-                    })
+                    chart_data_list.append(
+                        {
+                            "url": chart_url,
+                            "type": chart_type,
+                            "placeholder": placeholder,
+                            "original_table": table_text,
+                        }
+                    )
 
                     logger.info(f"Generated {chart_type} chart for table {idx + 1}")
                 else:
@@ -224,30 +246,29 @@ class ChartRenderer:
             Dict with 'headers' and 'rows' keys, or None if parsing fails
         """
         try:
-            lines = [line.strip() for line in table_text.strip().split('\n') if line.strip()]
+            lines = [
+                line.strip() for line in table_text.strip().split("\n") if line.strip()
+            ]
 
             if len(lines) < 3:  # Need at least header, separator, and one data row
                 return None
 
             # Parse header row
-            headers = [cell.strip() for cell in lines[0].split('|') if cell.strip()]
+            headers = [cell.strip() for cell in lines[0].split("|") if cell.strip()]
 
             # Skip separator row (line[1])
 
             # Parse data rows
             rows = []
             for line in lines[2:]:
-                cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                cells = [cell.strip() for cell in line.split("|") if cell.strip()]
                 if len(cells) == len(headers):
                     rows.append(cells)
 
             if not rows:
                 return None
 
-            return {
-                'headers': headers,
-                'rows': rows
-            }
+            return {"headers": headers, "rows": rows}
 
         except Exception as e:
             logger.error(f"Error parsing markdown table: {e}")
@@ -263,8 +284,8 @@ class ChartRenderer:
         Returns:
             Chart type: 'bar', 'line', 'pie', or 'table'
         """
-        headers = table_data['headers']
-        rows = table_data['rows']
+        headers = table_data["headers"]
+        rows = table_data["rows"]
 
         # If only 2 columns, analyze the content type
         if len(headers) == 2:
@@ -280,16 +301,21 @@ class ChartRenderer:
                     value_str = row[1].strip()
 
                     # Check for percentage indicators
-                    if '%' in value_str:
+                    if "%" in value_str:
                         has_percentages = True
 
                     # Check for time patterns (HH:MM, dates, etc.)
-                    if any(pattern in row[0].lower() for pattern in ['time', 'hour', 'day', 'date', ':']):
+                    if any(
+                        pattern in row[0].lower()
+                        for pattern in ["time", "hour", "day", "date", ":"]
+                    ):
                         has_time_data = True
 
                     try:
                         # Try to parse as number (removing % signs and commas)
-                        clean_value = value_str.replace('%', '').replace(',', '').strip()
+                        clean_value = (
+                            value_str.replace("%", "").replace(",", "").strip()
+                        )
                         float(clean_value)
                         numeric_count += 1
                     except ValueError:
@@ -300,27 +326,30 @@ class ChartRenderer:
                 # For percentage data or data that sums to ~100, use pie chart
                 if has_percentages:
                     try:
-                        values = [float(row[1].replace('%', '').replace(',', '').strip()) for row in rows]
+                        values = [
+                            float(row[1].replace("%", "").replace(",", "").strip())
+                            for row in rows
+                        ]
                         total = sum(values)
                         # If percentages sum to roughly 100%, it's distribution data
                         if 95 <= total <= 105:
-                            return 'pie'
-                    except:
+                            return "pie"
+                    except (ValueError, TypeError, ZeroDivisionError):
                         pass
 
                 # For time-based data, prefer line chart if it makes sense
                 if has_time_data and len(rows) >= 3:
-                    return 'line'
+                    return "line"
 
                 # Default to bar chart for numeric comparisons
-                return 'bar'
+                return "bar"
 
         # If 3+ columns with numeric data, analyze for time series
         if len(headers) >= 3:
             # Check first column for time indicators
             first_col_time = any(
                 pattern in headers[0].lower()
-                for pattern in ['time', 'hour', 'day', 'date', 'period']
+                for pattern in ["time", "hour", "day", "date", "period"]
             )
 
             # Check if we have numeric columns with enhanced detection
@@ -331,10 +360,19 @@ class ChartRenderer:
                     if len(row) > col_idx:
                         try:
                             # More aggressive numeric detection
-                            value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                            value = (
+                                str(row[col_idx])
+                                .replace("%", "")
+                                .replace(",", "")
+                                .replace("$", "")
+                                .replace("€", "")
+                                .replace("£", "")
+                                .strip()
+                            )
                             # Try to extract numbers from text like "High (85%)" or "Level 3"
                             import re
-                            number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+
+                            number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                             if number_match:
                                 float(number_match.group(1))
                                 numeric_count += 1
@@ -350,11 +388,11 @@ class ChartRenderer:
 
             # If we have time data and multiple numeric columns, use line chart
             if first_col_time and len(numeric_cols) >= 2:
-                return 'line'
+                return "line"
             elif len(numeric_cols) >= 2:
-                return 'line'
+                return "line"
             elif len(numeric_cols) == 1:
-                return 'bar'
+                return "bar"
 
         # For multi-column tables, try to find any visualizable data with enhanced detection
         # Look for any numeric columns that could be charted
@@ -364,10 +402,19 @@ class ChartRenderer:
                 if len(row) > col_idx:
                     try:
                         # Enhanced numeric extraction
-                        value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                        value = (
+                            str(row[col_idx])
+                            .replace("%", "")
+                            .replace(",", "")
+                            .replace("$", "")
+                            .replace("€", "")
+                            .replace("£", "")
+                            .strip()
+                        )
                         # Try to extract numbers from text
                         import re
-                        number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+
+                        number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                         if number_match:
                             float(number_match.group(1))
                             numeric_count += 1
@@ -379,19 +426,23 @@ class ChartRenderer:
 
             # If we find any column with >20% numeric data, use bar chart (very aggressive)
             if numeric_count / len(rows) > 0.2:
-                return 'bar'
+                return "bar"
 
         # If no numeric data, but we have categorical data that varies, still try bar chart
         if len(headers) >= 2 and len(rows) > 1:
             # Check if first column has varied categorical data
             unique_values = set(str(row[0]) for row in rows if len(row) > 0)
-            if len(unique_values) > 1 and len(unique_values) <= 10:  # Good for categorical visualization
-                return 'bar'
+            if (
+                len(unique_values) > 1 and len(unique_values) <= 10
+            ):  # Good for categorical visualization
+                return "bar"
 
         # Default to table image for complex/text data
-        return 'table'
+        return "table"
 
-    def _generate_quickchart_url(self, table_data: Dict, chart_type: str) -> Optional[str]:
+    def _generate_quickchart_url(
+        self, table_data: Dict, chart_type: str
+    ) -> Optional[str]:
         """
         Generate a QuickChart URL for the given table data and chart type.
 
@@ -403,18 +454,20 @@ class ChartRenderer:
             QuickChart URL string, or None if generation fails
         """
         try:
-            if chart_type == 'table':
+            if chart_type == "table":
                 table_url = self._generate_table_chart(table_data)
                 # If table chart returns None, try to generate a bar chart instead
                 if table_url is None:
-                    logger.info("Table chart generation returned None, attempting bar chart fallback")
+                    logger.info(
+                        "Table chart generation returned None, attempting bar chart fallback"
+                    )
                     return self._generate_bar_chart(table_data)
                 return table_url
-            elif chart_type == 'bar':
+            elif chart_type == "bar":
                 return self._generate_bar_chart(table_data)
-            elif chart_type == 'pie':
+            elif chart_type == "pie":
                 return self._generate_pie_chart(table_data)
-            elif chart_type == 'line':
+            elif chart_type == "line":
                 return self._generate_line_chart(table_data)
             else:
                 logger.warning(f"Unknown chart type: {chart_type}")
@@ -426,8 +479,8 @@ class ChartRenderer:
 
     def _generate_table_chart(self, table_data: Dict) -> Optional[str]:
         """Generate a formatted table image using QuickChart."""
-        headers = table_data['headers']
-        rows = table_data['rows']
+        headers = table_data["headers"]
+        rows = table_data["rows"]
 
         # For complex tables with many columns, try to find the best 2 columns to visualize
         if len(headers) > 2:
@@ -443,10 +496,19 @@ class ChartRenderer:
                     if len(row) > col_idx:
                         try:
                             # More aggressive cleaning for numeric detection
-                            value = str(row[col_idx]).replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                            value = (
+                                str(row[col_idx])
+                                .replace("%", "")
+                                .replace(",", "")
+                                .replace("$", "")
+                                .replace("€", "")
+                                .replace("£", "")
+                                .strip()
+                            )
                             # Also try to extract numbers from text like "High (85%)" or "Level 3"
                             import re
-                            number_match = re.search(r'(\d+(?:\.\d+)?)', value)
+
+                            number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                             if number_match:
                                 float(number_match.group(1))
                                 numeric_count += 1
@@ -466,19 +528,23 @@ class ChartRenderer:
             # If we found any numeric column, create a simplified 2-column table for charting
             if value_col_idx is not None:
                 simplified_table = {
-                    'headers': [headers[label_col_idx], headers[value_col_idx]],
-                    'rows': [[row[label_col_idx], row[value_col_idx]] for row in rows if len(row) > value_col_idx]
+                    "headers": [headers[label_col_idx], headers[value_col_idx]],
+                    "rows": [
+                        [row[label_col_idx], row[value_col_idx]]
+                        for row in rows
+                        if len(row) > value_col_idx
+                    ],
                 }
 
                 # Determine chart type for the simplified data
                 chart_type = self._infer_chart_type(simplified_table)
 
                 # Generate appropriate chart based on the simplified data
-                if chart_type == 'bar':
+                if chart_type == "bar":
                     return self._generate_bar_chart(simplified_table)
-                elif chart_type == 'pie':
+                elif chart_type == "pie":
                     return self._generate_pie_chart(simplified_table)
-                elif chart_type == 'line':
+                elif chart_type == "line":
                     return self._generate_line_chart(simplified_table)
 
             # If no numeric data found, try to create a categorical distribution chart
@@ -486,13 +552,19 @@ class ChartRenderer:
             if len(rows) > 1:
                 # Create a frequency distribution of the first column values
                 from collections import Counter
-                category_counts = Counter([row[0] if len(row) > 0 else 'Unknown' for row in rows])
+
+                category_counts = Counter(
+                    [row[0] if len(row) > 0 else "Unknown" for row in rows]
+                )
 
                 # Only create chart if we have varied data (not all the same)
                 if len(category_counts) > 1 and len(category_counts) <= 10:
                     simplified_table = {
-                        'headers': [headers[0], 'Count'],
-                        'rows': [[category, str(count)] for category, count in category_counts.most_common()]
+                        "headers": [headers[0], "Count"],
+                        "rows": [
+                            [category, str(count)]
+                            for category, count in category_counts.most_common()
+                        ],
                     }
                     return self._generate_bar_chart(simplified_table)
 
@@ -507,8 +579,8 @@ class ChartRenderer:
         qc.height = 500
         qc.device_pixel_ratio = 2.0
 
-        headers = table_data['headers']
-        rows = table_data['rows']
+        headers = table_data["headers"]
+        rows = table_data["rows"]
 
         # For multi-column tables, find the best numeric column to chart
         label_col_idx = 0
@@ -518,11 +590,13 @@ class ChartRenderer:
         if len(headers) > 2:
             for col_idx in range(1, len(headers)):
                 numeric_count = 0
-                test_values = [row[col_idx] if len(row) > col_idx else '0' for row in rows]
+                test_values = [
+                    row[col_idx] if len(row) > col_idx else "0" for row in rows
+                ]
 
                 for val in test_values:
                     try:
-                        clean_val = val.replace('%', '').replace(',', '').strip()
+                        clean_val = val.replace("%", "").replace(",", "").strip()
                         float(clean_val)
                         numeric_count += 1
                     except (ValueError, AttributeError):
@@ -534,7 +608,10 @@ class ChartRenderer:
                     break
 
         # Extract labels and values using the determined columns
-        labels = [str(row[label_col_idx]) if len(row) > label_col_idx else f"Item {i+1}" for i, row in enumerate(rows)]
+        labels = [
+            str(row[label_col_idx]) if len(row) > label_col_idx else f"Item {i+1}"
+            for i, row in enumerate(rows)
+        ]
         raw_values = []
 
         # Enhanced value extraction with better numeric parsing
@@ -543,95 +620,103 @@ class ChartRenderer:
                 value_str = str(row[value_col_idx])
                 # Try to extract numeric value from text using regex
                 import re
-                number_match = re.search(r'(\d+(?:\.\d+)?)', value_str.replace('%', '').replace(',', '').replace('$', '').replace('€', '').replace('£', ''))
+
+                number_match = re.search(
+                    r"(\d+(?:\.\d+)?)",
+                    value_str.replace("%", "")
+                    .replace(",", "")
+                    .replace("$", "")
+                    .replace("€", "")
+                    .replace("£", ""),
+                )
                 if number_match:
                     raw_values.append(number_match.group(1))
                 else:
                     raw_values.append(value_str)
             else:
-                raw_values.append('0')
+                raw_values.append("0")
 
         # Validate and clean numeric data
         values, has_percentages = ChartDataValidator.validate_numeric_data(raw_values)
 
         # Generate a more descriptive title using the selected columns
-        selected_headers = [headers[label_col_idx], headers[value_col_idx]] if len(headers) > value_col_idx else headers
-        title = self._generate_chart_title(selected_headers, 'bar')
+        selected_headers = (
+            [headers[label_col_idx], headers[value_col_idx]]
+            if len(headers) > value_col_idx
+            else headers
+        )
+        title = self._generate_chart_title(selected_headers, "bar")
 
         # Get appropriate colors
-        colors = ChartDataValidator.get_color_palette(len(values), 'bar')
+        colors = ChartDataValidator.get_color_palette(len(values), "bar")
 
         # Determine if values should show percentages
-        value_suffix = '%' if has_percentages else ''
+        value_suffix = "%" if has_percentages else ""
 
         # Create more detailed axis labels and legend descriptions
-        x_axis_label = self._enhance_axis_label(headers[label_col_idx] if len(headers) > label_col_idx else 'Category', 'x')
-        y_axis_label = self._enhance_axis_label(headers[value_col_idx] if len(headers) > value_col_idx else 'Value', 'y', value_suffix)
-        legend_label = self._enhance_legend_label(headers[value_col_idx] if len(headers) > value_col_idx else 'Value', 'bar', value_suffix)
+        x_axis_label = self._enhance_axis_label(
+            headers[label_col_idx] if len(headers) > label_col_idx else "Category", "x"
+        )
+        y_axis_label = self._enhance_axis_label(
+            headers[value_col_idx] if len(headers) > value_col_idx else "Value",
+            "y",
+            value_suffix,
+        )
+        legend_label = self._enhance_legend_label(
+            headers[value_col_idx] if len(headers) > value_col_idx else "Value",
+            "bar",
+            value_suffix,
+        )
 
         config = {
-            'type': 'bar',
-            'data': {
-                'labels': labels,
-                'datasets': [{
-                    'label': legend_label,
-                    'data': values,
-                    'backgroundColor': colors,
-                    'borderColor': [color.replace('0.8', '1') for color in colors],
-                    'borderWidth': 1
-                }]
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": legend_label,
+                        "data": values,
+                        "backgroundColor": colors,
+                        "borderColor": [color.replace("0.8", "1") for color in colors],
+                        "borderWidth": 1,
+                    }
+                ],
             },
-            'options': {
-                'responsive': True,
-                'plugins': {
-                    'title': {
-                        'display': True,
-                        'text': title,
-                        'font': {
-                            'size': 16,
-                            'weight': 'bold'
-                        }
+            "options": {
+                "responsive": True,
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": title,
+                        "font": {"size": 16, "weight": "bold"},
                     },
-                    'legend': {
-                        'display': len(selected_headers) > 2,
-                        'position': 'top'
+                    "legend": {"display": len(selected_headers) > 2, "position": "top"},
+                    "datalabels": {
+                        "anchor": "end",
+                        "align": "top",
+                        "formatter": f'(value) => value + "{value_suffix}"',
+                        "font": {"weight": "bold"},
                     },
-                    'datalabels': {
-                        'anchor': 'end',
-                        'align': 'top',
-                        'formatter': f'(value) => value + "{value_suffix}"',
-                        'font': {
-                            'weight': 'bold'
-                        }
-                    }
                 },
-                'scales': {
-                    'x': {
-                        'title': {
-                            'display': True,
-                            'text': x_axis_label,
-                            'font': {
-                                'size': 14,
-                                'weight': 'bold'
-                            }
+                "scales": {
+                    "x": {
+                        "title": {
+                            "display": True,
+                            "text": x_axis_label,
+                            "font": {"size": 14, "weight": "bold"},
                         }
                     },
-                    'y': {
-                        'beginAtZero': True,
-                        'title': {
-                            'display': True,
-                            'text': y_axis_label,
-                            'font': {
-                                'size': 14,
-                                'weight': 'bold'
-                            }
+                    "y": {
+                        "beginAtZero": True,
+                        "title": {
+                            "display": True,
+                            "text": y_axis_label,
+                            "font": {"size": 14, "weight": "bold"},
                         },
-                        'ticks': {
-                            'callback': f'(value) => value + "{value_suffix}"'
-                        }
-                    }
-                }
-            }
+                        "ticks": {"callback": f'(value) => value + "{value_suffix}"'},
+                    },
+                },
+            },
         }
 
         qc.config = config
@@ -644,72 +729,62 @@ class ChartRenderer:
         qc.height = 500
         qc.device_pixel_ratio = 2.0
 
-        headers = table_data['headers']
-        rows = table_data['rows']
+        headers = table_data["headers"]
+        rows = table_data["rows"]
 
         # Extract labels and values using validation
         labels = [row[0] for row in rows]
-        raw_values = [row[1] if len(row) >= 2 else '0' for row in rows]
+        raw_values = [row[1] if len(row) >= 2 else "0" for row in rows]
 
         # Validate and clean numeric data
         values, has_percentages = ChartDataValidator.validate_numeric_data(raw_values)
 
         # Generate title
-        title = self._generate_chart_title(headers, 'pie')
+        title = self._generate_chart_title(headers, "pie")
 
         # Get appropriate colors for pie chart
-        colors = ChartDataValidator.get_color_palette(len(values), 'pie')
+        colors = ChartDataValidator.get_color_palette(len(values), "pie")
 
         # Determine if values should show percentages
-        value_suffix = '%' if has_percentages else ''
+        "%" if has_percentages else ""
 
-        # Create detailed legend label for pie chart
-        legend_label = self._enhance_legend_label(headers[1] if len(headers) > 1 else 'Value', 'pie', value_suffix)
         # Calculate percentages for display
-        total = sum(values)
-        percentages = [round((v/total)*100, 1) if total > 0 else 0 for v in values]
+        sum(values)
 
         config = {
-            'type': 'pie',
-            'data': {
-                'labels': labels,
-                'datasets': [{
-                    'data': values,
-                    'backgroundColor': colors,
-                    'borderColor': '#fff',
-                    'borderWidth': 2
-                }]
-            },
-            'options': {
-                'responsive': True,
-                'plugins': {
-                    'title': {
-                        'display': True,
-                        'text': title,
-                        'font': {
-                            'size': 16,
-                            'weight': 'bold'
-                        }
-                    },
-                    'legend': {
-                        'display': True,
-                        'position': 'right',
-                        'labels': {
-                            'padding': 20,
-                            'usePointStyle': True
-                        }
-                    },
-                    'datalabels': {
-                        'color': '#fff',
-                        'font': {
-                            'weight': 'bold',
-                            'size': 12
-                        },
-                        'formatter': '(value, ctx) => { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); const percentage = Math.round((value / total) * 100); return percentage + "%"; }',
-                        'display': '(ctx) => ctx.dataset.data[ctx.dataIndex] > 0'
+            "type": "pie",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "data": values,
+                        "backgroundColor": colors,
+                        "borderColor": "#fff",
+                        "borderWidth": 2,
                     }
-                }
-            }
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": title,
+                        "font": {"size": 16, "weight": "bold"},
+                    },
+                    "legend": {
+                        "display": True,
+                        "position": "right",
+                        "labels": {"padding": 20, "usePointStyle": True},
+                    },
+                    "datalabels": {
+                        "color": "#fff",
+                        "font": {"weight": "bold", "size": 12},
+                        "formatter": '(value, ctx) => { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); const percentage = Math.round((value / total) * 100); return percentage + "%"; }',
+                        "display": "(ctx) => ctx.dataset.data[ctx.dataIndex] > 0",
+                    },
+                },
+            },
         }
 
         qc.config = config
@@ -722,8 +797,8 @@ class ChartRenderer:
         qc.height = 500
         qc.device_pixel_ratio = 2.0
 
-        headers = table_data['headers']
-        rows = table_data['rows']
+        headers = table_data["headers"]
+        rows = table_data["rows"]
 
         # Extract labels (first column)
         labels = [row[0] for row in rows]
@@ -732,83 +807,69 @@ class ChartRenderer:
         datasets = []
 
         # Get colors for line chart
-        colors = ChartDataValidator.get_color_palette(len(headers) - 1, 'line')
+        colors = ChartDataValidator.get_color_palette(len(headers) - 1, "line")
 
         for col_idx in range(1, len(headers)):
-            raw_values = [row[col_idx] if len(row) > col_idx else '0' for row in rows]
+            raw_values = [row[col_idx] if len(row) > col_idx else "0" for row in rows]
             values, _ = ChartDataValidator.validate_numeric_data(raw_values)
 
             color = colors[(col_idx - 1) % len(colors)]
-            datasets.append({
-                'label': headers[col_idx],
-                'data': values,
-                'borderColor': color,
-                'backgroundColor': color.replace('1)', '0.1)'),
-                'fill': False,
-                'tension': 0.3,
-                'pointRadius': 5,
-                'pointHoverRadius': 7,
-                'pointBackgroundColor': color,
-                'pointBorderColor': '#fff',
-                'pointBorderWidth': 2
-            })
+            datasets.append(
+                {
+                    "label": headers[col_idx],
+                    "data": values,
+                    "borderColor": color,
+                    "backgroundColor": color.replace("1)", "0.1)"),
+                    "fill": False,
+                    "tension": 0.3,
+                    "pointRadius": 5,
+                    "pointHoverRadius": 7,
+                    "pointBackgroundColor": color,
+                    "pointBorderColor": "#fff",
+                    "pointBorderWidth": 2,
+                }
+            )
 
         # Generate a more descriptive title
-        title = self._generate_chart_title(headers, 'line')
+        title = self._generate_chart_title(headers, "line")
 
         config = {
-            'type': 'line',
-            'data': {
-                'labels': labels,
-                'datasets': datasets
+            "type": "line",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {
+                "responsive": True,
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": title,
+                        "font": {"size": 16, "weight": "bold"},
+                    },
+                    "legend": {"display": len(datasets) > 1, "position": "top"},
+                    "datalabels": {"display": False},
+                },
+                "scales": {
+                    "x": {
+                        "title": {
+                            "display": True,
+                            "text": headers[0] if headers else "Time Period",
+                        }
+                    },
+                    "y": {
+                        "beginAtZero": True,
+                        "title": {
+                            "display": True,
+                            "text": self._enhance_axis_label("Value", "y"),
+                            "font": {"size": 14, "weight": "bold"},
+                        },
+                    },
+                },
+                "interaction": {"intersect": False, "mode": "index"},
             },
-            'options': {
-                'responsive': True,
-                'plugins': {
-                    'title': {
-                        'display': True,
-                        'text': title,
-                        'font': {
-                            'size': 16,
-                            'weight': 'bold'
-                        }
-                    },
-                    'legend': {
-                        'display': len(datasets) > 1,
-                        'position': 'top'
-                    },
-                    'datalabels': {
-                        'display': False
-                    }
-                },
-                'scales': {
-                    'x': {
-                        'title': {
-                            'display': True,
-                            'text': headers[0] if headers else 'Time Period'
-                        }
-                    },
-                    'y': {
-                        'beginAtZero': True,
-                        'title': {
-                            'display': True,
-                            'text': self._enhance_axis_label('Value', 'y'),
-                            'font': {
-                                'size': 14,
-                                'weight': 'bold'
-                            }
-                        }
-                    }
-                },
-                'interaction': {
-                    'intersect': False,
-                    'mode': 'index'
-                }
-            }
         }
 
         qc.config = config
         return qc.get_url()
+
     def _generate_chart_title(self, headers: List[str], chart_type: str) -> str:
         """
         Generate a meaningful and detailed chart title based on headers and chart type.
@@ -826,11 +887,11 @@ class ChartRenderer:
         # For single header, make it more descriptive
         if len(headers) == 1:
             header = headers[0]
-            if chart_type == 'pie':
+            if chart_type == "pie":
                 return f"{header} Distribution Analysis"
-            elif chart_type == 'bar':
+            elif chart_type == "bar":
                 return f"{header} Comparison Chart"
-            elif chart_type == 'line':
+            elif chart_type == "line":
                 return f"{header} Trend Analysis"
             else:
                 return f"{header} Analysis"
@@ -841,36 +902,44 @@ class ChartRenderer:
             value_header = headers[1]
 
             # Make titles more specific based on content
-            if chart_type == 'pie':
-                if 'focus' in value_header.lower():
+            if chart_type == "pie":
+                if "focus" in value_header.lower():
                     return f"Focus Level Distribution Across {category_header}"
-                elif 'detail' in value_header.lower():
+                elif "detail" in value_header.lower():
                     return f"Detail Level Breakdown by {category_header}"
-                elif '%' in value_header or 'percent' in value_header.lower():
+                elif "%" in value_header or "percent" in value_header.lower():
                     return f"{value_header} Share by {category_header}"
                 else:
                     return f"{value_header} Distribution by {category_header}"
 
-            elif chart_type == 'bar':
-                if 'focus' in value_header.lower():
+            elif chart_type == "bar":
+                if "focus" in value_header.lower():
                     return f"Focus Score Comparison: {category_header} Analysis"
-                elif 'detail' in value_header.lower():
+                elif "detail" in value_header.lower():
                     return f"Detail Level Analysis by {category_header}"
-                elif 'score' in value_header.lower() or 'rating' in value_header.lower():
+                elif (
+                    "score" in value_header.lower() or "rating" in value_header.lower()
+                ):
                     return f"{value_header} Ratings Across {category_header}"
-                elif 'count' in value_header.lower() or 'number' in value_header.lower():
+                elif (
+                    "count" in value_header.lower() or "number" in value_header.lower()
+                ):
                     return f"{value_header} by {category_header}"
-                elif 'year' in value_header.lower():
+                elif "year" in value_header.lower():
                     return f"{category_header} Timeline: {value_header}"
-                elif 'goal' in value_header.lower():
+                elif "goal" in value_header.lower():
                     return f"{category_header} Target Goals: {value_header}"
-                elif 'power' in value_header.lower():
+                elif "power" in value_header.lower():
                     return f"{category_header} Power Analysis: {value_header}"
                 else:
                     return f"{value_header} Analysis by {category_header}"
 
-            elif chart_type == 'line':
-                if 'time' in category_header.lower() or 'date' in category_header.lower() or 'period' in category_header.lower():
+            elif chart_type == "line":
+                if (
+                    "time" in category_header.lower()
+                    or "date" in category_header.lower()
+                    or "period" in category_header.lower()
+                ):
                     return f"{value_header} Trends Over {category_header}"
                 else:
                     return f"{value_header} Evolution Across {category_header}"
@@ -879,12 +948,14 @@ class ChartRenderer:
 
         # For multiple headers, create context-aware titles
         category_header = headers[0]
-        if chart_type == 'line':
+        if chart_type == "line":
             return f"Multi-Metric Trends Over {category_header}"
         else:
             return f"Comprehensive {category_header} Analysis"
 
-    def _enhance_axis_label(self, original_label: str, axis_type: str, suffix: str = '') -> str:
+    def _enhance_axis_label(
+        self, original_label: str, axis_type: str, suffix: str = ""
+    ) -> str:
         """
         Enhance axis labels to be more descriptive and informative.
 
@@ -900,47 +971,57 @@ class ChartRenderer:
         label = original_label.strip()
 
         # Axis-specific enhancements
-        if axis_type == 'x':
+        if axis_type == "x":
             # X-axis typically shows categories/items
-            if label.lower() in ['category', 'item', 'name']:
-                return 'Categories'
-            elif 'time' in label.lower() or 'date' in label.lower() or 'period' in label.lower():
-                return f'Time Period ({label})'
-            elif 'user' in label.lower() or 'author' in label.lower():
-                return f'Users ({label})'
-            elif 'technology' in label.lower() or 'tool' in label.lower() or 'framework' in label.lower():
-                return f'Technologies ({label})'
-            elif 'method' in label.lower() or 'approach' in label.lower():
-                return f'Methodologies ({label})'
+            if label.lower() in ["category", "item", "name"]:
+                return "Categories"
+            elif (
+                "time" in label.lower()
+                or "date" in label.lower()
+                or "period" in label.lower()
+            ):
+                return f"Time Period ({label})"
+            elif "user" in label.lower() or "author" in label.lower():
+                return f"Users ({label})"
+            elif (
+                "technology" in label.lower()
+                or "tool" in label.lower()
+                or "framework" in label.lower()
+            ):
+                return f"Technologies ({label})"
+            elif "method" in label.lower() or "approach" in label.lower():
+                return f"Methodologies ({label})"
             else:
-                return f'{label} (Categories)'
+                return f"{label} (Categories)"
 
-        elif axis_type == 'y':
+        elif axis_type == "y":
             # Y-axis typically shows values/measurements
-            if label.lower() in ['value', 'count', 'number']:
+            if label.lower() in ["value", "count", "number"]:
                 return f'Measurement Values{" (" + suffix + ")" if suffix else ""}'
-            elif 'focus' in label.lower():
+            elif "focus" in label.lower():
                 return f'Focus Level (Score){" " + suffix if suffix else ""}'
-            elif 'detail' in label.lower():
+            elif "detail" in label.lower():
                 return f'Detail Level (Quantity){" " + suffix if suffix else ""}'
-            elif 'score' in label.lower() or 'rating' in label.lower():
+            elif "score" in label.lower() or "rating" in label.lower():
                 return f'{label} (Rating Scale){" " + suffix if suffix else ""}'
-            elif 'count' in label.lower() or 'number' in label.lower():
+            elif "count" in label.lower() or "number" in label.lower():
                 return f'{label} (Quantity){" " + suffix if suffix else ""}'
-            elif '%' in label or 'percent' in label.lower() or suffix == '%':
+            elif "%" in label or "percent" in label.lower() or suffix == "%":
                 return f'{label} (Percentage){" " + suffix if suffix else ""}'
-            elif 'year' in label.lower():
-                return f'{label} (Year)'
-            elif 'goal' in label.lower():
+            elif "year" in label.lower():
+                return f"{label} (Year)"
+            elif "goal" in label.lower():
                 return f'{label} (Target Value){" " + suffix if suffix else ""}'
-            elif 'power' in label.lower():
+            elif "power" in label.lower():
                 return f'{label} (Power Units){" " + suffix if suffix else ""}'
             else:
                 return f'{label} (Value){" " + suffix if suffix else ""}'
 
         return label
 
-    def _enhance_legend_label(self, original_label: str, chart_type: str, suffix: str = '') -> str:
+    def _enhance_legend_label(
+        self, original_label: str, chart_type: str, suffix: str = ""
+    ) -> str:
         """
         Enhance legend labels to be more descriptive and informative.
 
@@ -955,38 +1036,38 @@ class ChartRenderer:
         label = original_label.strip()
 
         # Chart type specific enhancements
-        if chart_type == 'pie':
-            if 'focus' in label.lower():
+        if chart_type == "pie":
+            if "focus" in label.lower():
                 return f'Focus Distribution{" (" + suffix + ")" if suffix else ""}'
-            elif 'detail' in label.lower():
+            elif "detail" in label.lower():
                 return f'Detail Breakdown{" (" + suffix + ")" if suffix else ""}'
-            elif '%' in label or 'percent' in label.lower() or suffix == '%':
+            elif "%" in label or "percent" in label.lower() or suffix == "%":
                 return f'{label} Share{" (" + suffix + ")" if suffix else ""}'
             else:
                 return f'{label} Distribution{" (" + suffix + ")" if suffix else ""}'
 
-        elif chart_type == 'bar':
-            if 'focus' in label.lower():
+        elif chart_type == "bar":
+            if "focus" in label.lower():
                 return f'Focus Score{" (" + suffix + ")" if suffix else ""}'
-            elif 'detail' in label.lower():
+            elif "detail" in label.lower():
                 return f'Detail Level{" (" + suffix + ")" if suffix else ""}'
-            elif 'count' in label.lower() or 'number' in label.lower():
+            elif "count" in label.lower() or "number" in label.lower():
                 return f'{label}{" (" + suffix + ")" if suffix else ""}'
-            elif 'score' in label.lower() or 'rating' in label.lower():
+            elif "score" in label.lower() or "rating" in label.lower():
                 return f'{label} Rating{" (" + suffix + ")" if suffix else ""}'
-            elif 'year' in label.lower():
-                return f'{label} (Timeline)'
-            elif 'goal' in label.lower():
+            elif "year" in label.lower():
+                return f"{label} (Timeline)"
+            elif "goal" in label.lower():
                 return f'{label} Target{" (" + suffix + ")" if suffix else ""}'
-            elif 'power' in label.lower():
+            elif "power" in label.lower():
                 return f'{label} Capacity{" (" + suffix + ")" if suffix else ""}'
             else:
                 return f'{label} Measurement{" (" + suffix + ")" if suffix else ""}'
 
-        elif chart_type == 'line':
-            if 'focus' in label.lower():
+        elif chart_type == "line":
+            if "focus" in label.lower():
                 return f'Focus Trends{" (" + suffix + ")" if suffix else ""}'
-            elif 'detail' in label.lower():
+            elif "detail" in label.lower():
                 return f'Detail Evolution{" (" + suffix + ")" if suffix else ""}'
             else:
                 return f'{label} Over Time{" (" + suffix + ")" if suffix else ""}'

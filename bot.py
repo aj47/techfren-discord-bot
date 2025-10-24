@@ -7,29 +7,48 @@ import re
 import os
 import json
 from typing import Optional
-from datetime import datetime, timedelta, timezone
 import database
-from logging_config import logger # Import the logger from the new module
-from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
-from message_utils import split_long_message # Import message utility functions
-from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
-from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command, handle_chart_day_command, handle_chart_hr_command # Import command handlers
+from logging_config import logger  # Import the logger from the new module
+# from rate_limiter import (
+#     check_rate_limit,
+#     update_rate_limit_config,
+# )  # Import rate limiting functions - commented out as unused
+from llm_handler import (
+    summarize_scraped_content,
+)  # Import LLM functions
+# from message_utils import split_long_message  # Import message utility functions - commented out as unused
+from youtube_handler import (
+    is_youtube_url,
+    scrape_youtube_content,
+)  # Import YouTube functions
+from summarization_tasks import (
+    daily_channel_summarization,
+    set_discord_client,
+)  # Import summarization tasks
+from config_validator import validate_config  # Import config validator
+from command_handler import (
+    handle_bot_command,
+    handle_sum_day_command,
+    handle_sum_hr_command,
+    handle_chart_day_command,
+    handle_chart_hr_command,
+)  # Import command handlers
 from thread_memory import process_thread_memory_command
-from firecrawl_handler import scrape_url_content # Import Firecrawl handler
-from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
+from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
-intents.message_content = True  # This is required to read message content in guild channels
+intents.message_content = (
+    True  # This is required to read message content in guild channels
+)
 
 # Use commands.Bot instead of discord.Client to support slash commands
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Keep client reference for backward compatibility
 client = bot
+
 
 async def process_url(message_id: str, url: str):
     """
@@ -52,25 +71,37 @@ async def process_url(message_id: str, url: str):
 
             # If YouTube scraping fails, fall back to Firecrawl
             if not scraped_result:
-                logger.warning(f"Failed to scrape YouTube content, falling back to Firecrawl: {url}")
+                logger.warning(
+                    f"Failed to scrape YouTube content, falling back to Firecrawl: {url}"
+                )
                 scraped_result = await scrape_url_content(url)
             else:
                 logger.info(f"Successfully scraped YouTube content: {url}")
                 # Extract markdown content from the scraped result
-                markdown_content = scraped_result.get('markdown')
+                markdown_content = scraped_result.get("markdown")
         # Check if the URL is from Twitter/X.com
         elif await is_twitter_url(url):
             logger.info(f"Detected Twitter/X.com URL: {url}")
 
             # Validate if the URL contains a tweet ID (status)
             from apify_handler import extract_tweet_id
+
             tweet_id = extract_tweet_id(url)
             if not tweet_id:
-                logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
+                logger.warning(
+                    f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}"
+                )
 
                 # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
-                if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
-                    logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+                if url.lower() in [
+                    "https://x.com",
+                    "https://twitter.com",
+                    "http://x.com",
+                    "http://twitter.com",
+                ]:
+                    logger.info(
+                        f"Handling base Twitter/X.com URL with custom response: {url}"
+                    )
                     scraped_result = {
                         "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
                     }
@@ -79,8 +110,10 @@ async def process_url(message_id: str, url: str):
                     scraped_result = await scrape_url_content(url)
             else:
                 # Check if Apify API token is configured
-                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+                if not hasattr(config, "apify_api_token") or not config.apify_api_token:
+                    logger.warning(
+                        "Apify API token not found in config.py or is empty, falling back to Firecrawl"
+                    )
                     scraped_result = await scrape_url_content(url)
                 else:
                     # Use Apify to scrape Twitter/X.com content
@@ -88,12 +121,16 @@ async def process_url(message_id: str, url: str):
 
                     # If Apify scraping fails, fall back to Firecrawl
                     if not scraped_result:
-                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                        logger.warning(
+                            f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}"
+                        )
                         scraped_result = await scrape_url_content(url)
                     else:
-                        logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+                        logger.info(
+                            f"Successfully scraped Twitter/X.com content with Apify: {url}"
+                        )
                         # Extract markdown content from the scraped result
-                        markdown_content = scraped_result.get('markdown')
+                        markdown_content = scraped_result.get("markdown")
         else:
             # For non-Twitter/X.com and non-YouTube URLs, use Firecrawl
             scraped_result = await scrape_url_content(url)
@@ -107,24 +144,34 @@ async def process_url(message_id: str, url: str):
         # Handle different types of scraped results
         if await is_youtube_url(url):
             # YouTube handler returns a dict with 'markdown' key
-            if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
+            if isinstance(scraped_result, dict) and "markdown" in scraped_result:
                 markdown_content = scraped_result.get("markdown", "")
             else:
-                logger.warning(f"Invalid scraped result structure for YouTube URL {url}: expected dict with 'markdown' key")
+                logger.warning(
+                    f"Invalid scraped result structure for YouTube URL {url}: expected dict with 'markdown' key"
+                )
                 return
-        elif await is_twitter_url(url) and hasattr(config, 'apify_api_token') and config.apify_api_token:
+        elif (
+            await is_twitter_url(url)
+            and hasattr(config, "apify_api_token")
+            and config.apify_api_token
+        ):
             # Twitter/X.com URLs scraped with Apify return a dict with 'markdown' key
-            if isinstance(scraped_result, dict) and 'markdown' in scraped_result:
+            if isinstance(scraped_result, dict) and "markdown" in scraped_result:
                 markdown_content = scraped_result.get("markdown", "")
             else:
-                logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
+                logger.warning(
+                    f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key"
+                )
                 return
         else:
             # Firecrawl returns markdown directly as a string
             if isinstance(scraped_result, str):
                 markdown_content = scraped_result
             else:
-                logger.warning(f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}")
+                logger.warning(
+                    f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}"
+                )
                 return
 
         # Step 2: Summarize the scraped content
@@ -134,14 +181,11 @@ async def process_url(message_id: str, url: str):
             return
 
         # Step 3: Convert key points to JSON string
-        key_points_json = json.dumps(scraped_data.get('key_points', []))
+        key_points_json = json.dumps(scraped_data.get("key_points", []))
 
         # Step 4: Update the message in the database with the scraped data
         success = await database.update_message_with_scraped_data(
-            message_id,
-            url,
-            scraped_data.get('summary', ''),
-            key_points_json
+            message_id, url, scraped_data.get("summary", ""), key_points_json
         )
 
         if success:
@@ -150,7 +194,11 @@ async def process_url(message_id: str, url: str):
             logger.warning(f"Failed to update message {message_id} with scraped data")
 
     except Exception as e:
-        logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error processing URL {url} from message {message_id}: {str(e)}",
+            exc_info=True,
+        )
+
 
 async def handle_links_dump_channel(message: discord.Message) -> bool:
     """
@@ -168,7 +216,10 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         import config
 
         # Check if links dump channel is configured and this is that channel
-        if not hasattr(config, 'links_dump_channel_id') or not config.links_dump_channel_id:
+        if (
+            not hasattr(config, "links_dump_channel_id")
+            or not config.links_dump_channel_id
+        ):
             return False
 
         # Check if this is the links dump channel or a thread within it
@@ -177,9 +228,14 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         if str(message.channel.id) == config.links_dump_channel_id:
             # Direct message in the links dump channel
             is_links_dump_channel = True
-        elif isinstance(message.channel, discord.Thread) and str(message.channel.parent_id) == config.links_dump_channel_id:
+        elif (
+            isinstance(message.channel, discord.Thread)
+            and str(message.channel.parent_id) == config.links_dump_channel_id
+        ):
             # Message in a thread created from the links dump channel - allow these
-            logger.info(f"Message {message.id} is in a thread from links dump channel, allowing")
+            logger.info(
+                f"Message {message.id} is in a thread from links dump channel, allowing"
+            )
             return False
 
         if not is_links_dump_channel:
@@ -190,18 +246,23 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
             return False
 
         # Check for URLs in the message content using the same regex as process_url
-        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+        url_pattern = (
+            r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?"
+        )
         urls = re.findall(url_pattern, message.content)
-
 
         # If message contains URLs, allow it
         if urls:
-            logger.info(f"Message {message.id} in links dump channel contains URL, allowing")
+            logger.info(
+                f"Message {message.id} in links dump channel contains URL, allowing"
+            )
             return False
 
         # Always allow forwarded messages from other channels
-        if message.reference and message.reference.message_id and (
-            message.reference.channel_id != message.channel.id
+        if (
+            message.reference
+            and message.reference.message_id
+            and (message.reference.channel_id != message.channel.id)
         ):
             logger.info(
                 f"Message {message.id} is forwarded from another channel, allowing"
@@ -223,7 +284,9 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
             await asyncio.sleep(60)  # 1 minute
             try:
                 await message.delete()
-                logger.info(f"Deleted original message {message.id} from links dump channel")
+                logger.info(
+                    f"Deleted original message {message.id} from links dump channel"
+                )
             except discord.NotFound:
                 logger.info(f"Original message {message.id} already deleted")
             except discord.Forbidden:
@@ -233,11 +296,15 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
 
             try:
                 await warning_msg.delete()
-                logger.info(f"Deleted warning message {warning_msg.id} from links dump channel")
+                logger.info(
+                    f"Deleted warning message {warning_msg.id} from links dump channel"
+                )
             except discord.NotFound:
                 logger.info(f"Warning message {warning_msg.id} already deleted")
             except discord.Forbidden:
-                logger.warning(f"No permission to delete warning message {warning_msg.id}")
+                logger.warning(
+                    f"No permission to delete warning message {warning_msg.id}"
+                )
             except Exception as e:
                 logger.error(f"Error deleting warning message {warning_msg.id}: {e}")
 
@@ -247,22 +314,26 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         return True  # Message was handled
 
     except Exception as e:
-        logger.error(f"Error handling links dump channel message {message.id}: {e}", exc_info=True)
+        logger.error(
+            f"Error handling links dump channel message {message.id}: {e}",
+            exc_info=True,
+        )
         return False
+
 
 @bot.event
 async def on_ready():
-    set_discord_client(bot) # Set the client instance for summarization tasks
-    logger.info(f'Bot has successfully connected as {bot.user}')
-    logger.info(f'Bot ID: {bot.user.id}')
-    logger.info(f'Connected to {len(bot.guilds)} guilds')
+    set_discord_client(bot)  # Set the client instance for summarization tasks
+    logger.info(f"Bot has successfully connected as {bot.user}")
+    logger.info(f"Bot ID: {bot.user.id}")
+    logger.info(f"Connected to {len(bot.guilds)} guilds")
 
     # Sync slash commands with Discord
     try:
         synced = await bot.tree.sync()
-        logger.info(f'Synced {len(synced)} command(s)')
+        logger.info(f"Synced {len(synced)} command(s)")
     except Exception as e:
-        logger.error(f'Failed to sync commands: {e}')
+        logger.error(f"Failed to sync commands: {e}")
 
     # Initialize the database - critical for bot operation
     try:
@@ -270,25 +341,29 @@ async def on_ready():
 
         # Check if database connection is working
         if not database.check_database_connection():
-            logger.critical('Database connection check failed. Shutting down.')
+            logger.critical("Database connection check failed. Shutting down.")
             await bot.close()
             return
 
         message_count = database.get_message_count()
-        logger.info(f'Database initialized successfully. Current message count: {message_count}')
+        logger.info(
+            f"Database initialized successfully. Current message count: {message_count}"
+        )
 
         # Log database file information
         db_file_path = os.path.join(os.getcwd(), database.DB_FILE)
         if os.path.exists(db_file_path):
-            logger.info(f'Database file exists at: {db_file_path}')
-            logger.info(f'Database file size: {os.path.getsize(db_file_path)} bytes')
+            logger.info(f"Database file exists at: {db_file_path}")
+            logger.info(f"Database file size: {os.path.getsize(db_file_path)} bytes")
         else:
-            logger.critical(f'Database file does not exist at: {db_file_path}')
+            logger.critical(f"Database file does not exist at: {db_file_path}")
             await bot.close()
             return
     except Exception as e:
-        logger.critical(f'Failed to initialize database: {str(e)}', exc_info=True)
-        logger.critical('Database initialization is required for bot operation. Shutting down.')
+        logger.critical(f"Failed to initialize database: {str(e)}", exc_info=True)
+        logger.critical(
+            "Database initialization is required for bot operation. Shutting down."
+        )
         await bot.close()
         return
 
@@ -299,27 +374,35 @@ async def on_ready():
 
     # Log details about each connected guild
     for guild in bot.guilds:
-        logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
+        logger.info(
+            f"Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members"
+        )
+
 
 @bot.event
 async def on_guild_join(guild):
     """Log when the bot joins a new guild"""
-    logger.info(f'Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
+    logger.info(
+        f"Bot joined new guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members"
+    )
+
 
 @bot.event
 async def on_guild_remove(guild):
     """Log when the bot is removed from a guild"""
-    logger.info(f'Bot removed from guild: {guild.name} (ID: {guild.id})')
+    logger.info(f"Bot removed from guild: {guild.name} (ID: {guild.id})")
+
 
 @bot.event
 async def on_error(event, *args, **kwargs):
     """Log Discord API errors"""
-    logger.error(f'Discord error in {event}', exc_info=True)
+    logger.error(f"Discord error in {event}", exc_info=True)
     # Log additional context if available
     if args:
-        logger.error(f'Error context args: {args}')
+        logger.error(f"Error context args: {args}")
     if kwargs:
-        logger.error(f'Error context kwargs: {kwargs}')
+        logger.error(f"Error context kwargs: {kwargs}")
+
 
 @bot.event
 async def on_message(message):
@@ -337,17 +420,23 @@ async def on_message(message):
     guild_name = message.guild.name if message.guild else "DM"
 
     # Safely get channel name - different channel types might not have a name attribute
-    if hasattr(message.channel, 'name'):
+    if hasattr(message.channel, "name"):
         channel_name = message.channel.name
-    elif hasattr(message.channel, 'recipient'):
+    elif hasattr(message.channel, "recipient"):
         # This is a DM channel
         channel_name = f"DM with {message.channel.recipient}"
     else:
         channel_name = "Unknown Channel"
 
     # Use display_name to show user's server nickname when available
-    author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
-    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
+    author_display = (
+        message.author.display_name
+        if isinstance(message.author, discord.Member)
+        else str(message.author)
+    )
+    logger.info(
+        f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}"
+    )
 
     # Store message in database
     try:
@@ -355,27 +444,29 @@ async def on_message(message):
         is_command = False
         command_type = None
 
-        bot_mention = f'<@{bot.user.id}>'
-        bot_mention_alt = f'<@!{bot.user.id}>'
-        if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
+        bot_mention = f"<@{bot.user.id}>"
+        bot_mention_alt = f"<@!{bot.user.id}>"
+        if message.content.startswith(bot_mention) or message.content.startswith(
+            bot_mention_alt
+        ):
             is_command = True
             command_type = "mention"
-        elif message.content.startswith('/bot'):
+        elif message.content.startswith("/bot"):
             is_command = True
             command_type = "/bot"
-        elif message.content.startswith('/sum-day'):
+        elif message.content.startswith("/sum-day"):
             is_command = True
             command_type = "/sum-day"
-        elif message.content.startswith('/sum-hr'):
+        elif message.content.startswith("/sum-hr"):
             is_command = True
             command_type = "/sum-hr"
-        elif message.content.startswith('/chart-day'):
+        elif message.content.startswith("/chart-day"):
             is_command = True
             command_type = "/chart-day"
-        elif message.content.startswith('/chart-hr'):
+        elif message.content.startswith("/chart-hr"):
             is_command = True
             command_type = "/chart-hr"
-        elif message.content.startswith('/thread-memory'):
+        elif message.content.startswith("/thread-memory"):
             is_command = True
             command_type = "/thread-memory"
 
@@ -400,12 +491,14 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type
+            command_type=command_type,
         )
 
         if not success:
             # This is usually because the message already exists (common when bot restarts)
-            logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
+            logger.debug(
+                f"Failed to store message {message.id} in database (likely duplicate)"
+            )
 
         # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
         # This saves resources and avoids processing URLs that nobody asks about
@@ -413,14 +506,16 @@ async def on_message(message):
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
     # Check if this is a command
-    bot_mention = f'<@{bot.user.id}>'
-    bot_mention_alt = f'<@!{bot.user.id}>'
-    is_mention_command = bot_mention in message.content or bot_mention_alt in message.content
-    is_sum_day_command = message.content.startswith('/sum-day')
-    is_sum_hr_command = message.content.startswith('/sum-hr')
-    is_chart_day_command = message.content.startswith('/chart-day')
-    is_chart_hr_command = message.content.startswith('/chart-hr')
-    is_thread_memory_command = message.content.startswith('/thread-memory')
+    bot_mention = f"<@{bot.user.id}>"
+    bot_mention_alt = f"<@!{bot.user.id}>"
+    is_mention_command = (
+        bot_mention in message.content or bot_mention_alt in message.content
+    )
+    is_sum_day_command = message.content.startswith("/sum-day")
+    is_sum_hr_command = message.content.startswith("/sum-hr")
+    is_chart_day_command = message.content.startswith("/chart-day")
+    is_chart_hr_command = message.content.startswith("/chart-hr")
+    is_thread_memory_command = message.content.startswith("/thread-memory")
 
     # Process mention commands in any channel
     if is_mention_command:
@@ -429,7 +524,13 @@ async def on_message(message):
         return
 
     # If not a command we recognize, ignore
-    if not (is_sum_day_command or is_sum_hr_command or is_chart_day_command or is_chart_hr_command or is_thread_memory_command):
+    if not (
+        is_sum_day_command
+        or is_sum_hr_command
+        or is_chart_day_command
+        or is_chart_hr_command
+        or is_thread_memory_command
+    ):
         return
 
     # Process commands
@@ -449,11 +550,14 @@ async def on_message(message):
                 await message.channel.send(response)
             except Exception as e:
                 logger.error(f"Error processing thread memory command: {e}")
-                await message.channel.send("Sorry, an error occurred while processing the thread memory command.")
+                await message.channel.send(
+                    "Sorry, an error occurred while processing the thread memory command."
+                )
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
+
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
@@ -461,17 +565,21 @@ async def _handle_slash_command_wrapper(
     command_name: str,
     hours: int = 24,
     error_message: Optional[str] = None,
-    force_charts: bool = False
+    force_charts: bool = False,
 ) -> None:
     """Unified wrapper for slash command handling with error management."""
     # Note: Interaction should already be deferred by the slash command handler
     # This is just a safety check in case it wasn't
     if not interaction.response.is_done():
-        logger.warning(f"Interaction for {command_name} was not deferred by command handler, deferring now")
+        logger.warning(
+            f"Interaction for {command_name} was not deferred by command handler, deferring now"
+        )
         try:
             await interaction.response.defer()
         except discord.errors.NotFound as e:
-            logger.error(f"Interaction for {command_name} not found during safety defer: {e}")
+            logger.error(
+                f"Interaction for {command_name} not found during safety defer: {e}"
+            )
             return
         except Exception as e:
             logger.error(f"Failed to defer interaction for {command_name}: {e}")
@@ -483,10 +591,17 @@ async def _handle_slash_command_wrapper(
     # Validate hours parameter for sum-hr and chart-hr commands
     if command_name in ["sum-hr", "chart-hr"]:
         import config
+
         if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
             try:
-                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-                await interaction.followup.send(config.ERROR_MESSAGES['invalid_hours_range'], ephemeral=True, allowed_mentions=allowed_mentions)
+                allowed_mentions = discord.AllowedMentions(
+                    everyone=False, roles=False, users=True
+                )
+                await interaction.followup.send(
+                    config.ERROR_MESSAGES["invalid_hours_range"],
+                    ephemeral=True,
+                    allowed_mentions=allowed_mentions,
+                )
                 return
             except Exception as e:
                 logger.error(f"Failed to send validation error for {command_name}: {e}")
@@ -494,7 +609,10 @@ async def _handle_slash_command_wrapper(
 
         # Warn for large summaries that may take longer
         if hours > config.LARGE_SUMMARY_THRESHOLD:
-            error_message = config.ERROR_MESSAGES['large_summary_warning'].format(hours=hours) + " and could impact performance."
+            error_message = (
+                config.ERROR_MESSAGES["large_summary_warning"].format(hours=hours)
+                + " and could impact performance."
+            )
 
     # Similar validation for chart-day command
     if command_name == "chart-day":
@@ -505,31 +623,58 @@ async def _handle_slash_command_wrapper(
             create_context_from_interaction,
             create_response_sender,
             create_thread_manager,
-            handle_summary_command
+            handle_summary_command,
         )
 
-        context = create_context_from_interaction(interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else ""))
+        context = create_context_from_interaction(
+            interaction, f"/{command_name}" + (f" {hours}" if hours != 24 else "")
+        )
         response_sender = create_response_sender(interaction)
         thread_manager = create_thread_manager(interaction)
 
-        await handle_summary_command(context, response_sender, thread_manager, hours=hours, bot_user=bot.user, force_charts=force_charts)
+        await handle_summary_command(
+            context,
+            response_sender,
+            thread_manager,
+            hours=hours,
+            bot_user=bot.user,
+            force_charts=force_charts,
+        )
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
         # Only try to send followup if interaction is still valid
         if not interaction.is_expired():
             try:
-                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-                await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
-            except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
-                logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
+                allowed_mentions = discord.AllowedMentions(
+                    everyone=False, roles=False, users=True
+                )
+                await interaction.followup.send(
+                    error_message, ephemeral=True, allowed_mentions=allowed_mentions
+                )
+            except (
+                discord.HTTPException,
+                discord.Forbidden,
+                discord.NotFound,
+            ) as followup_error:
+                logger.warning(
+                    f"Failed to send error followup for {command_name}: {followup_error}"
+                )
             except Exception as unexpected_error:
-                logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
+                logger.error(
+                    f"Unexpected error sending followup for {command_name}: {unexpected_error}",
+                    exc_info=True,
+                )
         else:
-            logger.warning(f"Interaction for {command_name} has expired, cannot send error followup")
+            logger.warning(
+                f"Interaction for {command_name} has expired, cannot send error followup"
+            )
+
 
 # Slash Commands
-@bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
+@bot.tree.command(
+    name="sum-day", description="Generate a summary of messages from today"
+)
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
     # Defer IMMEDIATELY to avoid 3-second timeout
@@ -543,7 +688,10 @@ async def sum_day_slash(interaction: discord.Interaction):
         return
     await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
-@bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
+
+@bot.tree.command(
+    name="sum-hr", description="Generate a summary of messages from the past N hours"
+)
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
     # Defer IMMEDIATELY to avoid 3-second timeout
@@ -557,7 +705,11 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         return
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
-@bot.tree.command(name="chart-day", description="Generate data analysis with charts for today's messages")
+
+@bot.tree.command(
+    name="chart-day",
+    description="Generate data analysis with charts for today's messages",
+)
 async def chart_day_slash(interaction: discord.Interaction):
     """Slash command version of /chart-day for data visualization"""
     # Defer IMMEDIATELY to avoid 3-second timeout
@@ -569,9 +721,15 @@ async def chart_day_slash(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Failed to defer chart-day interaction: {e}")
         return
-    await _handle_slash_command_wrapper(interaction, "chart-day", hours=24, force_charts=True)
+    await _handle_slash_command_wrapper(
+        interaction, "chart-day", hours=24, force_charts=True
+    )
 
-@bot.tree.command(name="chart-hr", description="Generate data analysis with charts for the past N hours")
+
+@bot.tree.command(
+    name="chart-hr",
+    description="Generate data analysis with charts for the past N hours",
+)
 async def chart_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /chart-hr for data visualization"""
     # Defer IMMEDIATELY to avoid 3-second timeout
@@ -583,17 +741,24 @@ async def chart_hr_slash(interaction: discord.Interaction, hours: int):
     except Exception as e:
         logger.error(f"Failed to defer chart-hr interaction: {e}")
         return
-    await _handle_slash_command_wrapper(interaction, "chart-hr", hours=hours, force_charts=True)
+    await _handle_slash_command_wrapper(
+        interaction, "chart-hr", hours=hours, force_charts=True
+    )
+
 
 try:
     logger.info("Starting bot...")
-    import config # Assuming config.py is in the same directory or accessible
+    import config  # Assuming config.py is in the same directory or accessible
 
     # Validate configuration using the imported function
     validate_config(config)
 
     # Log startup (but mask the actual token)
-    token_preview = config.token[:5] + "..." + config.token[-5:] if len(config.token) > 10 else "***masked***"
+    token_preview = (
+        config.token[:5] + "..." + config.token[-5:]
+        if len(config.token) > 10
+        else "***masked***"
+    )
     logger.info(f"Bot token loaded: {token_preview}")
     logger.info("Connecting to Discord...")
 
@@ -604,6 +769,8 @@ except ImportError:
     logger.error("Please create a config.py file with your Discord bot token.")
     logger.error("Example: token = 'YOUR_DISCORD_BOT_TOKEN'")
 except discord.LoginFailure:
-    logger.critical("Invalid Discord token. Please check your token in config.py", exc_info=True)
+    logger.critical(
+        "Invalid Discord token. Please check your token in config.py", exc_info=True
+    )
 except Exception as e:
     logger.critical(f"Unexpected error during bot startup: {e}", exc_info=True)

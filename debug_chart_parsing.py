@@ -3,13 +3,13 @@ Debug script to test table parsing and chart generation.
 This will help identify why charts are showing "Row 1, Row 2" instead of actual data.
 """
 
-import re
 from chart_renderer import ChartRenderer, ChartDataValidator
 import logging
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
 
 def test_table_extraction():
     """Test the table extraction regex and parsing."""
@@ -57,7 +57,12 @@ Key insights:
 
             # Test chart generation
             chart_url = renderer._generate_quickchart_url(parsed, chart_type)
-            print(f"Generated chart URL: {chart_url[:100]}..." if chart_url else "Failed to generate chart")
+            print(
+                f"Generated chart URL: {chart_url[:100]}..."
+                if chart_url
+                else "Failed to generate chart"
+            )
+
 
 def test_table_variations():
     """Test different table formats that might cause issues."""
@@ -70,14 +75,14 @@ def test_table_variations():
             "table": """| Username | Message Count |
 | --- | --- |
 | alice | 45 |
-| bob | 32 |"""
+| bob | 32 |""",
         },
         {
             "name": "Table with extra spaces",
             "table": """| Username    | Message Count |
 |   ---       |      ---      |
 | alice       |      45       |
-| bob         |      32       |"""
+| bob         |      32       |""",
         },
         {
             "name": "Table with percentages",
@@ -85,7 +90,7 @@ def test_table_variations():
 | --- | --- |
 | Python | 45% |
 | JavaScript | 35% |
-| Go | 20% |"""
+| Go | 20% |""",
         },
         {
             "name": "Complex table",
@@ -93,8 +98,8 @@ def test_table_variations():
 | --- | --- | --- | --- | --- | --- |
 | React | High | Component-based | Medium | Virtual DOM, JSX | Popular choice |
 | Vue | Medium | Component-based | Low | Template syntax | Easy to learn |
-| Angular | High | Framework | High | TypeScript, CLI | Enterprise ready |"""
-        }
+| Angular | High | Framework | High | TypeScript, CLI | Enterprise ready |""",
+        },
     ]
 
     renderer = ChartRenderer()
@@ -103,19 +108,22 @@ def test_table_variations():
         print(f"\n--- Testing: {case['name']} ---")
 
         # Parse the table
-        parsed = renderer._parse_markdown_table(case['table'])
+        parsed = renderer._parse_markdown_table(case["table"])
 
         if parsed:
-            print(f"✓ Parsed successfully")
+            print("✓ Parsed successfully")
             print(f"  Headers ({len(parsed['headers'])}): {parsed['headers']}")
-            print(f"  Rows ({len(parsed['rows'])}): {parsed['rows'][:2]}...")  # Show first 2 rows
+            print(
+                f"  Rows ({len(parsed['rows'])}): {parsed['rows'][:2]}..."
+            )  # Show first 2 rows
 
             # Test chart type
             chart_type = renderer._infer_chart_type(parsed)
             print(f"  Chart type: {chart_type}")
 
         else:
-            print(f"✗ Failed to parse")
+            print("✗ Failed to parse")
+
 
 def test_data_validation():
     """Test the data validation for chart generation."""
@@ -127,7 +135,7 @@ def test_data_validation():
         ["45%", "35%", "20%"],
         ["1,234", "567", "89"],
         ["$100", "$250", "$75"],
-        ["invalid", "text", "data"]
+        ["invalid", "text", "data"],
     ]
 
     for i, data in enumerate(test_data):
@@ -135,6 +143,7 @@ def test_data_validation():
         values, has_percentages = ChartDataValidator.validate_numeric_data(data)
         print(f"  Result: {values}")
         print(f"  Has percentages: {has_percentages}")
+
 
 def test_chart_title_generation():
     """Test chart title generation."""
@@ -145,7 +154,7 @@ def test_chart_title_generation():
         (["Username", "Message Count"], "bar"),
         (["Technology", "Usage (%)"], "pie"),
         (["Time Period", "Activity Level"], "line"),
-        (["Project/Toolkit", "Focus Level", "Workflow Type"], "bar")
+        (["Project/Toolkit", "Focus Level", "Workflow Type"], "bar"),
     ]
 
     renderer = ChartRenderer()
@@ -156,6 +165,7 @@ def test_chart_title_generation():
         print(f"Chart type: {chart_type}")
         print(f"Generated title: '{title}'")
         print()
+
 
 def test_full_pipeline():
     """Test the complete table extraction and chart generation pipeline."""
@@ -191,7 +201,9 @@ These patterns indicate a healthy, active community with diverse technical inter
     renderer = ChartRenderer()
 
     # Run the complete extraction pipeline
-    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(full_response)
+    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(
+        full_response
+    )
 
     print(f"\nExtracted {len(chart_data_list)} chart(s)")
     print(f"Cleaned content length: {len(cleaned_content)} characters")
@@ -203,9 +215,10 @@ These patterns indicate a healthy, active community with diverse technical inter
         print(f"  URL: {chart_data.get('url', '')[:50]}...")
 
         # Show original table
-        print(f"  Original table:")
-        original = chart_data.get('original_table', '')
+        print("  Original table:")
+        original = chart_data.get("original_table", "")
         print(f"    {original[:100]}...")
+
 
 def main():
     """Run all debug tests."""
@@ -216,12 +229,13 @@ def main():
         test_chart_title_generation()
         test_full_pipeline()
 
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("Debug testing completed!")
         print("Check the output above for any parsing issues.")
 
     except Exception as e:
         logger.error(f"Debug test error: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     main()

@@ -13,8 +13,11 @@ rate_limit_lock = threading.Lock()  # Lock for thread safety
 
 # Rate limiting data structures
 user_last_request = {}  # Track last request time per user
-user_request_count = defaultdict(list)  # Track request timestamps for per-minute limiting
+user_request_count = defaultdict(
+    list
+)  # Track request timestamps for per-minute limiting
 last_cleanup_time = time.time()  # Track when we last cleaned up old rate limit data
+
 
 def check_rate_limit(user_id):
     """
@@ -59,6 +62,7 @@ def check_rate_limit(user_id):
 
     return False, 0, None
 
+
 def cleanup_rate_limit_data(current_time):
     """
     Clean up old rate limit data to prevent memory leaks
@@ -73,15 +77,21 @@ def cleanup_rate_limit_data(current_time):
     inactive_threshold = current_time - 3600
 
     # Clean up user_last_request
-    inactive_users = [user_id for user_id, last_time in user_last_request.items()
-                     if last_time < inactive_threshold]
+    inactive_users = [
+        user_id
+        for user_id, last_time in user_last_request.items()
+        if last_time < inactive_threshold
+    ]
     for user_id in inactive_users:
         del user_last_request[user_id]
         if user_id in user_request_count:
             del user_request_count[user_id]
 
     if inactive_users:
-        logger.debug(f"Cleaned up rate limit data for {len(inactive_users)} inactive users")
+        logger.debug(
+            f"Cleaned up rate limit data for {len(inactive_users)} inactive users"
+        )
+
 
 def update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute):
     """
@@ -92,4 +102,6 @@ def update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute
     with rate_limit_lock:
         RATE_LIMIT_SECONDS = new_rate_limit_seconds
         MAX_REQUESTS_PER_MINUTE = new_max_requests_per_minute
-        logger.info(f"Rate limit config updated: {RATE_LIMIT_SECONDS}s cooldown, {MAX_REQUESTS_PER_MINUTE} req/min")
+        logger.info(
+            f"Rate limit config updated: {RATE_LIMIT_SECONDS}s cooldown, {MAX_REQUESTS_PER_MINUTE} req/min"
+        )

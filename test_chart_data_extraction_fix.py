@@ -5,8 +5,6 @@ This test ensures that charts use actual table data instead of generic fallbacks
 
 import sys
 import os
-import re
-from typing import Dict, List, Tuple, Optional
 
 # Add the current directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +16,7 @@ except ImportError as e:
     print("This test requires the chart_renderer module to be available.")
     sys.exit(1)
 
+
 def test_numeric_data_validation():
     """Test enhanced numeric data validation."""
     print("=== Testing Enhanced Numeric Data Validation ===")
@@ -25,22 +24,16 @@ def test_numeric_data_validation():
     test_cases = [
         # Basic numbers
         (["45", "32", "18"], ([45.0, 32.0, 18.0], False)),
-
         # Percentages
         (["45%", "32%", "18%"], ([45.0, 32.0, 18.0], True)),
-
         # Formatted numbers
         (["1,234", "$500", "75%"], ([1234.0, 500.0, 75.0], True)),
-
         # Text with numbers
         (["High (85)", "Medium (60)", "Low (25)"], ([85.0, 60.0, 25.0], False)),
-
         # Qualitative text mapping
         (["High", "Medium", "Low"], ([3.0, 2.0, 1.0], False)),
-
         # Boolean-like text
         (["Yes", "No", "Active"], ([1.0, 0.0, 1.0], False)),
-
         # Mixed complex data
         (["Score: 92", "Level 3", "Rate 15%"], ([92.0, 3.0, 15.0], True)),
     ]
@@ -62,6 +55,7 @@ def test_numeric_data_validation():
     print(f"Numeric validation: {success_count}/{len(test_cases)} tests passed\n")
     return success_count == len(test_cases)
 
+
 def test_chart_type_inference():
     """Test improved chart type inference."""
     print("=== Testing Chart Type Inference ===")
@@ -70,41 +64,49 @@ def test_chart_type_inference():
 
     test_cases = [
         # Simple numeric data should be bar chart
-        ({
-            'headers': ['User', 'Messages'],
-            'rows': [['alice', '45'], ['bob', '32']]
-        }, 'bar'),
-
+        (
+            {"headers": ["User", "Messages"], "rows": [["alice", "45"], ["bob", "32"]]},
+            "bar",
+        ),
         # Percentage data that sums to 100 should be pie chart
-        ({
-            'headers': ['Language', 'Usage (%)'],
-            'rows': [['Python', '45%'], ['JavaScript', '35%'], ['Go', '20%']]
-        }, 'pie'),
-
+        (
+            {
+                "headers": ["Language", "Usage (%)"],
+                "rows": [["Python", "45%"], ["JavaScript", "35%"], ["Go", "20%"]],
+            },
+            "pie",
+        ),
         # Time-based data should be line chart
-        ({
-            'headers': ['Time', 'Messages', 'Users'],
-            'rows': [['09:00', '15', '8'], ['10:00', '23', '12']]
-        }, 'line'),
-
+        (
+            {
+                "headers": ["Time", "Messages", "Users"],
+                "rows": [["09:00", "15", "8"], ["10:00", "23", "12"]],
+            },
+            "line",
+        ),
         # Complex table with some numeric data should be bar chart
-        ({
-            'headers': ['Framework', 'Complexity', 'Stars', 'Language'],
-            'rows': [
-                ['React', 'Medium', '185000', 'JavaScript'],
-                ['Vue', 'Low', '185000', 'JavaScript']
-            ]
-        }, 'bar'),
-
+        (
+            {
+                "headers": ["Framework", "Complexity", "Stars", "Language"],
+                "rows": [
+                    ["React", "Medium", "185000", "JavaScript"],
+                    ["Vue", "Low", "185000", "JavaScript"],
+                ],
+            },
+            "bar",
+        ),
         # Mixed qualitative data should still be chartable
-        ({
-            'headers': ['Tool', 'Difficulty', 'Usage'],
-            'rows': [
-                ['React', 'High', 'Popular'],
-                ['Vue', 'Medium', 'Growing'],
-                ['Angular', 'High', 'Enterprise']
-            ]
-        }, 'bar'),
+        (
+            {
+                "headers": ["Tool", "Difficulty", "Usage"],
+                "rows": [
+                    ["React", "High", "Popular"],
+                    ["Vue", "Medium", "Growing"],
+                    ["Angular", "High", "Enterprise"],
+                ],
+            },
+            "bar",
+        ),
     ]
 
     success_count = 0
@@ -118,13 +120,14 @@ def test_chart_type_inference():
                 print(f"  Test {i+1}: ✓ ACCEPTABLE - {table_data['headers']}")
                 print(f"    Expected: {expected_type}, Got: {result}")
                 # Accept bar charts as valid alternatives for complex data
-                if result == 'bar':
+                if result == "bar":
                     success_count += 1
         except Exception as e:
             print(f"  Test {i+1}: ✗ ERROR - {table_data['headers']}: {e}")
 
     print(f"Chart type inference: {success_count}/{len(test_cases)} tests passed\n")
     return success_count == len(test_cases)
+
 
 def test_table_parsing():
     """Test markdown table parsing."""
@@ -134,37 +137,53 @@ def test_table_parsing():
 
     test_tables = [
         # Simple table
-        ("""| User | Count |
+        (
+            """| User | Count |
 | --- | --- |
 | alice | 45 |
-| bob | 32 |""", 2, 2),
-
+| bob | 32 |""",
+            2,
+            2,
+        ),
         # Complex table
-        ("""| Framework | Type | Stars | Year | Active |
+        (
+            """| Framework | Type | Stars | Year | Active |
 | --- | --- | --- | --- | --- |
 | React | Library | 185000 | 2013 | Yes |
 | Vue | Framework | 185000 | 2014 | Yes |
-| Angular | Framework | 88000 | 2010 | Yes |""", 5, 3),
-
+| Angular | Framework | 88000 | 2010 | Yes |""",
+            5,
+            3,
+        ),
         # Table with mixed data
-        ("""| Tool | Complexity | Performance | Notes |
+        (
+            """| Tool | Complexity | Performance | Notes |
 | --- | --- | --- | --- |
 | Webpack | High | Good | Bundle size matters |
 | Vite | Low | Excellent | Fast development |
-| Rollup | Medium | Good | Library focused |""", 4, 3),
+| Rollup | Medium | Good | Library focused |""",
+            4,
+            3,
+        ),
     ]
 
     success_count = 0
     for i, (table_text, expected_cols, expected_rows) in enumerate(test_tables):
         try:
             result = renderer._parse_markdown_table(table_text)
-            if (result and
-                len(result['headers']) == expected_cols and
-                len(result['rows']) == expected_rows):
-                print(f"  Test {i+1}: ✓ PASS - {expected_cols} cols, {expected_rows} rows")
+            if (
+                result
+                and len(result["headers"]) == expected_cols
+                and len(result["rows"]) == expected_rows
+            ):
+                print(
+                    f"  Test {i+1}: ✓ PASS - {expected_cols} cols, {expected_rows} rows"
+                )
                 success_count += 1
             else:
-                print(f"  Test {i+1}: ✗ FAIL - Expected {expected_cols}x{expected_rows}")
+                print(
+                    f"  Test {i+1}: ✗ FAIL - Expected {expected_cols}x{expected_rows}"
+                )
                 if result:
                     print(f"    Got: {len(result['headers'])}x{len(result['rows'])}")
                 else:
@@ -174,6 +193,7 @@ def test_table_parsing():
 
     print(f"Table parsing: {success_count}/{len(test_tables)} tests passed\n")
     return success_count == len(test_tables)
+
 
 def test_complex_table_handling():
     """Test handling of complex tables that previously generated meaningless charts."""
@@ -196,7 +216,9 @@ def test_complex_table_handling():
             print("  ✗ FAIL - Could not parse complex table")
             return False
 
-        print(f"  Parsed table: {len(table_data['headers'])} headers, {len(table_data['rows'])} rows")
+        print(
+            f"  Parsed table: {len(table_data['headers'])} headers, {len(table_data['rows'])} rows"
+        )
 
         # Infer chart type
         chart_type = renderer._infer_chart_type(table_data)
@@ -224,6 +246,7 @@ def test_complex_table_handling():
         print(f"  ✗ ERROR - {e}")
         return False
 
+
 def test_chart_title_generation():
     """Test chart title generation."""
     print("=== Testing Chart Title Generation ===")
@@ -231,10 +254,10 @@ def test_chart_title_generation():
     renderer = ChartRenderer()
 
     test_cases = [
-        (['User', 'Message Count'], 'bar', 'Message Count by User'),
-        (['Technology', 'Usage (%)'], 'pie', 'Usage (%) Distribution by Technology'),
-        (['Time', 'Activity'], 'line', 'Activity Trends Over Time'),
-        (['Framework', 'Stars'], 'bar', 'Stars by Framework'),
+        (["User", "Message Count"], "bar", "Message Count by User"),
+        (["Technology", "Usage (%)"], "pie", "Usage (%) Distribution by Technology"),
+        (["Time", "Activity"], "line", "Activity Trends Over Time"),
+        (["Framework", "Stars"], "bar", "Stars by Framework"),
     ]
 
     success_count = 0
@@ -256,6 +279,7 @@ def test_chart_title_generation():
 
     print(f"Chart title generation: {success_count}/{len(test_cases)} tests passed\n")
     return success_count == len(test_cases)
+
 
 def test_full_pipeline():
     """Test the complete chart extraction pipeline."""
@@ -294,7 +318,9 @@ Time-based activity patterns:
 These metrics show strong community engagement."""
 
     try:
-        cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(sample_response)
+        cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(
+            sample_response
+        )
 
         print(f"  Original length: {len(sample_response)} chars")
         print(f"  Cleaned length: {len(cleaned_content)} chars")
@@ -304,10 +330,12 @@ These metrics show strong community engagement."""
             print("  ✓ PASS - Found multiple tables")
 
             # Check that charts have URLs
-            charts_with_urls = sum(1 for chart in chart_data_list if chart.get('url'))
+            charts_with_urls = sum(1 for chart in chart_data_list if chart.get("url"))
             print(f"  Charts with URLs: {charts_with_urls}/{len(chart_data_list)}")
 
-            if charts_with_urls >= len(chart_data_list) * 0.5:  # At least 50% should have URLs
+            if (
+                charts_with_urls >= len(chart_data_list) * 0.5
+            ):  # At least 50% should have URLs
                 print("  ✓ PASS - Most charts generated successfully")
                 return True
             else:
@@ -320,6 +348,7 @@ These metrics show strong community engagement."""
     except Exception as e:
         print(f"  ✗ ERROR - {e}")
         return False
+
 
 def run_all_tests():
     """Run all tests and provide summary."""
@@ -371,6 +400,7 @@ def run_all_tests():
         print("Several test failures indicate issues that need to be addressed.")
 
     return passed >= len(results) * 0.75
+
 
 if __name__ == "__main__":
     success = run_all_tests()

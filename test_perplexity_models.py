@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Get API key
-api_key = os.getenv('PERPLEXITY_API_KEY')
+api_key = os.getenv("PERPLEXITY_API_KEY")
 
 if not api_key:
     print("Error: PERPLEXITY_API_KEY not found in .env file")
@@ -42,11 +42,9 @@ for model in test_models:
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "user", "content": "Say 'test' in one word"}
-            ],
+            messages=[{"role": "user", "content": "Say 'test' in one word"}],
             max_tokens=5,
-            temperature=0
+            temperature=0,
         )
         print(f"✓ {model} - WORKS")
     except Exception as e:

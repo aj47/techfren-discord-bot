@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
 # Set up logging
-logger = logging.getLogger('discord_bot.database')
+logger = logging.getLogger("discord_bot.database")
 
 # Database constants
 DB_DIRECTORY = "data"
@@ -56,13 +56,23 @@ CREATE TABLE IF NOT EXISTS channel_summaries (
 );
 """
 
-CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
-CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
+CREATE_INDEX_AUTHOR = (
+    "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
+)
+CREATE_INDEX_CHANNEL = (
+    "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
+)
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
-CREATE_INDEX_CREATED = "CREATE INDEX IF NOT EXISTS idx_created_at ON messages (created_at);"
-CREATE_INDEX_COMMAND = "CREATE INDEX IF NOT EXISTS idx_is_command ON messages (is_command);"
+CREATE_INDEX_CREATED = (
+    "CREATE INDEX IF NOT EXISTS idx_created_at ON messages (created_at);"
+)
+CREATE_INDEX_COMMAND = (
+    "CREATE INDEX IF NOT EXISTS idx_is_command ON messages (is_command);"
+)
 CREATE_INDEX_SUMMARY_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_summary_channel_id ON channel_summaries (channel_id);"
-CREATE_INDEX_SUMMARY_DATE = "CREATE INDEX IF NOT EXISTS idx_summary_date ON channel_summaries (date);"
+CREATE_INDEX_SUMMARY_DATE = (
+    "CREATE INDEX IF NOT EXISTS idx_summary_date ON channel_summaries (date);"
+)
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -79,6 +89,7 @@ INSERT INTO channel_summaries (
     created_at, metadata
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
+
 
 def init_database() -> None:
     """
@@ -135,15 +146,19 @@ def init_database() -> None:
                         None,
                         None,
                         None,
-                        None
-                    )
+                        None,
+                    ),
                 )
-                logger.info("Successfully inserted test message during database initialization")
+                logger.info(
+                    "Successfully inserted test message during database initialization"
+                )
             except sqlite3.IntegrityError:
                 # This is fine, it means the test message already exists
                 logger.info("Test message already exists in database")
             except Exception as e:
-                logger.warning(f"Failed to insert test message during initialization: {str(e)}")
+                logger.warning(
+                    f"Failed to insert test message during initialization: {str(e)}"
+                )
 
             conn.commit()
 
@@ -151,6 +166,7 @@ def init_database() -> None:
     except Exception as e:
         logger.error(f"Error initializing database: {str(e)}", exc_info=True)
         raise
+
 
 def get_connection() -> sqlite3.Connection:
     """
@@ -174,6 +190,7 @@ def get_connection() -> sqlite3.Connection:
     except Exception as e:
         logger.error(f"Error connecting to database: {str(e)}", exc_info=True)
         raise
+
 
 def check_database_connection() -> bool:
     """
@@ -211,13 +228,14 @@ def check_database_connection() -> bool:
                 return False
 
             # Log the schema
-            column_names = [col['name'] for col in columns]
+            column_names = [col["name"] for col in columns]
             logger.info(f"Messages table columns: {', '.join(column_names)}")
 
             return result is not None and result[0] == 1
     except Exception as e:
         logger.error(f"Database connection check failed: {str(e)}", exc_info=True)
         return False
+
 
 def store_message(
     message_id: str,
@@ -234,7 +252,7 @@ def store_message(
     command_type: Optional[str] = None,
     scraped_url: Optional[str] = None,
     scraped_content_summary: Optional[str] = None,
-    scraped_content_key_points: Optional[str] = None
+    scraped_content_key_points: Optional[str] = None,
 ) -> bool:
     """
     Store a message in the database.
@@ -264,9 +282,9 @@ def store_message(
         with get_connection() as conn:
             cursor = conn.cursor()
 
-# Ensure consistent datetime format for storage (always UTC, no timezone info for SQLite compatibility)
+            # Ensure consistent datetime format for storage (always UTC, no timezone info for SQLite compatibility)
             created_at_str = created_at.replace(tzinfo=None).isoformat()
-            
+
             cursor.execute(
                 INSERT_MESSAGE,
                 (
@@ -284,8 +302,8 @@ def store_message(
                     command_type,
                     scraped_url,
                     scraped_content_summary,
-                    scraped_content_key_points
-                )
+                    scraped_content_key_points,
+                ),
             )
 
             conn.commit()
@@ -295,11 +313,14 @@ def store_message(
     except sqlite3.IntegrityError:
         # This could happen if we try to insert a message with the same ID twice
         # This is normal when the bot restarts and processes recent messages
-        logger.debug(f"Message {message_id} already exists in database (skipping duplicate)")
+        logger.debug(
+            f"Message {message_id} already exists in database (skipping duplicate)"
+        )
         return False
     except Exception as e:
         logger.error(f"Error storing message {message_id}: {str(e)}", exc_info=True)
         return False
+
 
 async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
     """
@@ -313,38 +334,39 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
     """
     if not messages:
         return True
-        
+
     try:
+
         def _store_batch():
             with get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 for msg in messages:
                     # Ensure consistent datetime format for storage (always UTC, no timezone info for SQLite compatibility)
-                    created_at = msg['created_at']
+                    created_at = msg["created_at"]
                     created_at_str = created_at.replace(tzinfo=None).isoformat()
-                    
+
                     cursor.execute(
                         INSERT_MESSAGE,
                         (
-                            msg['message_id'],
-                            msg['author_id'],
-                            msg['author_name'],
-                            msg['channel_id'],
-                            msg['channel_name'],
-                            msg.get('guild_id'),
-                            msg.get('guild_name'),
-                            msg['content'],
+                            msg["message_id"],
+                            msg["author_id"],
+                            msg["author_name"],
+                            msg["channel_id"],
+                            msg["channel_name"],
+                            msg.get("guild_id"),
+                            msg.get("guild_name"),
+                            msg["content"],
                             created_at_str,
-                            int(msg.get('is_bot', False)),
-                            int(msg.get('is_command', False)),
-                            msg.get('command_type'),
-                            msg.get('scraped_url'),
-                            msg.get('scraped_content_summary'),
-                            msg.get('scraped_content_key_points')
-                        )
+                            int(msg.get("is_bot", False)),
+                            int(msg.get("is_command", False)),
+                            msg.get("command_type"),
+                            msg.get("scraped_url"),
+                            msg.get("scraped_content_summary"),
+                            msg.get("scraped_content_key_points"),
+                        ),
                     )
-                
+
                 conn.commit()
                 return True
 
@@ -358,11 +380,12 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
         logger.error(f"Error storing message batch: {str(e)}", exc_info=True)
         return False
 
+
 async def update_message_with_scraped_data(
     message_id: str,
     scraped_url: str,
     scraped_content_summary: str,
-    scraped_content_key_points: str
+    scraped_content_key_points: str,
 ) -> bool:
     """
     Update an existing message with scraped URL data.
@@ -395,8 +418,8 @@ async def update_message_with_scraped_data(
                         scraped_url,
                         scraped_content_summary,
                         scraped_content_key_points,
-                        message_id
-                    )
+                        message_id,
+                    ),
                 )
 
                 # Check if any rows were affected
@@ -408,14 +431,22 @@ async def update_message_with_scraped_data(
         no_rows_affected = await asyncio.to_thread(_update_message_sync)
 
         if no_rows_affected:
-            logger.warning(f"No message found with ID {message_id} to update with scraped data")
+            logger.warning(
+                f"No message found with ID {message_id} to update with scraped data"
+            )
             return False
 
-        logger.info(f"Message {message_id} updated with scraped data from URL: {scraped_url}")
+        logger.info(
+            f"Message {message_id} updated with scraped data from URL: {scraped_url}"
+        )
         return True
     except Exception as e:
-        logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error updating message {message_id} with scraped data: {str(e)}",
+            exc_info=True,
+        )
         return False
+
 
 def get_message_count() -> int:
     """
@@ -437,6 +468,7 @@ def get_message_count() -> int:
         # Return 0 instead of -1 for consistency with other error cases
         return 0
 
+
 def get_user_message_count(user_id: str) -> int:
     """
     Get the number of messages from a specific user.
@@ -451,14 +483,19 @@ def get_user_message_count(user_id: str) -> int:
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT COUNT(*) FROM messages WHERE author_id = ?", (user_id,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE author_id = ?", (user_id,)
+            )
             count = cursor.fetchone()[0]
 
         return count
     except Exception as e:
-        logger.error(f"Error getting message count for user {user_id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting message count for user {user_id}: {str(e)}", exc_info=True
+        )
         # Return 0 instead of -1 for consistency with other error cases
         return 0
+
 
 def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """
@@ -485,30 +522,40 @@ def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (channel_id, limit)
+                (channel_id, limit),
             )
 
             # Convert rows to dictionaries
             messages = []
             for row in cursor.fetchall():
-                messages.append({
-                    'author_name': row['author_name'],
-                    'content': row['content'],
-                    'created_at': datetime.fromisoformat(row['created_at']),
-                    'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command']),
-                    'scraped_url': row['scraped_url'],
-                    'scraped_content_summary': row['scraped_content_summary'],
-                    'scraped_content_key_points': row['scraped_content_key_points']
-                })
+                messages.append(
+                    {
+                        "author_name": row["author_name"],
+                        "content": row["content"],
+                        "created_at": datetime.fromisoformat(row["created_at"]),
+                        "is_bot": bool(row["is_bot"]),
+                        "is_command": bool(row["is_command"]),
+                        "scraped_url": row["scraped_url"],
+                        "scraped_content_summary": row["scraped_content_summary"],
+                        "scraped_content_key_points": row["scraped_content_key_points"],
+                    }
+                )
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} (all time)")
+        logger.info(
+            f"Retrieved {len(messages)} messages from channel {channel_id} (all time)"
+        )
         return messages
     except Exception as e:
-        logger.error(f"Error getting all messages for channel {channel_id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting all messages for channel {channel_id}: {str(e)}",
+            exc_info=True,
+        )
         return []
 
-def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[str, Any]]:
+
+def get_channel_messages_for_day(
+    channel_id: str, date: datetime
+) -> List[Dict[str, Any]]:
     """
     Get all messages from a specific channel for the past 24 hours from the given date.
 
@@ -521,7 +568,10 @@ def get_channel_messages_for_day(channel_id: str, date: datetime) -> List[Dict[s
     """
     return get_channel_messages_for_hours(channel_id, date, 24)
 
-def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) -> List[Dict[str, Any]]:
+
+def get_channel_messages_for_hours(
+    channel_id: str, date: datetime, hours: int
+) -> List[Dict[str, Any]]:
     """
     Get all messages from a specific channel for the past specified hours from the given date.
 
@@ -571,33 +621,49 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
                 )
                 ORDER BY created_at ASC
                 """,
-                (channel_id, start_date_str, end_date_str, start_date_str, end_date_str)
+                (
+                    channel_id,
+                    start_date_str,
+                    end_date_str,
+                    start_date_str,
+                    end_date_str,
+                ),
             )
 
             # Convert rows to dictionaries
             messages = []
             for row in cursor.fetchall():
-                messages.append({
-                    'id': row['id'],
-                    'author_name': row['author_name'],
-                    'content': row['content'],
-                    'created_at': datetime.fromisoformat(row['created_at']),
-                    'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command']),
-                    'scraped_url': row['scraped_url'],
-                    'scraped_content_summary': row['scraped_content_summary'],
-                    'scraped_content_key_points': row['scraped_content_key_points'],
-                    'guild_id': row['guild_id'],
-                    'channel_id': channel_id
-                })
+                messages.append(
+                    {
+                        "id": row["id"],
+                        "author_name": row["author_name"],
+                        "content": row["content"],
+                        "created_at": datetime.fromisoformat(row["created_at"]),
+                        "is_bot": bool(row["is_bot"]),
+                        "is_command": bool(row["is_command"]),
+                        "scraped_url": row["scraped_url"],
+                        "scraped_content_summary": row["scraped_content_summary"],
+                        "scraped_content_key_points": row["scraped_content_key_points"],
+                        "guild_id": row["guild_id"],
+                        "channel_id": channel_id,
+                    }
+                )
 
-        logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} for the past {hours} hours from {start_date.isoformat()} to {end_date.isoformat()}")
+        logger.info(
+            f"Retrieved {len(messages)} messages from channel {channel_id} for the past {hours} hours from {start_date.isoformat()} to {end_date.isoformat()}"
+        )
         return messages
     except Exception as e:
-        logger.error(f"Error getting messages for channel {channel_id} for the past {hours} hours from {date.isoformat()}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting messages for channel {channel_id} for the past {hours} hours from {date.isoformat()}: {str(e)}",
+            exc_info=True,
+        )
         return []
 
-def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dict[str, List[Dict[str, Any]]]:
+
+def get_messages_for_time_range(
+    start_time: datetime, end_time: datetime
+) -> Dict[str, List[Dict[str, Any]]]:
     """
     Get all messages from all channels within a specific time range, grouped by channel.
 
@@ -625,39 +691,50 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
                 WHERE created_at BETWEEN ? AND ?
                 ORDER BY channel_id, created_at ASC
                 """,
-                (start_date_str, end_date_str)
+                (start_date_str, end_date_str),
             )
 
             # Group messages by channel
             messages_by_channel = {}
             for row in cursor.fetchall():
-                channel_id = row['channel_id']
+                channel_id = row["channel_id"]
 
                 if channel_id not in messages_by_channel:
                     messages_by_channel[channel_id] = {
-                        'channel_id': channel_id,
-                        'channel_name': row['channel_name'],
-                        'guild_id': row['guild_id'],
-                        'guild_name': row['guild_name'],
-                        'messages': []
+                        "channel_id": channel_id,
+                        "channel_name": row["channel_name"],
+                        "guild_id": row["guild_id"],
+                        "guild_name": row["guild_name"],
+                        "messages": [],
                     }
 
-                messages_by_channel[channel_id]['messages'].append({
-                    'id': row['id'],
-                    'author_id': row['author_id'],
-                    'author_name': row['author_name'],
-                    'content': row['content'],
-                    'created_at': datetime.fromisoformat(row['created_at']),
-                    'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command'])
-                })
+                messages_by_channel[channel_id]["messages"].append(
+                    {
+                        "id": row["id"],
+                        "author_id": row["author_id"],
+                        "author_name": row["author_name"],
+                        "content": row["content"],
+                        "created_at": datetime.fromisoformat(row["created_at"]),
+                        "is_bot": bool(row["is_bot"]),
+                        "is_command": bool(row["is_command"]),
+                    }
+                )
 
-        total_messages = sum(len(channel_data['messages']) for channel_data in messages_by_channel.values())
-        logger.info(f"Retrieved {total_messages} messages from {len(messages_by_channel)} channels between {start_time} and {end_time}")
+        total_messages = sum(
+            len(channel_data["messages"])
+            for channel_data in messages_by_channel.values()
+        )
+        logger.info(
+            f"Retrieved {total_messages} messages from {len(messages_by_channel)} channels between {start_time} and {end_time}"
+        )
         return messages_by_channel
     except Exception as e:
-        logger.error(f"Error getting messages between {start_time} and {end_time}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting messages between {start_time} and {end_time}: {str(e)}",
+            exc_info=True,
+        )
         return {}
+
 
 def store_channel_summary(
     channel_id: str,
@@ -668,7 +745,7 @@ def store_channel_summary(
     active_users: List[str],
     guild_id: Optional[str] = None,
     guild_name: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Store a channel summary in the database.
@@ -695,7 +772,7 @@ def store_channel_summary(
         metadata_json = json.dumps(metadata) if metadata else None
 
         # Format date as YYYY-MM-DD
-        date_str = date.strftime('%Y-%m-%d')
+        date_str = date.strftime("%Y-%m-%d")
 
         # Current timestamp
         created_at = datetime.now().isoformat()
@@ -716,17 +793,23 @@ def store_channel_summary(
                     len(active_users),
                     active_users_json,
                     created_at,
-                    metadata_json
-                )
+                    metadata_json,
+                ),
             )
 
             conn.commit()
 
-        logger.info(f"Stored summary for channel {channel_name} ({channel_id}) for {date_str}")
+        logger.info(
+            f"Stored summary for channel {channel_name} ({channel_id}) for {date_str}"
+        )
         return True
     except Exception as e:
-        logger.error(f"Error storing summary for channel {channel_id} on {date.strftime('%Y-%m-%d')}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error storing summary for channel {channel_id} on {date.strftime('%Y-%m-%d')}: {str(e)}",
+            exc_info=True,
+        )
         return False
+
 
 def delete_messages_older_than(cutoff_time: datetime) -> int:
     """
@@ -746,15 +829,13 @@ def delete_messages_older_than(cutoff_time: datetime) -> int:
 
             # First, count how many messages will be deleted
             cursor.execute(
-                "SELECT COUNT(*) FROM messages WHERE created_at < ?",
-                (cutoff_time_str,)
+                "SELECT COUNT(*) FROM messages WHERE created_at < ?", (cutoff_time_str,)
             )
             count = cursor.fetchone()[0]
 
             # Then delete them
             cursor.execute(
-                "DELETE FROM messages WHERE created_at < ?",
-                (cutoff_time_str,)
+                "DELETE FROM messages WHERE created_at < ?", (cutoff_time_str,)
             )
 
             conn.commit()
@@ -762,8 +843,11 @@ def delete_messages_older_than(cutoff_time: datetime) -> int:
         logger.info(f"Deleted {count} messages older than {cutoff_time}")
         return count
     except Exception as e:
-        logger.error(f"Error deleting messages older than {cutoff_time}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error deleting messages older than {cutoff_time}: {str(e)}", exc_info=True
+        )
         return 0
+
 
 def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
     """
@@ -796,40 +880,46 @@ def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
                 GROUP BY channel_id
                 ORDER BY message_count DESC
                 """,
-                (cutoff_time,)
+                (cutoff_time,),
             )
 
             # Convert rows to dictionaries
             channels = []
             for row in cursor.fetchall():
-                channels.append({
-                    'channel_id': row['channel_id'],
-                    'channel_name': row['channel_name'],
-                    'guild_id': row['guild_id'],
-                    'guild_name': row['guild_name'],
-                    'message_count': row['message_count']
-                })
+                channels.append(
+                    {
+                        "channel_id": row["channel_id"],
+                        "channel_name": row["channel_name"],
+                        "guild_id": row["guild_id"],
+                        "guild_name": row["guild_name"],
+                        "message_count": row["message_count"],
+                    }
+                )
 
         logger.info(f"Found {len(channels)} active channels in the last {hours} hours")
         return channels
     except Exception as e:
-        logger.error(f"Error getting active channels for the last {hours} hours: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting active channels for the last {hours} hours: {str(e)}",
+            exc_info=True,
+        )
         return []
+
 
 def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
     """
     Retrieve scraped content for a specific URL from the database.
-    
+
     Args:
         url (str): The URL to search for
-        
+
     Returns:
         Optional[Dict[str, Any]]: Dictionary containing scraped content if found, None otherwise
     """
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Query for messages with scraped content for this URL
             cursor.execute(
                 """
@@ -843,32 +933,36 @@ def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (url,)
+                (url,),
             )
-            
+
             row = cursor.fetchone()
             if not row:
                 logger.debug(f"No scraped content found for URL: {url}")
                 return None
-            
+
             # Parse key points JSON
             key_points = []
-            if row['scraped_content_key_points']:
+            if row["scraped_content_key_points"]:
                 try:
-                    key_points = json.loads(row['scraped_content_key_points'])
+                    key_points = json.loads(row["scraped_content_key_points"])
                 except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON in scraped_content_key_points for URL {url}")
-            
+                    logger.warning(
+                        f"Invalid JSON in scraped_content_key_points for URL {url}"
+                    )
+
             result = {
-                'url': row['scraped_url'],
-                'summary': row['scraped_content_summary'],
-                'key_points': key_points,
-                'created_at': row['created_at']
+                "url": row["scraped_url"],
+                "summary": row["scraped_content_summary"],
+                "key_points": key_points,
+                "created_at": row["created_at"],
             }
-            
+
             logger.debug(f"Retrieved scraped content for URL: {url}")
             return result
-            
+
     except Exception as e:
-        logger.error(f"Error retrieving scraped content for URL {url}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error retrieving scraped content for URL {url}: {str(e)}", exc_info=True
+        )
         return None

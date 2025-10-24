@@ -5,14 +5,10 @@ Tests the apify_handler module with proper mocking to avoid API dependencies.
 """
 
 import pytest
-import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
-from typing import Dict, Any, Optional, List
-import re
+from unittest.mock import MagicMock, patch
 
 # Import the modules to test
-import apify_handler
 from apify_handler import (
     fetch_tweet,
     fetch_tweet_replies,
@@ -20,12 +16,13 @@ from apify_handler import (
     extract_video_url,
     scrape_twitter_content,
     format_as_markdown,
-    is_twitter_url
+    is_twitter_url,
 )
 
 # Set up logging for tests
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('test_x_scraping')
+logger = logging.getLogger("test_x_scraping")
+
 
 class TestExtractTweetId:
     """Test the extract_tweet_id function."""
@@ -72,6 +69,7 @@ class TestExtractTweetId:
         result = extract_tweet_id(None)
         assert result is None
 
+
 class TestIsTwitterUrl:
     """Test the is_twitter_url function."""
 
@@ -110,6 +108,7 @@ class TestIsTwitterUrl:
         result = await is_twitter_url(url)
         assert result is False
 
+
 class TestExtractVideoUrl:
     """Test the extract_video_url function."""
 
@@ -117,52 +116,54 @@ class TestExtractVideoUrl:
         """Test extracting video URL from tweet data with video."""
         # Test with mediaDetails structure (actual implementation)
         tweet_data = {
-            'mediaDetails': [
+            "mediaDetails": [
                 {
-                    'type': 'video',
-                    'video_info': {
-                        'variants': [
-                            {'bitrate': 320000, 'url': 'https://video.twimg.com/low.mp4', 'content_type': 'video/mp4'},
-                            {'bitrate': 832000, 'url': 'https://video.twimg.com/high.mp4', 'content_type': 'video/mp4'},
-                            {'bitrate': 2176000, 'url': 'https://video.twimg.com/highest.mp4', 'content_type': 'video/mp4'}
+                    "type": "video",
+                    "video_info": {
+                        "variants": [
+                            {
+                                "bitrate": 320000,
+                                "url": "https://video.twimg.com/low.mp4",
+                                "content_type": "video/mp4",
+                            },
+                            {
+                                "bitrate": 832000,
+                                "url": "https://video.twimg.com/high.mp4",
+                                "content_type": "video/mp4",
+                            },
+                            {
+                                "bitrate": 2176000,
+                                "url": "https://video.twimg.com/highest.mp4",
+                                "content_type": "video/mp4",
+                            },
                         ]
-                    }
+                    },
                 }
             ]
         }
         result = extract_video_url(tweet_data)
-        assert result == 'https://video.twimg.com/highest.mp4'
+        assert result == "https://video.twimg.com/highest.mp4"
 
     def test_extract_video_url_no_video(self):
         """Test extracting video URL from tweet data without video."""
-        tweet_data = {
-            'text': 'Just a regular tweet without video'
-        }
+        tweet_data = {"text": "Just a regular tweet without video"}
         result = extract_video_url(tweet_data)
         assert result is None
 
     def test_extract_video_url_empty_variants(self):
         """Test extracting video URL with empty variants."""
         tweet_data = {
-            'mediaDetails': [
-                {
-                    'type': 'video',
-                    'video_info': {
-                        'variants': []
-                    }
-                }
-            ]
+            "mediaDetails": [{"type": "video", "video_info": {"variants": []}}]
         }
         result = extract_video_url(tweet_data)
         assert result is None
 
     def test_extract_video_url_no_extended_entities(self):
         """Test extracting video URL with no extended_entities."""
-        tweet_data = {
-            'text': 'Tweet without extended entities'
-        }
+        tweet_data = {"text": "Tweet without extended entities"}
         result = extract_video_url(tweet_data)
         assert result is None
+
 
 class TestFormatAsMarkdown:
     """Test the format_as_markdown function."""
@@ -170,70 +171,65 @@ class TestFormatAsMarkdown:
     def test_format_as_markdown_basic(self):
         """Test basic markdown formatting."""
         scraped_content = {
-            'tweet': {
-                'text': 'This is a test tweet',
-                'author': 'Test User',
-                'screen_name': 'testuser',
-                'video_url': None
+            "tweet": {
+                "text": "This is a test tweet",
+                "author": "Test User",
+                "screen_name": "testuser",
+                "video_url": None,
             },
-            'replies': []
+            "replies": [],
         }
         result = format_as_markdown(scraped_content)
 
-        assert '# Tweet by @testuser (Test User)' in result
-        assert 'This is a test tweet' in result
+        assert "# Tweet by @testuser (Test User)" in result
+        assert "This is a test tweet" in result
 
     def test_format_as_markdown_with_video(self):
         """Test markdown formatting with video."""
         scraped_content = {
-            'tweet': {
-                'text': 'Tweet with video',
-                'author': 'Video User',
-                'screen_name': 'videouser',
-                'video_url': 'https://video.twimg.com/test.mp4'
+            "tweet": {
+                "text": "Tweet with video",
+                "author": "Video User",
+                "screen_name": "videouser",
+                "video_url": "https://video.twimg.com/test.mp4",
             },
-            'replies': []
+            "replies": [],
         }
         result = format_as_markdown(scraped_content)
 
-        assert 'Tweet with video' in result
-        assert '# Tweet by @videouser (Video User)' in result
-        assert 'https://video.twimg.com/test.mp4' in result
+        assert "Tweet with video" in result
+        assert "# Tweet by @videouser (Video User)" in result
+        assert "https://video.twimg.com/test.mp4" in result
 
     def test_format_as_markdown_with_replies(self):
         """Test markdown formatting with replies."""
         scraped_content = {
-            'tweet': {
-                'text': 'Original tweet',
-                'author': 'Original User',
-                'screen_name': 'original',
-                'video_url': None
+            "tweet": {
+                "text": "Original tweet",
+                "author": "Original User",
+                "screen_name": "original",
+                "video_url": None,
             },
-            'replies': [
-                {
-                    'text': 'First reply',
-                    'author': 'Reply User 1'
-                },
-                {
-                    'text': 'Second reply',
-                    'author': 'Reply User 2'
-                }
-            ]
+            "replies": [
+                {"text": "First reply", "author": "Reply User 1"},
+                {"text": "Second reply", "author": "Reply User 2"},
+            ],
         }
         result = format_as_markdown(scraped_content)
 
-        assert 'Original tweet' in result
-        assert 'First reply' in result
-        assert 'Second reply' in result
-        assert 'Reply User 1:' in result
-        assert 'Reply User 2:' in result
+        assert "Original tweet" in result
+        assert "First reply" in result
+        assert "Second reply" in result
+        assert "Reply User 1:" in result
+        assert "Reply User 2:" in result
+
 
 class TestFetchTweet:
     """Test the fetch_tweet function with mocked API calls."""
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
-    @patch('apify_handler.ApifyClient')
+    @patch("apify_handler.config")
+    @patch("apify_handler.ApifyClient")
     async def test_fetch_tweet_success(self, mock_apify_client, mock_config):
         """Test successful tweet fetching."""
         # Mock config
@@ -257,12 +253,9 @@ class TestFetchTweet:
         mock_dataset_items = MagicMock()
         mock_dataset_items.items = [
             {
-                'text': 'Test tweet content',
-                'user': {
-                    'name': 'Test User',
-                    'screen_name': 'testuser'
-                },
-                'id_str': '1234567890'
+                "text": "Test tweet content",
+                "user": {"name": "Test User", "screen_name": "testuser"},
+                "id_str": "1234567890",
             }
         ]
         mock_dataset.list_items.return_value = mock_dataset_items
@@ -273,16 +266,16 @@ class TestFetchTweet:
 
         # Assertions
         assert result is not None
-        assert result['text'] == 'Test tweet content'
-        assert result['user']['name'] == 'Test User'
-        assert result['user']['screen_name'] == 'testuser'
+        assert result["text"] == "Test tweet content"
+        assert result["user"]["name"] == "Test User"
+        assert result["user"]["screen_name"] == "testuser"
 
         # Verify API calls
         mock_apify_client.assert_called_once_with(token="test_token")
         mock_client_instance.actor.assert_called_once_with("u6ppkMWAx2E2MpEuF")
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
+    @patch("apify_handler.config")
     async def test_fetch_tweet_no_api_token(self, mock_config):
         """Test fetch_tweet with missing API token."""
         # Mock config without token
@@ -294,7 +287,7 @@ class TestFetchTweet:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
+    @patch("apify_handler.config")
     async def test_fetch_tweet_invalid_url(self, mock_config):
         """Test fetch_tweet with invalid URL (no tweet ID)."""
         # Mock config
@@ -306,8 +299,8 @@ class TestFetchTweet:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
-    @patch('apify_handler.ApifyClient')
+    @patch("apify_handler.config")
+    @patch("apify_handler.ApifyClient")
     async def test_fetch_tweet_no_data(self, mock_apify_client, mock_config):
         """Test fetch_tweet when no data is returned."""
         # Mock config
@@ -334,12 +327,13 @@ class TestFetchTweet:
 
         assert result is None
 
+
 class TestFetchTweetReplies:
     """Test the fetch_tweet_replies function with mocked API calls."""
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
-    @patch('apify_handler.ApifyClient')
+    @patch("apify_handler.config")
+    @patch("apify_handler.ApifyClient")
     async def test_fetch_tweet_replies_success(self, mock_apify_client, mock_config):
         """Test successful tweet replies fetching."""
         # Mock config
@@ -362,13 +356,13 @@ class TestFetchTweetReplies:
         mock_dataset_items = MagicMock()
         mock_dataset_items.items = [
             {
-                'text': 'First reply',
-                'user': {'name': 'Reply User 1', 'screen_name': 'reply1'}
+                "text": "First reply",
+                "user": {"name": "Reply User 1", "screen_name": "reply1"},
             },
             {
-                'text': 'Second reply',
-                'user': {'name': 'Reply User 2', 'screen_name': 'reply2'}
-            }
+                "text": "Second reply",
+                "user": {"name": "Reply User 2", "screen_name": "reply2"},
+            },
         ]
         mock_dataset.list_items.return_value = mock_dataset_items
 
@@ -378,14 +372,14 @@ class TestFetchTweetReplies:
         # Assertions
         assert result is not None
         assert len(result) == 2
-        assert result[0]['text'] == 'First reply'
-        assert result[1]['text'] == 'Second reply'
+        assert result[0]["text"] == "First reply"
+        assert result[1]["text"] == "Second reply"
 
         # Verify correct actor is called for replies
         mock_client_instance.actor.assert_called_once_with("qhybbvlFivx7AP0Oh")
 
     @pytest.mark.asyncio
-    @patch('apify_handler.config')
+    @patch("apify_handler.config")
     async def test_fetch_tweet_replies_no_token(self, mock_config):
         """Test fetch_tweet_replies with missing API token."""
         mock_config.apify_api_token = None
@@ -395,40 +389,41 @@ class TestFetchTweetReplies:
 
         assert result is None
 
+
 class TestScrapeTwitterContent:
     """Test the main scrape_twitter_content function."""
 
     @pytest.mark.asyncio
-    @patch('apify_handler.fetch_tweet_replies')
-    @patch('apify_handler.fetch_tweet')
-    async def test_scrape_twitter_content_success(self, mock_fetch_tweet, mock_fetch_replies):
+    @patch("apify_handler.fetch_tweet_replies")
+    @patch("apify_handler.fetch_tweet")
+    async def test_scrape_twitter_content_success(
+        self, mock_fetch_tweet, mock_fetch_replies
+    ):
         """Test successful Twitter content scraping."""
         # Mock tweet data
         mock_tweet_data = {
-            'text': 'This is a test tweet with great content!',
-            'user': {
-                'name': 'Test User',
-                'screen_name': 'testuser'
-            },
-            'mediaDetails': [
+            "text": "This is a test tweet with great content!",
+            "user": {"name": "Test User", "screen_name": "testuser"},
+            "mediaDetails": [
                 {
-                    'type': 'video',
-                    'video_info': {
-                        'variants': [
-                            {'bitrate': 2176000, 'url': 'https://video.twimg.com/test.mp4', 'content_type': 'video/mp4'}
+                    "type": "video",
+                    "video_info": {
+                        "variants": [
+                            {
+                                "bitrate": 2176000,
+                                "url": "https://video.twimg.com/test.mp4",
+                                "content_type": "video/mp4",
+                            }
                         ]
-                    }
+                    },
                 }
-            ]
+            ],
         }
         mock_fetch_tweet.return_value = mock_tweet_data
 
         # Mock replies data (using correct structure)
         mock_replies_data = [
-            {
-                'replyText': 'Great tweet!',
-                'author': {'name': 'Reply User'}
-            }
+            {"replyText": "Great tweet!", "author": {"name": "Reply User"}}
         ]
         mock_fetch_replies.return_value = mock_replies_data
 
@@ -437,16 +432,22 @@ class TestScrapeTwitterContent:
 
         # Assertions
         assert result is not None
-        assert 'markdown' in result
-        assert 'raw_data' in result
-        assert 'This is a test tweet with great content!' in result['markdown']
-        assert '# Tweet by @testuser (Test User)' in result['markdown']
-        assert 'Great tweet!' in result['markdown']
-        assert result['raw_data']['tweet']['text'] == 'This is a test tweet with great content!'
-        assert result['raw_data']['tweet']['video_url'] == 'https://video.twimg.com/test.mp4'
+        assert "markdown" in result
+        assert "raw_data" in result
+        assert "This is a test tweet with great content!" in result["markdown"]
+        assert "# Tweet by @testuser (Test User)" in result["markdown"]
+        assert "Great tweet!" in result["markdown"]
+        assert (
+            result["raw_data"]["tweet"]["text"]
+            == "This is a test tweet with great content!"
+        )
+        assert (
+            result["raw_data"]["tweet"]["video_url"]
+            == "https://video.twimg.com/test.mp4"
+        )
 
     @pytest.mark.asyncio
-    @patch('apify_handler.fetch_tweet')
+    @patch("apify_handler.fetch_tweet")
     async def test_scrape_twitter_content_no_tweet(self, mock_fetch_tweet):
         """Test scraping when tweet fetch fails."""
         mock_fetch_tweet.return_value = None
@@ -457,14 +458,16 @@ class TestScrapeTwitterContent:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch('apify_handler.fetch_tweet_replies')
-    @patch('apify_handler.fetch_tweet')
-    async def test_scrape_twitter_content_no_replies(self, mock_fetch_tweet, mock_fetch_replies):
+    @patch("apify_handler.fetch_tweet_replies")
+    @patch("apify_handler.fetch_tweet")
+    async def test_scrape_twitter_content_no_replies(
+        self, mock_fetch_tweet, mock_fetch_replies
+    ):
         """Test scraping when replies fetch fails."""
         # Mock tweet data
         mock_tweet_data = {
-            'text': 'Tweet without replies',
-            'user': {'name': 'Test User', 'screen_name': 'testuser'}
+            "text": "Tweet without replies",
+            "user": {"name": "Test User", "screen_name": "testuser"},
         }
         mock_fetch_tweet.return_value = mock_tweet_data
         mock_fetch_replies.return_value = None  # No replies
@@ -474,9 +477,10 @@ class TestScrapeTwitterContent:
 
         # Should still work with just the tweet
         assert result is not None
-        assert 'markdown' in result
-        assert 'Tweet without replies' in result['markdown']
-        assert result['raw_data']['replies'] == []
+        assert "markdown" in result
+        assert "Tweet without replies" in result["markdown"]
+        assert result["raw_data"]["replies"] == []
+
 
 # Integration test class
 class TestXScrapingIntegration:
@@ -508,20 +512,42 @@ class TestXScrapingIntegration:
             # No mediaDetails
             ({}, None),
             # Empty mediaDetails
-            ({'mediaDetails': []}, None),
+            ({"mediaDetails": []}, None),
             # Non-video media
-            ({'mediaDetails': [{'type': 'photo'}]}, None),
+            ({"mediaDetails": [{"type": "photo"}]}, None),
             # Video with no video_info
-            ({'mediaDetails': [{'type': 'video'}]}, None),
+            ({"mediaDetails": [{"type": "video"}]}, None),
             # Video with empty variants
-            ({'mediaDetails': [{'type': 'video', 'video_info': {'variants': []}}]}, None),
+            (
+                {"mediaDetails": [{"type": "video", "video_info": {"variants": []}}]},
+                None,
+            ),
             # Video with single variant (correct structure)
-            ({'mediaDetails': [{'type': 'video', 'video_info': {'variants': [{'bitrate': 1000, 'url': 'test.mp4', 'content_type': 'video/mp4'}]}}]}, 'test.mp4'),
+            (
+                {
+                    "mediaDetails": [
+                        {
+                            "type": "video",
+                            "video_info": {
+                                "variants": [
+                                    {
+                                        "bitrate": 1000,
+                                        "url": "test.mp4",
+                                        "content_type": "video/mp4",
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+                "test.mp4",
+            ),
         ]
 
         for tweet_data, expected_url in test_cases:
             result = extract_video_url(tweet_data)
             assert result == expected_url, f"Video extraction failed for {tweet_data}"
+
 
 if __name__ == "__main__":
     # Run the tests

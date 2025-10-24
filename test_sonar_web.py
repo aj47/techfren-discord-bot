@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Get API key
-api_key = os.getenv('PERPLEXITY_API_KEY')
+api_key = os.getenv("PERPLEXITY_API_KEY")
 
 # Initialize client
 client = OpenAI(
@@ -22,22 +22,30 @@ try:
     response = client.chat.completions.create(
         model="sonar",
         messages=[
-            {"role": "user", "content": "What is the current weather in New York City today? Please provide sources."}
+            {
+                "role": "user",
+                "content": "What is the current weather in New York City today? Please provide sources.",
+            }
         ],
         max_tokens=200,
-        temperature=0
+        temperature=0,
     )
-    
+
     result = response.choices[0].message.content
     print("Response from 'sonar' model:")
     print(result)
     print("-" * 50)
-    
+
     # Check if response contains web-based information
-    if any(word in result.lower() for word in ['today', 'current', 'now', 'degrees', 'temperature', 'weather']):
+    if any(
+        word in result.lower()
+        for word in ["today", "current", "now", "degrees", "temperature", "weather"]
+    ):
         print("✓ Model appears to have web search capabilities!")
     else:
-        print("⚠ Model may not have web search capabilities or couldn't retrieve current data")
-        
+        print(
+            "⚠ Model may not have web search capabilities or couldn't retrieve current data"
+        )
+
 except Exception as e:
     print(f"Error: {e}")

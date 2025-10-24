@@ -3,13 +3,13 @@ Test script to verify that charts now use actual table data instead of generic "
 This test specifically addresses the bug where complex tables were showing generic row labels.
 """
 
-import asyncio
 import logging
 from chart_renderer import ChartRenderer
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 def test_simple_table():
     """Test simple 2-column table that should work correctly."""
@@ -38,6 +38,7 @@ def test_simple_table():
 
     return chart_url is not None
 
+
 def test_percentage_table():
     """Test table with percentages."""
     print("\n=== Testing Percentage Table ===")
@@ -64,6 +65,7 @@ def test_percentage_table():
     print(f"Chart generated: {'✓' if chart_url else '✗'}")
 
     return chart_url is not None
+
 
 def test_complex_multi_column_table():
     """Test complex table with many columns (the problematic case)."""
@@ -95,9 +97,12 @@ def test_complex_multi_column_table():
 
     # The key test: this should NOT generate "Row 1, Row 2" labels anymore
     if chart_url:
-        print("SUCCESS: Complex table now generates meaningful charts instead of generic 'Row N' labels")
+        print(
+            "SUCCESS: Complex table now generates meaningful charts instead of generic 'Row N' labels"
+        )
 
     return chart_url is not None
+
 
 def test_mixed_data_table():
     """Test table with mixed text and numeric data."""
@@ -126,9 +131,12 @@ def test_mixed_data_table():
     print(f"Chart generated: {'✓' if chart_url else '✗'}")
 
     # Should find the numeric "Stars" column and use Framework names as labels
-    print("Expected: Should use Framework names (React, Vue, etc.) as labels with Stars as values")
+    print(
+        "Expected: Should use Framework names (React, Vue, etc.) as labels with Stars as values"
+    )
 
     return chart_url is not None
+
 
 def test_full_pipeline():
     """Test the complete extraction pipeline with multiple tables."""
@@ -166,7 +174,9 @@ These patterns show diverse preferences in our community."""
     renderer = ChartRenderer()
 
     # Run full extraction
-    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(llm_response)
+    cleaned_content, chart_data_list = renderer.extract_tables_for_rendering(
+        llm_response
+    )
 
     print(f"Original response length: {len(llm_response)}")
     print(f"Cleaned content length: {len(cleaned_content)}")
@@ -179,10 +189,11 @@ These patterns show diverse preferences in our community."""
         print(f"  Placeholder: {chart_data.get('placeholder')}")
         print(f"  Has URL: {'✓' if chart_data.get('url') else '✗'}")
 
-        if not chart_data.get('url'):
+        if not chart_data.get("url"):
             success = False
 
     return success and len(chart_data_list) > 0
+
 
 def main():
     """Run all tests to verify the chart data fix."""
@@ -196,7 +207,7 @@ def main():
         ("Percentage Table", test_percentage_table),
         ("Complex Multi-Column Table", test_complex_multi_column_table),
         ("Mixed Data Table", test_mixed_data_table),
-        ("Full Pipeline", test_full_pipeline)
+        ("Full Pipeline", test_full_pipeline),
     ]
 
     results = []
@@ -234,6 +245,7 @@ def main():
         print("There may still be issues with chart data extraction.")
 
     return passed == len(results)
+
 
 if __name__ == "__main__":
     success = main()

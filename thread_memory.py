@@ -7,7 +7,7 @@ previous exchanges within a thread and maintain context across multiple interact
 
 import sqlite3
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import json
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ThreadMessage:
     """Represents a message in a thread conversation."""
+
     sequence_id: int
     user_message: str
     bot_response: str
@@ -42,7 +43,8 @@ class ThreadMemoryManager:
                 cursor = conn.cursor()
 
                 # Create thread_conversations table
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS thread_conversations (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         thread_id TEXT NOT NULL,
@@ -59,21 +61,27 @@ class ThreadMemoryManager:
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(thread_id, sequence_number)
                     )
-                """)
+                """
+                )
 
                 # Create indexes for efficient retrieval
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_thread_conversations_thread_id
                     ON thread_conversations(thread_id)
-                """)
+                """
+                )
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_thread_conversations_timestamp
                     ON thread_conversations(timestamp DESC)
-                """)
+                """
+                )
 
                 # Create thread_metadata table for thread-level information
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS thread_metadata (
                         thread_id TEXT PRIMARY KEY,
                         thread_name TEXT,
@@ -87,7 +95,8 @@ class ThreadMemoryManager:
                         is_active BOOLEAN DEFAULT 1,
                         thread_type TEXT DEFAULT 'conversation'  -- 'conversation', 'summary', 'analysis'
                     )
-                """)
+                """
+                )
 
                 conn.commit()
                 logger.info("Thread memory database schema initialized successfully")
@@ -106,7 +115,7 @@ class ThreadMemoryManager:
         guild_id: Optional[str] = None,
         channel_id: Optional[str] = None,
         is_chart_analysis: bool = False,
-        context_data: Optional[Dict] = None
+        context_data: Optional[Dict] = None,
     ) -> bool:
         """
         Store a complete user-bot exchange in the thread memory.
@@ -130,11 +139,14 @@ class ThreadMemoryManager:
                 cursor = conn.cursor()
 
                 # Get next sequence number for this thread
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COALESCE(MAX(sequence_number), 0) + 1
                     FROM thread_conversations
                     WHERE thread_id = ?
-                """, (thread_id,))
+                """,
+                    (thread_id,),
+                )
 
                 sequence_number = cursor.fetchone()[0]
 
@@ -142,20 +154,32 @@ class ThreadMemoryManager:
                 context_json = json.dumps(context_data) if context_data else None
                 timestamp = datetime.now(timezone.utc)
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO thread_conversations (
                         thread_id, sequence_number, user_id, user_name,
                         user_message, bot_response, timestamp, guild_id,
                         channel_id, is_chart_analysis, context_data
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    thread_id, sequence_number, user_id, user_name,
-                    user_message, bot_response, timestamp, guild_id,
-                    channel_id, is_chart_analysis, context_json
-                ))
+                """,
+                    (
+                        thread_id,
+                        sequence_number,
+                        user_id,
+                        user_name,
+                        user_message,
+                        bot_response,
+                        timestamp,
+                        guild_id,
+                        channel_id,
+                        is_chart_analysis,
+                        context_json,
+                    ),
+                )
 
                 # Update or create thread metadata
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT OR REPLACE INTO thread_metadata (
                         thread_id, creator_id, creator_name, guild_id, channel_id,
                         created_at, last_activity, message_count, is_active
@@ -164,13 +188,24 @@ class ThreadMemoryManager:
                         COALESCE((SELECT created_at FROM thread_metadata WHERE thread_id = ?), ?),
                         ?, ?, 1
                     )
-                """, (
-                    thread_id, user_id, user_name, guild_id, channel_id,
-                    thread_id, timestamp, timestamp, sequence_number
-                ))
+                """,
+                    (
+                        thread_id,
+                        user_id,
+                        user_name,
+                        guild_id,
+                        channel_id,
+                        thread_id,
+                        timestamp,
+                        timestamp,
+                        sequence_number,
+                    ),
+                )
 
                 conn.commit()
-                logger.debug(f"Stored thread exchange for thread {thread_id}, sequence {sequence_number}")
+                logger.debug(
+                    f"Stored thread exchange for thread {thread_id}, sequence {sequence_number}"
+                )
                 return True
 
         except sqlite3.Error as e:
@@ -181,7 +216,7 @@ class ThreadMemoryManager:
         self,
         thread_id: str,
         max_exchanges: int = 10,
-        include_chart_context: bool = True
+        include_chart_context: bool = True,
     ) -> List[ThreadMessage]:
         """
         Retrieve conversation memory for a thread.
@@ -216,22 +251,37 @@ class ThreadMemoryManager:
                 # Convert to ThreadMessage objects and reverse to chronological order
                 messages = []
                 for row in reversed(rows):
-                    sequence_id, user_msg, bot_resp, user_id, user_name, timestamp_str, is_chart, context_json = row
+                    (
+                        sequence_id,
+                        user_msg,
+                        bot_resp,
+                        user_id,
+                        user_name,
+                        timestamp_str,
+                        is_chart,
+                        context_json,
+                    ) = row
 
                     # Parse timestamp
-                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    timestamp = datetime.fromisoformat(
+                        timestamp_str.replace("Z", "+00:00")
+                    )
 
-                    messages.append(ThreadMessage(
-                        sequence_id=sequence_id,
-                        user_message=user_msg,
-                        bot_response=bot_resp,
-                        user_id=user_id,
-                        user_name=user_name,
-                        timestamp=timestamp,
-                        message_type='exchange'
-                    ))
+                    messages.append(
+                        ThreadMessage(
+                            sequence_id=sequence_id,
+                            user_message=user_msg,
+                            bot_response=bot_resp,
+                            user_id=user_id,
+                            user_name=user_name,
+                            timestamp=timestamp,
+                            message_type="exchange",
+                        )
+                    )
 
-                logger.debug(f"Retrieved {len(messages)} thread messages for thread {thread_id}")
+                logger.debug(
+                    f"Retrieved {len(messages)} thread messages for thread {thread_id}"
+                )
                 return messages
 
         except sqlite3.Error as e:
@@ -239,9 +289,7 @@ class ThreadMemoryManager:
             return []
 
     def format_thread_context(
-        self,
-        thread_messages: List[ThreadMessage],
-        max_context_length: int = 2500
+        self, thread_messages: List[ThreadMessage], max_context_length: int = 2500
     ) -> str:
         """
         Format thread messages into context string for LLM.
@@ -261,11 +309,19 @@ class ThreadMemoryManager:
 
         for msg in thread_messages:
             # Format timestamp
-            time_str = msg.timestamp.strftime('%H:%M')
+            time_str = msg.timestamp.strftime("%H:%M")
 
             # Format exchange - truncate user message and bot response for brevity
-            user_msg_truncated = msg.user_message[:150] + "..." if len(msg.user_message) > 150 else msg.user_message
-            bot_resp_truncated = msg.bot_response[:100] + "..." if len(msg.bot_response) > 100 else msg.bot_response
+            user_msg_truncated = (
+                msg.user_message[:150] + "..."
+                if len(msg.user_message) > 150
+                else msg.user_message
+            )
+            bot_resp_truncated = (
+                msg.bot_response[:100] + "..."
+                if len(msg.bot_response) > 100
+                else msg.bot_response
+            )
 
             exchange = f"\n[{time_str}] {msg.user_name}: {user_msg_truncated}"
             exchange += f"\nBot: {bot_resp_truncated}"
@@ -295,40 +351,46 @@ class ThreadMemoryManager:
                 cursor = conn.cursor()
 
                 # Get thread metadata
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT thread_name, creator_name, created_at, last_activity,
                            message_count, thread_type
                     FROM thread_metadata
                     WHERE thread_id = ?
-                """, (thread_id,))
+                """,
+                    (thread_id,),
+                )
 
                 metadata = cursor.fetchone()
                 if not metadata:
                     return None
 
                 # Get conversation stats
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) as total_exchanges,
                            COUNT(CASE WHEN is_chart_analysis = 1 THEN 1 END) as chart_analyses,
                            MIN(timestamp) as first_exchange,
                            MAX(timestamp) as last_exchange
                     FROM thread_conversations
                     WHERE thread_id = ?
-                """, (thread_id,))
+                """,
+                    (thread_id,),
+                )
 
                 stats = cursor.fetchone()
 
                 return {
-                    'thread_name': metadata[0],
-                    'creator_name': metadata[1],
-                    'created_at': metadata[2],
-                    'last_activity': metadata[3],
-                    'message_count': metadata[4],
-                    'thread_type': metadata[5],
-                    'total_exchanges': stats[0] if stats else 0,
-                    'chart_analyses': stats[1] if stats else 0,
-                    'first_exchange': stats[2] if stats else None,
-                    'last_exchange': stats[3] if stats else None
+                    "thread_name": metadata[0],
+                    "creator_name": metadata[1],
+                    "created_at": metadata[2],
+                    "last_activity": metadata[3],
+                    "message_count": metadata[4],
+                    "thread_type": metadata[5],
+                    "total_exchanges": stats[0] if stats else 0,
+                    "chart_analyses": stats[1] if stats else 0,
+                    "first_exchange": stats[2] if stats else None,
+                    "last_exchange": stats[3] if stats else None,
                 }
 
         except sqlite3.Error as e:
@@ -352,20 +414,28 @@ class ThreadMemoryManager:
                 cursor = conn.cursor()
 
                 # Get threads to be cleaned up
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT thread_id FROM thread_metadata
                     WHERE last_activity < ? AND is_active = 1
-                """, (cutoff_date,))
+                """,
+                    (cutoff_date,),
+                )
 
                 old_threads = [row[0] for row in cursor.fetchall()]
 
                 if old_threads:
                     # Mark threads as inactive instead of deleting
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         UPDATE thread_metadata
                         SET is_active = 0
                         WHERE thread_id IN ({})
-                    """.format(','.join('?' * len(old_threads))), old_threads)
+                    """.format(
+                            ",".join("?" * len(old_threads))
+                        ),
+                        old_threads,
+                    )
 
                     conn.commit()
                     logger.info(f"Marked {len(old_threads)} old threads as inactive")
@@ -377,10 +447,7 @@ class ThreadMemoryManager:
             return 0
 
     def search_thread_conversations(
-        self,
-        search_term: str,
-        thread_id: Optional[str] = None,
-        limit: int = 10
+        self, search_term: str, thread_id: Optional[str] = None, limit: int = 10
     ) -> List[Dict]:
         """
         Search through thread conversations.
@@ -419,14 +486,16 @@ class ThreadMemoryManager:
 
                 results = []
                 for row in rows:
-                    results.append({
-                        'thread_id': row[0],
-                        'user_name': row[1],
-                        'user_message': row[2],
-                        'bot_response': row[3],
-                        'timestamp': row[4],
-                        'thread_name': row[5] or 'Unknown Thread'
-                    })
+                    results.append(
+                        {
+                            "thread_id": row[0],
+                            "user_name": row[1],
+                            "user_message": row[2],
+                            "bot_response": row[3],
+                            "timestamp": row[4],
+                            "thread_name": row[5] or "Unknown Thread",
+                        }
+                    )
 
                 return results
 
@@ -453,7 +522,7 @@ def store_thread_exchange(
     user_name: str,
     user_message: str,
     bot_response: str,
-    **kwargs
+    **kwargs,
 ) -> bool:
     """Convenience function to store a thread exchange."""
     manager = get_thread_memory_manager()
@@ -484,16 +553,22 @@ def clear_thread_memory(thread_id: str) -> bool:
             cursor = conn.cursor()
 
             # Mark thread as inactive and clear conversations
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE thread_metadata
                 SET is_active = 0
                 WHERE thread_id = ?
-            """, (thread_id,))
+            """,
+                (thread_id,),
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM thread_conversations
                 WHERE thread_id = ?
-            """, (thread_id,))
+            """,
+                (thread_id,),
+            )
 
             conn.commit()
             logger.info(f"Cleared thread memory for thread {thread_id}")
@@ -514,13 +589,13 @@ def get_thread_stats(thread_id: str) -> Optional[Dict]:
     messages = manager.get_thread_memory(thread_id, max_exchanges=50)
 
     return {
-        'thread_name': summary.get('thread_name', 'Unknown Thread'),
-        'creator': summary.get('creator_name', 'Unknown'),
-        'created_at': summary.get('created_at'),
-        'total_exchanges': len(messages),
-        'chart_analyses': summary.get('chart_analyses', 0),
-        'last_activity': summary.get('last_activity'),
-        'is_active': bool(messages)  # Active if has recent messages
+        "thread_name": summary.get("thread_name", "Unknown Thread"),
+        "creator": summary.get("creator_name", "Unknown"),
+        "created_at": summary.get("created_at"),
+        "total_exchanges": len(messages),
+        "chart_analyses": summary.get("chart_analyses", 0),
+        "last_activity": summary.get("last_activity"),
+        "is_active": bool(messages),  # Active if has recent messages
     }
 
 
@@ -530,14 +605,16 @@ async def process_thread_memory_command(message, command_parts):
         return "Thread memory commands: `/thread-memory status`, `/thread-memory clear`, `/thread-memory stats`"
 
     action = command_parts[1].lower()
-    thread_id = str(message.channel.id) if hasattr(message.channel, 'parent') else None
+    thread_id = str(message.channel.id) if hasattr(message.channel, "parent") else None
 
     if not thread_id:
         return "Thread memory commands can only be used in threads."
 
     if action == "status":
         if has_thread_memory(thread_id):
-            messages = get_thread_memory_manager().get_thread_memory(thread_id, max_exchanges=1)
+            messages = get_thread_memory_manager().get_thread_memory(
+                thread_id, max_exchanges=1
+            )
             last_msg = messages[0] if messages else None
             if last_msg:
                 return f"✅ This thread has conversation memory.\nLast exchange: {last_msg.timestamp.strftime('%Y-%m-%d %H:%M')} UTC"

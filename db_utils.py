@@ -8,13 +8,13 @@ import sqlite3
 import os
 import sys
 import json
-from datetime import datetime
 from tabulate import tabulate
-from typing import List, Dict, Any, Optional
+from typing import Optional
 
 # Database constants
 DB_DIRECTORY = "data"
 DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.db")
+
 
 def get_connection() -> sqlite3.Connection:
     """Get a connection to the SQLite database."""
@@ -25,6 +25,7 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def list_recent_messages(limit: int = 10) -> None:
     """List the most recent messages in the database."""
@@ -50,20 +51,24 @@ def list_recent_messages(limit: int = 10) -> None:
     # Convert rows to list of dicts for tabulate
     data = []
     for row in rows:
-        data.append({
-            "ID": row['id'],
-            "Author": row['author_name'],
-            "Channel": row['channel_name'],
-            "Guild": row['guild_name'] or 'DM',
-            "Content": row['content_preview'] + ('...' if len(row['content_preview']) >= 50 else ''),
-            "Created At": row['created_at'],
-            "Command": f"{row['command_type'] if row['is_command'] else 'No'}"
-        })
+        data.append(
+            {
+                "ID": row["id"],
+                "Author": row["author_name"],
+                "Channel": row["channel_name"],
+                "Guild": row["guild_name"] or "DM",
+                "Content": row["content_preview"]
+                + ("..." if len(row["content_preview"]) >= 50 else ""),
+                "Created At": row["created_at"],
+                "Command": f"{row['command_type'] if row['is_command'] else 'No'}",
+            }
+        )
 
     print(tabulate(data, headers="keys", tablefmt="grid"))
     print(f"\nTotal messages shown: {len(rows)}")
 
     conn.close()
+
 
 def get_message_stats() -> None:
     """Get statistics about messages in the database."""
@@ -79,32 +84,38 @@ def get_message_stats() -> None:
     command_count = cursor.fetchone()[0]
 
     # Command type breakdown
-    cursor.execute("""
+    cursor.execute(
+        """
     SELECT command_type, COUNT(*) as count
     FROM messages
     WHERE is_command = 1
     GROUP BY command_type
-    """)
+    """
+    )
     command_types = cursor.fetchall()
 
     # User message count
-    cursor.execute("""
+    cursor.execute(
+        """
     SELECT author_name, COUNT(*) as count
     FROM messages
     GROUP BY author_id
     ORDER BY count DESC
     LIMIT 10
-    """)
+    """
+    )
     top_users = cursor.fetchall()
 
     # Channel message count
-    cursor.execute("""
+    cursor.execute(
+        """
     SELECT channel_name, COUNT(*) as count
     FROM messages
     GROUP BY channel_id
     ORDER BY count DESC
     LIMIT 10
-    """)
+    """
+    )
     top_channels = cursor.fetchall()
 
     # Print statistics
@@ -114,19 +125,29 @@ def get_message_stats() -> None:
 
     print("\n--- Command Types ---")
     for cmd in command_types:
-        print(f"{cmd['command_type']}: {cmd['count']} ({cmd['count']/command_count*100:.1f}% of commands)")
+        print(
+            f"{cmd['command_type']}: {cmd['count']} ({cmd['count']/command_count*100:.1f}% of commands)"
+        )
 
     print("\n--- Top Users ---")
-    user_data = [{"User": row['author_name'], "Messages": row['count']} for row in top_users]
+    user_data = [
+        {"User": row["author_name"], "Messages": row["count"]} for row in top_users
+    ]
     print(tabulate(user_data, headers="keys", tablefmt="simple"))
 
     print("\n--- Top Channels ---")
-    channel_data = [{"Channel": row['channel_name'], "Messages": row['count']} for row in top_channels]
+    channel_data = [
+        {"Channel": row["channel_name"], "Messages": row["count"]}
+        for row in top_channels
+    ]
     print(tabulate(channel_data, headers="keys", tablefmt="simple"))
 
     conn.close()
 
-def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optional[str] = None) -> None:
+
+def list_summaries(
+    limit: int = 10, channel: Optional[str] = None, date: Optional[str] = None
+) -> None:
     """
     List channel summaries from the database.
 
@@ -173,21 +194,25 @@ def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optiona
     # Convert rows to list of dicts for tabulate
     data = []
     for row in rows:
-        data.append({
-            "ID": row['id'],
-            "Channel": row['channel_name'],
-            "Guild": row['guild_name'] or 'N/A',
-            "Date": row['date'],
-            "Messages": row['message_count'],
-            "Users": row['active_users'],
-            "Summary Preview": row['summary_preview'] + ('...' if len(row['summary_preview']) >= 100 else ''),
-            "Created At": row['created_at']
-        })
+        data.append(
+            {
+                "ID": row["id"],
+                "Channel": row["channel_name"],
+                "Guild": row["guild_name"] or "N/A",
+                "Date": row["date"],
+                "Messages": row["message_count"],
+                "Users": row["active_users"],
+                "Summary Preview": row["summary_preview"]
+                + ("..." if len(row["summary_preview"]) >= 100 else ""),
+                "Created At": row["created_at"],
+            }
+        )
 
     print(tabulate(data, headers="keys", tablefmt="grid"))
     print(f"\nTotal summaries shown: {len(rows)}")
 
     conn.close()
+
 
 def view_summary(summary_id: int) -> None:
     """
@@ -206,7 +231,7 @@ def view_summary(summary_id: int) -> None:
         FROM channel_summaries
         WHERE id = ?
         """,
-        (summary_id,)
+        (summary_id,),
     )
 
     row = cursor.fetchone()
@@ -216,10 +241,10 @@ def view_summary(summary_id: int) -> None:
         return
 
     # Parse the active users list from JSON
-    active_users = json.loads(row['active_users_list'])
+    active_users = json.loads(row["active_users_list"])
 
     # Parse metadata if available
-    metadata = json.loads(row['metadata']) if row['metadata'] else {}
+    metadata = json.loads(row["metadata"]) if row["metadata"] else {}
 
     # Print the summary details
     print("\n" + "=" * 80)
@@ -241,10 +266,11 @@ def view_summary(summary_id: int) -> None:
 
     print("\nSummary:")
     print("-" * 80)
-    print(row['summary_text'])
+    print(row["summary_text"])
     print("-" * 80)
 
     conn.close()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Discord Bot Database Utility")
@@ -252,19 +278,29 @@ def main():
 
     # List recent messages command
     list_parser = subparsers.add_parser("list", help="List recent messages")
-    list_parser.add_argument("-n", "--limit", type=int, default=10, help="Number of messages to show")
+    list_parser.add_argument(
+        "-n", "--limit", type=int, default=10, help="Number of messages to show"
+    )
 
     # Stats command
     subparsers.add_parser("stats", help="Show message statistics")
 
     # List summaries command
     summaries_parser = subparsers.add_parser("summaries", help="List channel summaries")
-    summaries_parser.add_argument("-n", "--limit", type=int, default=10, help="Number of summaries to show")
-    summaries_parser.add_argument("-c", "--channel", type=str, help="Filter by channel name")
-    summaries_parser.add_argument("-d", "--date", type=str, help="Filter by date (YYYY-MM-DD)")
+    summaries_parser.add_argument(
+        "-n", "--limit", type=int, default=10, help="Number of summaries to show"
+    )
+    summaries_parser.add_argument(
+        "-c", "--channel", type=str, help="Filter by channel name"
+    )
+    summaries_parser.add_argument(
+        "-d", "--date", type=str, help="Filter by date (YYYY-MM-DD)"
+    )
 
     # View summary command
-    view_parser = subparsers.add_parser("view-summary", help="View a specific channel summary")
+    view_parser = subparsers.add_parser(
+        "view-summary", help="View a specific channel summary"
+    )
     view_parser.add_argument("id", type=int, help="ID of the summary to view")
 
     args = parser.parse_args()
@@ -281,6 +317,7 @@ def main():
         list_summaries(args.limit, args.channel, args.date)
     elif args.command == "view-summary":
         view_summary(args.id)
+
 
 if __name__ == "__main__":
     main()

@@ -3,7 +3,6 @@ Test script for the database module.
 This script tests the database initialization and message storage functionality.
 """
 
-import os
 import sys
 import logging
 from datetime import datetime, timezone
@@ -12,12 +11,11 @@ import database
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
 )
-logger = logging.getLogger('test_database')
+logger = logging.getLogger("test_database")
+
 
 def test_database_init():
     """Test database initialization"""
@@ -29,6 +27,7 @@ def test_database_init():
     except Exception as e:
         logger.error(f"Database initialization failed: {str(e)}", exc_info=True)
         return False
+
 
 def test_message_storage():
     """Test message storage functionality"""
@@ -58,7 +57,7 @@ def test_message_storage():
             guild_name=guild_name,
             is_bot=False,
             is_command=True,
-            command_type="test"
+            command_type="test",
         )
 
         if success:
@@ -80,6 +79,7 @@ def test_message_storage():
         logger.error(f"Message storage test failed: {str(e)}", exc_info=True)
         return False
 
+
 def main():
     """Run all tests"""
     logger.info("Starting database tests...")
@@ -96,6 +96,7 @@ def main():
 
     logger.info("All tests completed successfully")
     return True
+
 
 if __name__ == "__main__":
     success = main()

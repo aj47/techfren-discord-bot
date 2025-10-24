@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Get API key
-api_key = os.getenv('PERPLEXITY_API_KEY')
+api_key = os.getenv("PERPLEXITY_API_KEY")
 
 # Initialize client
 client = OpenAI(
@@ -23,24 +23,27 @@ try:
     response = client.chat.completions.create(
         model="sonar",
         messages=[
-            {"role": "user", "content": "What are the latest AI developments in 2024? Please provide sources."}
+            {
+                "role": "user",
+                "content": "What are the latest AI developments in 2024? Please provide sources.",
+            }
         ],
         max_tokens=500,
-        temperature=0
+        temperature=0,
     )
-    
+
     print("Full Response Object:")
     print(json.dumps(response.model_dump(), indent=2, default=str))
     print("\n" + "-" * 50)
-    
+
     print("\nMessage Content:")
     print(response.choices[0].message.content)
-    
+
     # Check if there are citations in the response
-    if hasattr(response, 'citations') or hasattr(response.choices[0], 'citations'):
+    if hasattr(response, "citations") or hasattr(response.choices[0], "citations"):
         print("\nCitations found in response!")
     else:
         print("\nNo citations field found in response structure")
-        
+
 except Exception as e:
     print(f"Error: {e}")

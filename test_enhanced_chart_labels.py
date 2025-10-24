@@ -5,9 +5,6 @@ This test verifies that charts now have detailed, informative axis labels and le
 
 import sys
 import os
-import asyncio
-import datetime
-from unittest.mock import Mock, patch
 
 # Add the current directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +16,7 @@ except ImportError as e:
     print("This test requires the chart_renderer module to be available.")
     sys.exit(1)
 
+
 def test_enhanced_axis_labels():
     """Test that axis labels are now more detailed and informative."""
     print("=== Testing Enhanced Axis Labels ===")
@@ -29,16 +27,12 @@ def test_enhanced_axis_labels():
         # Test focus-related labels
         ("focus", "x", "", "Technologies (Focus)"),
         ("focus", "y", "", "Focus Level (Score)"),
-
         # Test detail-related labels
         ("details", "y", "", "Detail Level (Quantity)"),
-
         # Test percentage labels
         ("usage", "y", "%", "Usage (Value) (%)"),
-
         # Test year labels
         ("start year", "y", "", "Start Year (Year)"),
-
         # Test generic labels
         ("value", "y", "", "Measurement Values"),
         ("category", "x", "", "Categories"),
@@ -65,6 +59,7 @@ def test_enhanced_axis_labels():
     print(f"Enhanced axis labels: {success_count}/{len(test_cases)} tests passed\n")
     return success_count >= len(test_cases) * 0.8  # 80% pass rate
 
+
 def test_enhanced_legend_labels():
     """Test that legend labels are now more detailed and informative."""
     print("=== Testing Enhanced Legend Labels ===")
@@ -78,12 +73,10 @@ def test_enhanced_legend_labels():
         ("count", "bar", "", "Count"),
         ("rating", "bar", "", "Rating Rating"),
         ("year", "bar", "", "Year (Timeline)"),
-
         # Pie chart legends
         ("focus", "pie", "", "Focus Distribution"),
         ("usage", "pie", "%", "Usage Share (%)"),
         ("details", "pie", "", "Detail Breakdown"),
-
         # Line chart legends
         ("focus", "line", "", "Focus Trends"),
         ("details", "line", "", "Detail Evolution"),
@@ -96,10 +89,14 @@ def test_enhanced_legend_labels():
 
             # Check if result is more descriptive than original
             if len(result) > len(original) and result != original:
-                print(f"  Test {i+1}: ✓ PASS - '{original}' ({chart_type}) → '{result}'")
+                print(
+                    f"  Test {i+1}: ✓ PASS - '{original}' ({chart_type}) → '{result}'"
+                )
                 success_count += 1
             else:
-                print(f"  Test {i+1}: ✓ ACCEPTABLE - '{original}' ({chart_type}) → '{result}'")
+                print(
+                    f"  Test {i+1}: ✓ ACCEPTABLE - '{original}' ({chart_type}) → '{result}'"
+                )
                 # Accept if it at least includes the original term
                 if original.lower() in result.lower():
                     success_count += 1
@@ -108,6 +105,7 @@ def test_enhanced_legend_labels():
 
     print(f"Enhanced legend labels: {success_count}/{len(test_cases)} tests passed\n")
     return success_count >= len(test_cases) * 0.8
+
 
 def test_enhanced_chart_titles():
     """Test that chart titles are now more detailed and context-aware."""
@@ -120,20 +118,15 @@ def test_enhanced_chart_titles():
         (["Framework", "Focus"], "bar", "Focus Score Comparison"),
         (["Technology", "Details"], "bar", "Detail Level Analysis"),
         (["Method", "Focus"], "pie", "Focus Level Distribution"),
-
         # Tables with ratings/scores
         (["Tool", "Rating"], "bar", "Rating Ratings"),
         (["Project", "Score"], "bar", "Score Ratings"),
-
         # Time-based data
         (["Time Period", "Activity"], "line", "Activity Trends Over Time Period"),
-
         # Year data
         (["Project", "Start Year"], "bar", "Timeline"),
-
         # Goal/target data
         (["Category", "Goal"], "bar", "Target Goals"),
-
         # Power data
         (["System", "Power"], "bar", "Power Analysis"),
     ]
@@ -151,7 +144,9 @@ def test_enhanced_chart_titles():
                 print(f"  Test {i+1}: ✓ PASS - {headers} ({chart_type}) → '{result}'")
                 success_count += 1
             else:
-                print(f"  Test {i+1}: ✓ ACCEPTABLE - {headers} ({chart_type}) → '{result}'")
+                print(
+                    f"  Test {i+1}: ✓ ACCEPTABLE - {headers} ({chart_type}) → '{result}'"
+                )
                 print(f"    Expected to contain: {expected_keyword}")
                 # Accept any title that's more than just the column names
                 if " " in result and result not in headers:
@@ -161,6 +156,7 @@ def test_enhanced_chart_titles():
 
     print(f"Enhanced chart titles: {success_count}/{len(test_cases)} tests passed\n")
     return success_count >= len(test_cases) * 0.8
+
 
 def test_complete_chart_with_enhanced_labels():
     """Test complete chart generation with enhanced labels."""
@@ -172,35 +168,34 @@ def test_complete_chart_with_enhanced_labels():
     test_tables = [
         # Focus data (like the first chart shown)
         {
-            'headers': ['Framework', 'Focus'],
-            'rows': [
-                ['BMAD', '33'],
-                ['Spec-Kit', '38'],
-                ['OpenSpec', '35'],
-                ['CCPM', '0'],
-                ['Pneumatic Workflow', '1'],
-                ['RAG', '32']
-            ]
+            "headers": ["Framework", "Focus"],
+            "rows": [
+                ["BMAD", "33"],
+                ["Spec-Kit", "38"],
+                ["OpenSpec", "35"],
+                ["CCPM", "0"],
+                ["Pneumatic Workflow", "1"],
+                ["RAG", "32"],
+            ],
         },
-
         # Details data (like the second chart shown)
         {
-            'headers': ['Attribute', 'Details'],
-            'rows': [
-                ['Project Name', '2'],
-                ['Location', '20'],
-                ['Operation Start Year', '2030'],
-                ['Power Output (Initial)', '50'],
-                ['Long-term Power Goal', '500'],
-                ['Buyer/Utility', '32'],
-                ['Power Consumer', '67'],
-                ['Reactor Technology', '49'],
-                ['Purpose', '56'],
-                ['Commercial Milestone', '60'],
-                ['Partnership Model', '58'],
-                ['Additional Context', '68']
-            ]
-        }
+            "headers": ["Attribute", "Details"],
+            "rows": [
+                ["Project Name", "2"],
+                ["Location", "20"],
+                ["Operation Start Year", "2030"],
+                ["Power Output (Initial)", "50"],
+                ["Long-term Power Goal", "500"],
+                ["Buyer/Utility", "32"],
+                ["Power Consumer", "67"],
+                ["Reactor Technology", "49"],
+                ["Purpose", "56"],
+                ["Commercial Milestone", "60"],
+                ["Partnership Model", "58"],
+                ["Additional Context", "68"],
+            ],
+        },
     ]
 
     success_count = 0
@@ -225,8 +220,15 @@ def test_complete_chart_with_enhanced_labels():
 
                 # Check for enhanced terms
                 enhanced_terms = [
-                    'score', 'level', 'analysis', 'comparison', 'distribution',
-                    'measurement', 'quantity', 'rating', 'timeline'
+                    "score",
+                    "level",
+                    "analysis",
+                    "comparison",
+                    "distribution",
+                    "measurement",
+                    "quantity",
+                    "rating",
+                    "timeline",
                 ]
 
                 found_enhanced = any(term in url_lower for term in enhanced_terms)
@@ -244,8 +246,11 @@ def test_complete_chart_with_enhanced_labels():
         except Exception as e:
             print(f"    ✗ ERROR generating chart: {e}")
 
-    print(f"\nComplete chart generation: {success_count}/{len(test_tables)} charts successful\n")
+    print(
+        f"\nComplete chart generation: {success_count}/{len(test_tables)} charts successful\n"
+    )
     return success_count >= len(test_tables) * 0.7
+
 
 def test_before_after_comparison():
     """Show before/after comparison of chart labeling."""
@@ -255,12 +260,8 @@ def test_before_after_comparison():
 
     # Sample data that would have had poor labels before
     sample_table = {
-        'headers': ['Framework', 'Focus'],
-        'rows': [
-            ['React', '38'],
-            ['Vue', '35'],
-            ['Angular', '33']
-        ]
+        "headers": ["Framework", "Focus"],
+        "rows": [["React", "38"], ["Vue", "35"], ["Angular", "33"]],
     }
 
     try:
@@ -268,8 +269,8 @@ def test_before_after_comparison():
         original_x = "Framework"
         original_y = "Focus"
 
-        enhanced_x = renderer._enhance_axis_label(original_x, 'x')
-        enhanced_y = renderer._enhance_axis_label(original_y, 'y')
+        enhanced_x = renderer._enhance_axis_label(original_x, "x")
+        enhanced_y = renderer._enhance_axis_label(original_y, "y")
 
         print(f"  X-Axis Enhancement:")
         print(f"    Before: '{original_x}'")
@@ -281,7 +282,7 @@ def test_before_after_comparison():
 
         # Test enhanced legend
         original_legend = "Focus"
-        enhanced_legend = renderer._enhance_legend_label(original_legend, 'bar')
+        enhanced_legend = renderer._enhance_legend_label(original_legend, "bar")
 
         print(f"  Legend Enhancement:")
         print(f"    Before: '{original_legend}'")
@@ -289,7 +290,7 @@ def test_before_after_comparison():
 
         # Test enhanced title
         original_title = "Focus by Framework"  # Basic title
-        enhanced_title = renderer._generate_chart_title(['Framework', 'Focus'], 'bar')
+        enhanced_title = renderer._generate_chart_title(["Framework", "Focus"], "bar")
 
         print(f"  Title Enhancement:")
         print(f"    Before: '{original_title}'")
@@ -312,6 +313,7 @@ def test_before_after_comparison():
     except Exception as e:
         print(f"  ✗ ERROR in comparison: {e}")
         return False
+
 
 def main():
     """Run all enhanced labeling tests."""
@@ -365,6 +367,7 @@ def main():
         print("Enhanced labeling features may not be working properly.")
 
     return passed >= len(results) * 0.8
+
 
 if __name__ == "__main__":
     success = main()

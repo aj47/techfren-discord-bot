@@ -14,13 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from message_utils import generate_discord_message_link, get_message_context
-    from llm_handler import call_llm_for_summary
     from discord_formatter import DiscordFormatter
-    import discord
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("This test requires the Discord bot modules to be available.")
     sys.exit(1)
+
 
 def create_sample_messages():
     """Create sample message data that includes source links."""
@@ -28,34 +27,35 @@ def create_sample_messages():
 
     messages = [
         {
-            'id': '123456789012345678',
-            'content': 'Check out this great article about AI development trends!',
-            'author_name': 'Alice',
-            'created_at': now - datetime.timedelta(hours=2),
-            'guild_id': '111222333444555666',
-            'channel_id': '777888999000111222',
-            'scraped_url': 'https://example.com/ai-trends',
-            'scraped_content_summary': 'This article discusses the latest trends in AI development, including machine learning advances and ethical considerations.'
+            "id": "123456789012345678",
+            "content": "Check out this great article about AI development trends!",
+            "author_name": "Alice",
+            "created_at": now - datetime.timedelta(hours=2),
+            "guild_id": "111222333444555666",
+            "channel_id": "777888999000111222",
+            "scraped_url": "https://example.com/ai-trends",
+            "scraped_content_summary": "This article discusses the latest trends in AI development, including machine learning advances and ethical considerations.",
         },
         {
-            'id': '987654321098765432',
-            'content': 'I totally agree with the points made. The ethical considerations are really important.',
-            'author_name': 'Bob',
-            'created_at': now - datetime.timedelta(hours=1),
-            'guild_id': '111222333444555666',
-            'channel_id': '777888999000111222'
+            "id": "987654321098765432",
+            "content": "I totally agree with the points made. The ethical considerations are really important.",
+            "author_name": "Bob",
+            "created_at": now - datetime.timedelta(hours=1),
+            "guild_id": "111222333444555666",
+            "channel_id": "777888999000111222",
         },
         {
-            'id': '555666777888999000',
-            'content': 'Has anyone tried implementing these suggestions in practice?',
-            'author_name': 'Charlie',
-            'created_at': now - datetime.timedelta(minutes=30),
-            'guild_id': '111222333444555666',
-            'channel_id': '777888999000111222'
-        }
+            "id": "555666777888999000",
+            "content": "Has anyone tried implementing these suggestions in practice?",
+            "author_name": "Charlie",
+            "created_at": now - datetime.timedelta(minutes=30),
+            "guild_id": "111222333444555666",
+            "channel_id": "777888999000111222",
+        },
     ]
 
     return messages
+
 
 async def test_complete_source_linking_workflow():
     """Test the complete source linking workflow from message to formatted output."""
@@ -64,8 +64,7 @@ async def test_complete_source_linking_workflow():
     # Create sample messages
     messages = create_sample_messages()
     channel_name = "general"
-    today = datetime.date.today()
-    hours = 24
+    datetime.date.today()
 
     print(f"Testing with {len(messages)} sample messages...")
 
@@ -76,9 +75,7 @@ async def test_complete_source_linking_workflow():
         expected_links = []
         for msg in messages:
             link = generate_discord_message_link(
-                msg['guild_id'],
-                msg['channel_id'],
-                msg['id']
+                msg["guild_id"], msg["channel_id"], msg["id"]
             )
             expected_links.append(link)
             print(f"   Generated link: {link}")
@@ -112,22 +109,30 @@ Key topics:
 - [Implementation questions]({expected_links[2]})"""
 
         formatter = DiscordFormatter()
-        formatted_response, chart_data = formatter.format_llm_response(mock_llm_response)
+        formatted_response, chart_data = formatter.format_llm_response(
+            mock_llm_response
+        )
 
         # Count Discord links in formatted response
         from message_utils import extract_message_links
+
         links_in_formatted = extract_message_links(formatted_response)
 
         if len(links_in_formatted) >= 3:
-            print(f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)")
+            print(
+                f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)"
+            )
         else:
-            print(f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)")
+            print(
+                f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)"
+            )
             return False
 
         # Test 3: Test message splitting preserves links
         print("\n3. Testing message splitting preserves source links...")
 
         from message_utils import split_long_message
+
         message_parts = await split_long_message(formatted_response, max_length=1000)
 
         # Count links across all parts
@@ -137,16 +142,20 @@ Key topics:
             total_links.extend(part_links)
 
         if len(total_links) >= 3:
-            print(f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)")
+            print(
+                f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)"
+            )
         else:
-            print(f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)")
+            print(
+                f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)"
+            )
             return False
 
         # Test 4: Verify link format is clickable in Discord
         print("\n4. Testing Discord link format compatibility...")
 
         # Check that links follow Discord's expected format
-        discord_link_pattern = r'https://discord\.com/channels/\d+/\d+/\d+'
+        discord_link_pattern = r"https://discord\.com/channels/\d+/\d+/\d+"
         import re
 
         valid_links = 0
@@ -157,7 +166,9 @@ Key topics:
         if valid_links == len(total_links):
             print(f"   ✓ PASS - All {valid_links} links follow correct Discord format")
         else:
-            print(f"   ✗ FAIL - {len(total_links) - valid_links} links have invalid format")
+            print(
+                f"   ✗ FAIL - {len(total_links) - valid_links} links have invalid format"
+            )
             return False
 
         print("\n🎉 ALL INTEGRATION TESTS PASSED!")
@@ -167,8 +178,10 @@ Key topics:
     except Exception as e:
         print(f"\n✗ ERROR in integration test: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 async def test_message_context_with_real_workflow():
     """Test message context extraction in a realistic scenario."""
@@ -196,7 +209,9 @@ async def test_message_context_with_real_workflow():
 
         # Create a mock linked message
         mock_linked_message = Mock()
-        mock_linked_message.content = "This is the content of the linked message about AI trends"
+        mock_linked_message.content = (
+            "This is the content of the linked message about AI trends"
+        )
         mock_linked_message.author.name = "LinkedUser"
         mock_linked_message.id = 123456789012345678
         mock_linked_message.channel = mock_channel
@@ -204,17 +219,21 @@ async def test_message_context_with_real_workflow():
         mock_linked_message.created_at = datetime.datetime.now()
 
         # Mock the fetch_message_from_link function
-        with patch('message_utils.fetch_message_from_link', new_callable=AsyncMock) as mock_fetch:
+        with patch(
+            "message_utils.fetch_message_from_link", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = mock_linked_message
 
             # Test context extraction
             context = await get_message_context(mock_message, mock_bot)
 
             # Verify context was extracted correctly
-            has_linked = len(context['linked_messages']) > 0
+            has_linked = len(context["linked_messages"]) > 0
             if has_linked:
-                linked_content = context['linked_messages'][0].content
-                print(f"   ✓ PASS - Extracted linked message: '{linked_content[:50]}...'")
+                linked_content = context["linked_messages"][0].content
+                print(
+                    f"   ✓ PASS - Extracted linked message: '{linked_content[:50]}...'"
+                )
                 return True
             else:
                 print("   ✗ FAIL - No linked messages extracted")
@@ -224,6 +243,7 @@ async def test_message_context_with_real_workflow():
         print(f"   ✗ ERROR in message context test: {e}")
         return False
 
+
 async def main():
     """Run all integration tests."""
     print("SOURCE LINKING INTEGRATION TESTS")
@@ -232,7 +252,7 @@ async def main():
 
     tests = [
         ("Complete Source Linking Workflow", test_complete_source_linking_workflow),
-        ("Message Context Extraction", test_message_context_with_real_workflow)
+        ("Message Context Extraction", test_message_context_with_real_workflow),
     ]
 
     results = []
@@ -275,6 +295,7 @@ async def main():
         print("Source linking may have issues in real-world usage.")
 
     return passed == len(results)
+
 
 if __name__ == "__main__":
     success = asyncio.run(main())

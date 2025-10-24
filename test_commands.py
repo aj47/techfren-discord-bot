@@ -3,12 +3,9 @@ Test script for the Discord bot commands.
 This script tests the bot's command handling functionality.
 """
 
-import os
-import sys
 import logging
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-import discord
 from datetime import datetime
 import bot
 import database
@@ -16,15 +13,15 @@ import database
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
 )
-logger = logging.getLogger('test_commands')
+logger = logging.getLogger("test_commands")
+
 
 class MockMessage:
     """Mock Discord message for testing"""
+
     def __init__(self, content, author=None, channel=None, guild=None, id="test_id"):
         self.content = content
         self.author = author or MagicMock()
@@ -50,6 +47,7 @@ class MockMessage:
             self.guild.id = "test_guild_id"
             self.guild.name = "Test Guild"
 
+
 class TestBotCommands(unittest.TestCase):
     """Test case for bot commands"""
 
@@ -73,42 +71,50 @@ class TestBotCommands(unittest.TestCase):
         bot.client = self.client
 
         # Mock config
-        self.config_patcher = patch('bot.config')
+        self.config_patcher = patch("bot.config")
         self.mock_config = self.config_patcher.start()
         self.mock_config.token = "test_token"
         self.mock_config.perplexity = "test_perplexity_key"
 
         # Mock call_llm_api and call_llm_for_summary
-        self.call_llm_api_patcher = patch('bot.call_llm_api')
+        self.call_llm_api_patcher = patch("bot.call_llm_api")
         self.mock_call_llm_api = self.call_llm_api_patcher.start()
-        self.mock_call_llm_api.return_value = "This is a test response from the LLM API."
+        self.mock_call_llm_api.return_value = (
+            "This is a test response from the LLM API."
+        )
 
-        self.call_llm_for_summary_patcher = patch('bot.call_llm_for_summary')
+        self.call_llm_for_summary_patcher = patch("bot.call_llm_for_summary")
         self.mock_call_llm_for_summary = self.call_llm_for_summary_patcher.start()
-        self.mock_call_llm_for_summary.return_value = "This is a test summary from the LLM API."
+        self.mock_call_llm_for_summary.return_value = (
+            "This is a test summary from the LLM API."
+        )
 
         # Mock database functions
-        self.store_message_patcher = patch('database.store_message')
+        self.store_message_patcher = patch("database.store_message")
         self.mock_store_message = self.store_message_patcher.start()
         self.mock_store_message.return_value = True
 
-        self.get_channel_messages_for_day_patcher = patch('database.get_channel_messages_for_day')
-        self.mock_get_channel_messages_for_day = self.get_channel_messages_for_day_patcher.start()
+        self.get_channel_messages_for_day_patcher = patch(
+            "database.get_channel_messages_for_day"
+        )
+        self.mock_get_channel_messages_for_day = (
+            self.get_channel_messages_for_day_patcher.start()
+        )
         self.mock_get_channel_messages_for_day.return_value = [
             {
-                'author_name': 'Test User',
-                'content': 'Test message 1',
-                'created_at': datetime.now(),
-                'is_bot': False,
-                'is_command': False
+                "author_name": "Test User",
+                "content": "Test message 1",
+                "created_at": datetime.now(),
+                "is_bot": False,
+                "is_command": False,
             },
             {
-                'author_name': 'Another User',
-                'content': 'Test message 2',
-                'created_at': datetime.now(),
-                'is_bot': False,
-                'is_command': False
-            }
+                "author_name": "Another User",
+                "content": "Test message 2",
+                "created_at": datetime.now(),
+                "is_bot": False,
+                "is_command": False,
+            },
         ]
 
     def tearDown(self):
@@ -135,17 +141,16 @@ class TestBotCommands(unittest.TestCase):
         bot_user = MagicMock()
         bot_user.id = 123456789
 
-        message = MockMessage(
-            content=f"<@{bot_user.id}> test query",
-            channel=channel
-        )
+        message = MockMessage(content=f"<@{bot_user.id}> test query", channel=channel)
 
         # Mock the bot.user in the bot module
         import bot
+
         bot.bot.user = bot_user
 
         # Process the message
         import asyncio
+
         asyncio.run(bot.on_message(message))
 
         # Check if the LLM API was called with the correct query
@@ -163,17 +168,16 @@ class TestBotCommands(unittest.TestCase):
         bot_user = MagicMock()
         bot_user.id = 123456789
 
-        message = MockMessage(
-            content=f"<@{bot_user.id}> hello world",
-            channel=channel
-        )
+        message = MockMessage(content=f"<@{bot_user.id}> hello world", channel=channel)
 
         # Mock the bot.user in the bot module
         import bot
+
         bot.bot.user = bot_user
 
         # Process the message
         import asyncio
+
         asyncio.run(bot.on_message(message))
 
         # Verify LLM API was called
@@ -187,13 +191,11 @@ class TestBotCommands(unittest.TestCase):
         channel.id = "general_channel_id"
         channel.send = AsyncMock()
 
-        message = MockMessage(
-            content="/sum-day",
-            channel=channel
-        )
+        message = MockMessage(content="/sum-day", channel=channel)
 
         # Process the message
         import asyncio
+
         asyncio.run(bot.on_message(message))
 
         # Check if the bot responded
@@ -208,13 +210,11 @@ class TestBotCommands(unittest.TestCase):
         channel.id = "test_channel_id"
         channel.send = AsyncMock()
 
-        message = MockMessage(
-            content="/sum-day",
-            channel=channel
-        )
+        message = MockMessage(content="/sum-day", channel=channel)
 
         # Process the message
         import asyncio
+
         asyncio.run(bot.on_message(message))
 
         # Check if the summary function was called (thread creation is tested elsewhere)
@@ -234,19 +234,24 @@ class TestBotCommands(unittest.TestCase):
 
         message = MockMessage(
             content=f"Hey everyone, <@{bot_user.id}> can you help with this question?",
-            channel=channel
+            channel=channel,
         )
 
         # Mock the bot.user in the bot module
         import bot
+
         bot.bot.user = bot_user
 
         # Process the message
         import asyncio
+
         asyncio.run(bot.on_message(message))
 
         # Check if the LLM API was called with the correct query (mention removed)
-        self.mock_call_llm_api.assert_called_once_with("Hey everyone,  can you help with this question?")
+        self.mock_call_llm_api.assert_called_once_with(
+            "Hey everyone,  can you help with this question?"
+        )
+
 
 def main():
     """Run all tests"""
@@ -259,6 +264,7 @@ def main():
 
     # Run the tests
     unittest.main()
+
 
 if __name__ == "__main__":
     main()

@@ -10,6 +10,7 @@ from message_utils import split_long_message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 async def test_message_splitting():
     """Test message splitting functionality with various lengths."""
 
@@ -21,23 +22,23 @@ async def test_message_splitting():
         {
             "name": "Short message (under 2000 chars)",
             "content": "This is a short message that should not be split.",
-            "expected_parts": 1
+            "expected_parts": 1,
         },
         {
             "name": "Medium message (around 2500 chars)",
             "content": "A" * 2500,
-            "expected_parts": 2
+            "expected_parts": 2,
         },
         {
             "name": "Long message (around 5000 chars)",
             "content": "B" * 5000,
-            "expected_parts": 3
+            "expected_parts": 3,
         },
         {
             "name": "Very long message (around 10000 chars)",
             "content": "C" * 10000,
-            "expected_parts": 6
-        }
+            "expected_parts": 6,
+        },
     ]
 
     for test_case in test_cases:
@@ -46,7 +47,7 @@ async def test_message_splitting():
 
         try:
             # Test with default max_length (1900)
-            parts = await split_long_message(test_case['content'])
+            parts = await split_long_message(test_case["content"])
 
             print(f"Split into {len(parts)} parts")
 
@@ -61,7 +62,7 @@ async def test_message_splitting():
 
             # Verify content integrity
             rejoined = "".join(parts)
-            if rejoined == test_case['content']:
+            if rejoined == test_case["content"]:
                 print("  Content integrity: ✓")
             else:
                 print("  Content integrity: ✗ (content was modified during split)")
@@ -75,6 +76,7 @@ async def test_message_splitting():
         except Exception as e:
             print(f"  ERROR: {e}")
             print(f"  Result: FAIL")
+
 
 async def test_chart_message_lengths():
     """Test realistic chart response lengths."""
@@ -132,12 +134,12 @@ Notable trends:
 - More collaborative problem-solving in recent period
 - Growing focus on AI and machine learning topics
 - Enhanced community interaction and knowledge sharing""",
-        }
+        },
     ]
 
     for i, response in enumerate(chart_responses, 1):
         print(f"\nTesting: {response['name']}")
-        content = response['content']
+        content = response["content"]
         print(f"Length: {len(content)} characters")
 
         try:
@@ -158,6 +160,7 @@ Notable trends:
         except Exception as e:
             print(f"  ERROR: {e}")
 
+
 def test_thread_context_length():
     """Test thread context formatting length."""
 
@@ -172,18 +175,21 @@ def test_thread_context_length():
     messages = []
     for i in range(10):
         msg = ThreadMessage(
-            sequence_id=i+1,
-            user_message=f"User message {i+1}: " + "This is a sample user message with some content. " * 3,
-            bot_response=f"Bot response {i+1}: " + "This is a sample bot response with analysis and insights. " * 4,
+            sequence_id=i + 1,
+            user_message=f"User message {i+1}: "
+            + "This is a sample user message with some content. " * 3,
+            bot_response=f"Bot response {i+1}: "
+            + "This is a sample bot response with analysis and insights. " * 4,
             user_id=f"user_{i+1}",
             user_name=f"user{i+1}",
             timestamp=datetime.now(timezone.utc),
-            message_type='exchange'
+            message_type="exchange",
         )
         messages.append(msg)
 
     # Test context formatting
     from thread_memory import ThreadMemoryManager
+
     manager = ThreadMemoryManager()
 
     context = manager.format_thread_context(messages, max_context_length=2500)
@@ -197,6 +203,7 @@ def test_thread_context_length():
     else:
         print(f"✗ Context exceeds limit by {len(context) - 2500} characters")
 
+
 async def main():
     """Run all tests."""
     try:
@@ -209,6 +216,7 @@ async def main():
 
     except Exception as e:
         logger.error(f"Test error: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

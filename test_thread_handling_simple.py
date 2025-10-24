@@ -18,11 +18,13 @@ except ImportError as e:
     print(f"Error importing ThreadManager: {e}")
     sys.exit(1)
 
+
 def create_mock_dm_channel():
     """Create mock DM channel."""
     mock_channel = Mock(spec=discord.DMChannel)
     mock_channel.__class__ = discord.DMChannel
     return mock_channel
+
 
 def create_mock_text_channel():
     """Create mock text channel."""
@@ -31,11 +33,13 @@ def create_mock_text_channel():
     mock_channel.create_thread = AsyncMock()
     return mock_channel
 
+
 def create_mock_guild():
     """Create mock guild."""
     mock_guild = Mock(spec=discord.Guild)
     mock_guild.id = 123456789
     return mock_guild
+
 
 def test_dm_channel_handling():
     """Test that DM channels are handled correctly."""
@@ -55,6 +59,7 @@ def test_dm_channel_handling():
     print("✓ DM channel correctly rejects thread creation")
     return True
 
+
 def test_text_channel_support():
     """Test that text channels support threads."""
     print("=== Testing Text Channel Support ===")
@@ -69,6 +74,7 @@ def test_text_channel_support():
 
     print("✓ Text channel correctly supports thread creation")
     return True
+
 
 def test_channel_type_descriptions():
     """Test channel type description generation."""
@@ -89,6 +95,7 @@ def test_channel_type_descriptions():
     print("✓ Channel type descriptions work correctly")
     return True
 
+
 def test_error_handling():
     """Test HTTP error handling."""
     print("=== Testing Error Handling ===")
@@ -98,8 +105,7 @@ def test_error_handling():
 
     # Simulate HTTP 400 error for unsupported channel type
     http_error = discord.HTTPException(
-        response=Mock(status=400),
-        message="Cannot execute action on this channel type"
+        response=Mock(status=400), message="Cannot execute action on this channel type"
     )
     http_error.status = 400
     http_error.text = "Cannot execute action on this channel type"
@@ -113,6 +119,7 @@ def test_error_handling():
 
     print("✓ HTTP errors handled correctly")
     return True
+
 
 def main():
     """Run all simplified tests."""
@@ -156,11 +163,14 @@ def main():
         print("✓ DM channels properly detected and handled")
         print("✓ Text channels support thread creation")
         print("✓ HTTP errors handled gracefully")
-        print("\nThe 'Cannot execute action on this channel type' warning should now be reduced!")
+        print(
+            "\nThe 'Cannot execute action on this channel type' warning should now be reduced!"
+        )
     else:
         print(f"\n❌ {len(results) - passed} test(s) failed.")
 
     return passed == len(results)
+
 
 if __name__ == "__main__":
     success = main()
