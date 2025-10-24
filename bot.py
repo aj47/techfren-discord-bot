@@ -19,6 +19,7 @@ from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from image_handler import process_and_update_message_with_image_analysis # Import image handler
 
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
@@ -369,6 +370,27 @@ async def on_message(message):
             is_command = True
             command_type = "/sum-hr"
 
+        # Process attachments
+        attachment_urls = None
+        attachment_types = None
+        image_analysis = None
+        
+        if message.attachments:
+            import json
+            attachment_urls_list = []
+            attachment_types_list = []
+            
+            for attachment in message.attachments:
+                attachment_urls_list.append(attachment.url)
+                attachment_types_list.append(attachment.content_type)
+                
+                # If it's an image, we can perform image analysis here later
+                if attachment.content_type and attachment.content_type.startswith('image/'):
+                    logger.info(f"Detected image attachment: {attachment.filename} ({attachment.content_type})")
+            
+            attachment_urls = json.dumps(attachment_urls_list)
+            attachment_types = json.dumps(attachment_types_list)
+
         # Store in database
         guild_id = str(message.guild.id) if message.guild else None
         channel_id = str(message.channel.id)
@@ -390,8 +412,16 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type
+            command_type=command_type,
+            attachment_urls=attachment_urls,
+            attachment_types=attachment_types,
+            image_analysis=image_analysis
         )
+
+        # If message has image attachments, analyze them
+        if message.attachments and any(attachment.content_type and attachment.content_type.startswith('image/') for attachment in message.attachments):
+            # Run image analysis in the background to not block message processing
+            asyncio.create_task(analyze_image_attachments_background(str(message.id), message))
 
         if not success:
             # This is usually because the message already exists (common when bot restarts)
@@ -408,6 +438,7 @@ async def on_message(message):
     is_mention_command = bot_mention in message.content or bot_mention_alt in message.content
     is_sum_day_command = message.content.startswith('/sum-day')
     is_sum_hr_command = message.content.startswith('/sum-hr')
+    is_analyze_images_command = message.content.startswith('/analyze-images')
 
     # Process mention commands in any channel
     if is_mention_command:
@@ -416,7 +447,7 @@ async def on_message(message):
         return
 
     # If not a command we recognize, ignore
-    if not (is_sum_day_command or is_sum_hr_command):
+    if not (is_sum_day_command or is_sum_hr_command or is_analyze_images_command):
         return
 
     # Process commands
@@ -425,9 +456,15 @@ async def on_message(message):
             await handle_sum_day_command(message, bot.user)
         elif is_sum_hr_command:
             await handle_sum_hr_command(message, bot.user)
+        elif is_analyze_images_command:
+            await handle_analyze_images_command(message)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
+
+async def handle_analyze_images_command(message):
+    """Handle the /analyze-images command"""
+    await _handle_analyze_images_command(message, slash=False)
         # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
@@ -512,6 +549,130 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
     # Immediately defer to avoid timeout, then do validation in wrapper
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+
+@bot.tree.command(name="analyze-images", description="Analyze images in the current message or reply to a message with images")
+async def analyze_images_slash(interaction: discord.Interaction, analysis_type: str = "general"):
+    """Slash command to analyze images"""
+    await _handle_analyze_images_command(interaction, slash=True, analysis_type=analysis_type)
+
+async def _handle_analyze_images_command(interaction, *, slash: bool = False, analysis_type: str = "general"):
+    """
+    Handle image analysis command (both slash and mention).
+    
+    Args:
+        interaction: Discord interaction or message
+        slash (bool): Whether this is a slash command
+        analysis_type (str): Type of analysis to perform
+    """
+    try:
+        # Defer the response if it's a slash command
+        if slash:
+            await interaction.response.defer()
+        
+        # Get the message to analyze
+        target_message = None
+        
+        if slash:
+            # For slash command, check the referenced message (when replying)
+            if interaction.message and interaction.message.reference and interaction.message.reference.message_id:
+                target_message = await interaction.channel.fetch_message(interaction.message.reference.message_id)
+            # If no reply, look for images in recent messages in the channel
+            else:
+                async for msg in interaction.channel.history(limit=10):
+                    if msg.attachments and any(att.content_type and att.content_type.startswith('image/') for att in msg.attachments):
+                        target_message = msg
+                        break
+        else:
+            # For mention command, use the message that triggered it
+            target_message = interaction
+        
+        if not target_message:
+            error_msg = "No message with images found. Reply to a message with images or use in a channel with recent images."
+            if slash:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.reply(error_msg, mention_author=False)
+            return
+        
+        # Convert message object to dict for the image handler
+        import json
+        success = await process_and_update_message_with_image_analysis(str(target_message.id), target_message)
+        
+        if not success:
+            error_msg = "Failed to analyze the images in the message. Please try again later."
+            if slash:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.reply(error_msg, mention_author=False)
+            return
+        
+        # Get the updated analysis from database
+        from database import get_message_by_id
+        message_data = await get_message_by_id(str(target_message.id))
+        
+        if message_data and message_data.get('image_analysis'):
+            # Parse the image analysis JSON
+            analysis_data = json.loads(message_data['image_analysis'])
+            
+            if analysis_data and len(analysis_data) > 0:
+                # Format the response
+                response_parts = [f"📷 **Image Analysis Results**:"]
+                
+                for i, img_data in enumerate(analysis_data, 1):
+                    response_parts.append(f"\n**Image {i}: {img_data.get('filename', 'Unknown')}**")
+                    response_parts.append(f"{img_data.get('analysis', 'No analysis available')}")
+                
+                full_response = "\n".join(response_parts)
+                
+                # Send response, splitting if too long
+                from message_utils import split_long_message
+                if slash:
+                    for part in split_long_message(full_response):
+                        await interaction.followup.send(part)
+                else:
+                    for part in split_long_message(full_response):
+                        await interaction.reply(part, mention_author=False)
+            else:
+                no_analysis_msg = "No analysis data available for the images."
+                if slash:
+                    await interaction.followup.send(no_analysis_msg)
+                else:
+                    await interaction.reply(no_analysis_msg, mention_author=False)
+        else:
+            no_analysis_msg = "Image analysis is still in progress. Please wait a moment and try again."
+            if slash:
+                await interaction.followup.send(no_analysis_msg, ephemeral=True)
+            else:
+                await interaction.reply(no_analysis_msg, mention_author=False)
+                
+    except Exception as e:
+        logger.error(f"Error in image analysis command: {e}", exc_info=True)
+        error_msg = "Sorry, an error occurred while analyzing the images. Please try again later."
+        try:
+            if slash:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.reply(error_msg, mention_author=False)
+        except:
+            logger.error("Failed to send error response for image analysis command")
+
+async def analyze_image_attachments_background(message_id: str, message):
+    """
+    Background task to analyze image attachments in a message.
+    
+    Args:
+        message_id (str): Discord message ID
+        message: Discord message object
+    """
+    try:
+        logger.info(f"Starting background image analysis for message {message_id}")
+        success = await process_and_update_message_with_image_analysis(message_id, message)
+        if success:
+            logger.info(f"Successfully completed image analysis for message {message_id}")
+        else:
+            logger.warning(f"Failed to complete image analysis for message {message_id}")
+    except Exception as e:
+        logger.error(f"Background image analysis error for message {message_id}: {str(e)}", exc_info=True)
 
 try:
     logger.info("Starting bot...")

@@ -131,7 +131,23 @@ async def call_llm_api(query, message_context=None):
                 ref_timestamp = getattr(ref_msg, 'created_at', None)
                 ref_time_str = ref_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if ref_timestamp else "Unknown time"
 
-                context_parts.append(f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}")
+                # Check for image analysis in database
+                image_analysis_text = ""
+                try:
+                    from database import get_message_by_id
+                    ref_msg_data = await get_message_by_id(str(ref_msg.id))
+                    if ref_msg_data and ref_msg_data.get('image_analysis'):
+                        import json
+                        image_analysis_data = json.loads(ref_msg_data['image_analysis'])
+                        if image_analysis_data:
+                            image_analysis_parts = []
+                            for i, img_data in enumerate(image_analysis_data, 1):
+                                image_analysis_parts.append(f"Image {i} ({img_data.get('filename', 'Unknown')}): {img_data.get('analysis', 'No analysis available')}")
+                            image_analysis_text = f"\n\n**Image Analysis:**\n" + "\n".join(image_analysis_parts)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve image analysis for referenced message: {e}")
+
+                context_parts.append(f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}{image_analysis_text}")
 
             # Add linked messages context
             if message_context.get('linked_messages'):
@@ -142,7 +158,23 @@ async def call_llm_api(query, message_context=None):
                     linked_timestamp = getattr(linked_msg, 'created_at', None)
                     linked_time_str = linked_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if linked_timestamp else "Unknown time"
 
-                    context_parts.append(f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}")
+                    # Check for image analysis in database
+                    image_analysis_text = ""
+                    try:
+                        from database import get_message_by_id
+                        linked_msg_data = await get_message_by_id(str(linked_msg.id))
+                        if linked_msg_data and linked_msg_data.get('image_analysis'):
+                            import json
+                            image_analysis_data = json.loads(linked_msg_data['image_analysis'])
+                            if image_analysis_data:
+                                image_analysis_parts = []
+                                for j, img_data in enumerate(image_analysis_data, 1):
+                                    image_analysis_parts.append(f"Image {j} ({img_data.get('filename', 'Unknown')}): {img_data.get('analysis', 'No analysis available')}")
+                                image_analysis_text = f"\n\n**Image Analysis:**\n" + "\n".join(image_analysis_parts)
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve image analysis for linked message: {e}")
+
+                    context_parts.append(f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}{image_analysis_text}")
 
             if context_parts:
                 context_text = "\n\n".join(context_parts)

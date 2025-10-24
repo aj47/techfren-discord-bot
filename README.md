@@ -15,6 +15,11 @@ A simple Discord bot built with discord.py.
   - Uses Apify to scrape Twitter/X.com URLs, extracting tweet content, video URLs, and replies
   - Uses Firecrawl for all other URLs
   - Summarizes content and stores it in the database
+- **Image Analysis**: 
+  - Automatically detects and analyzes image attachments in messages using Perplexity Sonar vision API
+  - Stores image analysis results in the database
+  - Includes image analysis in context when messages are referenced in queries
+  - Use `/analyze-images` command to manually analyze images in messages
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel, with responses posted in threads attached to your original message. Mentions can appear anywhere in the message (beginning, middle, or end)
 - `/sum-day` command works in any channel
@@ -102,6 +107,20 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 - `@botname <query>`: Sends your query to an AI model via Perplexity and returns the response. This command works in any channel and creates a thread attached to your message where the bot's response is posted. The mention can appear anywhere in your message (e.g., "Hey everyone, @botname can you help with this?").
 
+### Image Analysis
+
+- `/analyze-images`: Analyze images in messages
+  - Can be used directly or by replying to a message containing images
+  - Uses Perplexity Sonar vision API to understand and describe image content
+  - Works with common image formats (JPEG, PNG, GIF, WebP, BMP, TIFF)
+  - Automatically detects and describes main objects, text, colors, and scenes
+  - Results display filename and analysis for each image found
+  - If no command is used, the bot automatically analyzes image attachments when they appear in messages
+
+- Image analysis in conversations:
+  - When you reply to or reference messages with images in @botname queries, the image analysis is automatically included in the context
+  - The bot considers the image content when answering your questions about those messages
+
 ### Channel Summarization
 
 - `/sum-day`: Summarizes all messages in the current channel for the current day
@@ -160,6 +179,11 @@ The messages table also includes fields for URL scraping functionality:
 - `scraped_url`: URL extracted from the message
 - `scraped_content_summary`: Summary of the content from the scraped URL
 - `scraped_content_key_points`: Key points extracted from the scraped content
+
+The messages table includes fields for attachment and image analysis:
+- `attachment_urls`: JSON array of attachment URLs
+- `attachment_types`: JSON array of attachment content types
+- `image_analysis`: JSON with analysis results for image attachments
 
 ### Channel Summaries Table
 Stores the daily automated summaries for each channel, including:
