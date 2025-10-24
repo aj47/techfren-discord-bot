@@ -1,8 +1,8 @@
 """
 Discord bot configuration using environment variables and .env file support.
 
-This module loads configuration from environment variables with .env file taking precedence.
-The .env file values override system environment variables to ensure consistent configuration.
+This module loads configuration from environment variables with .env file taking precedence.  # noqa: E501
+The .env file values override system environment variables to ensure consistent configuration.  # noqa: E501
 """
 
 import os
@@ -20,7 +20,8 @@ if not token:
 
 # LLM API Key (required)
 # Environment variable: LLM_API_KEY
-# Works with any OpenAI-compatible API (OpenRouter, Fireworks, Together AI, Ollama, vLLM, etc.)
+# Works with any OpenAI-compatible API (OpenRouter, Fireworks, Together
+# AI, Ollama, vLLM, etc.)
 llm_api_key = os.getenv("LLM_API_KEY")
 if not llm_api_key:
     raise ValueError("LLM_API_KEY environment variable is required")
@@ -89,15 +90,15 @@ LARGE_SUMMARY_THRESHOLD = 24
 
 # Error Messages
 ERROR_MESSAGES = {
-    "invalid_hours_range": f"Number of hours must be between 1 and {MAX_SUMMARY_HOURS} (7 days).",
-    "invalid_hours_format": "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)",
-    "processing_error": "Sorry, an error occurred while processing your request. Please try again later.",
-    "summary_error": "Sorry, an error occurred while generating the summary. Please try again later.",
-    "large_summary_warning": "⚠️ Large summary requested ({hours} hours). This may take longer to process.",
+    "invalid_hours_range": f"Number of hours must be between 1 and {MAX_SUMMARY_HOURS} (7 days).",  # noqa: E501
+    "invalid_hours_format": "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)",  # noqa: E501
+    "processing_error": "Sorry, an error occurred while processing your request. Please try again later.",  # noqa: E501
+    "summary_error": "Sorry, an error occurred while generating the summary. Please try again later.",  # noqa: E501
+    "large_summary_warning": "⚠️ Large summary requested ({hours} hours). This may take longer to process.",  # noqa: E501
     "no_query": "Please provide a query after mentioning the bot.",
-    "rate_limit_cooldown": "Please wait {wait_time:.1f} seconds before making another request.",
-    "rate_limit_exceeded": "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.",
-    "database_unavailable": "Sorry, a critical error occurred (database unavailable). Please try again later.",
-    "database_error": "Sorry, a database connection error occurred. Please try again later.",
-    "no_messages_found": "No messages found in this channel for the past {hours} hours.",
+    "rate_limit_cooldown": "Please wait {wait_time:.1f} seconds before making another request.",  # noqa: E501
+    "rate_limit_exceeded": "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.",  # noqa: E501
+    "database_unavailable": "Sorry, a critical error occurred (database unavailable). Please try again later.",  # noqa: E501
+    "database_error": "Sorry, a database connection error occurred. Please try again later.",  # noqa: E501
+    "no_messages_found": "No messages found in this channel for the past {hours} hours.",  # noqa: E501
 }

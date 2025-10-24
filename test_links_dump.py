@@ -110,7 +110,7 @@ async def test_handle_links_dump_channel():
     ]
 
     with patch("bot.config", mock_config):
-        with patch("bot.asyncio.create_task") as mock_create_task:
+        with patch("bot.asyncio.create_task"):
             for (
                 content,
                 channel_id,
@@ -128,7 +128,7 @@ async def test_handle_links_dump_channel():
                         print(f"✓ {description}: handled={result}")
                     else:
                         print(
-                            f"✗ {description}: handled={result}, expected={should_be_handled}"
+                            f"✗ {description}: handled={result}, expected={should_be_handled}"  # noqa: E501
                         )
                         return False
 
@@ -153,7 +153,7 @@ def test_config_integration():
         # Check if the new config option is available
         if hasattr(config, "links_dump_channel_id"):
             print(
-                f"✓ Config loaded, links_dump_channel_id = {config.links_dump_channel_id}"
+                f"✓ Config loaded, links_dump_channel_id = {config.links_dump_channel_id}"  # noqa: E501
             )
             return True
         else:

@@ -34,8 +34,8 @@ def test_message_links():
         f"https://discord.com/channels/{guild_id}/{channel_id}/{test_message_id}"
     )
 
-    logger.info(f"Generated link: {test_link}")
-    logger.info(f"Expected link: {expected_link}")
+    logger.info("Generated link: {test_link}")
+    logger.info("Expected link: {expected_link}")
 
     if test_link == expected_link:
         logger.info("✓ Message link generation works correctly!")
@@ -49,8 +49,8 @@ def test_message_links():
         f"https://discord.com/channels/@me/{channel_id}/{test_message_id}"
     )
 
-    logger.info(f"Generated DM link: {dm_link}")
-    logger.info(f"Expected DM link: {expected_dm_link}")
+    logger.info("Generated DM link: {dm_link}")
+    logger.info("Expected DM link: {expected_dm_link}")
 
     if dm_link == expected_dm_link:
         logger.info("✓ DM message link generation works correctly!")
@@ -80,14 +80,14 @@ def test_message_links():
     )
 
     if success:
-        logger.info(f"✓ Stored test message {test_message['id']}")
+        logger.info("✓ Stored test message {test_message['id']}")
     else:
-        logger.error(f"✗ Failed to store test message {test_message['id']}")
+        logger.error("✗ Failed to store test message {test_message['id']}")
         return False
 
     # Retrieve messages and check they have the required fields
     messages = get_channel_messages_for_day(channel_id, today)
-    logger.info(f"Retrieved {len(messages)} messages for the day")
+    logger.info("Retrieved {len(messages)} messages for the day")
 
     if not messages:
         logger.warning("No messages found")
@@ -95,7 +95,7 @@ def test_message_links():
 
     # Check that messages include the required fields for link generation
     for msg in messages:
-        logger.info(f"Message {msg.get('id', 'NO_ID')} fields: {list(msg.keys())}")
+        logger.info("Message {msg.get('id', 'NO_ID')} fields: {list(msg.keys())}")
 
         required_fields = ["id", "guild_id", "channel_id"]
         missing_fields = [field for field in required_fields if field not in msg]
@@ -106,12 +106,11 @@ def test_message_links():
             )
 
             # Generate a link for this message
-            msg_link = generate_discord_message_link(
+            generate_discord_message_link(
                 msg["guild_id"], msg["channel_id"], msg["id"]
             )
-            logger.info(f"  Generated link: {msg_link}")
         else:
-            logger.error(f"✗ Message missing required fields: {missing_fields}")
+            logger.error("✗ Message missing required fields: {missing_fields}")
             return False
 
     logger.info("✓ All tests passed!")

@@ -39,14 +39,14 @@ Key insights:
     print(f"Regex found {len(tables)} table(s)")
 
     for i, table in enumerate(tables):
-        print(f"\nTable {i+1} raw text:")
+        print(f"\nTable {i + 1} raw text:")
         print(repr(table))
-        print(f"\nTable {i+1} formatted:")
+        print(f"\nTable {i + 1} formatted:")
         print(table)
 
         # Parse the table
         parsed = renderer._parse_markdown_table(table)
-        print(f"\nParsed table {i+1}:")
+        print(f"\nParsed table {i + 1}:")
         print(f"Headers: {parsed['headers'] if parsed else 'Failed to parse'}")
         print(f"Rows: {parsed['rows'] if parsed else 'Failed to parse'}")
 
@@ -94,7 +94,7 @@ def test_table_variations():
         },
         {
             "name": "Complex table",
-            "table": """| Project/Toolkit | Focus Level | Workflow Type | Adoption Overhead | Key Features | Notes |
+            "table": """| Project/Toolkit | Focus Level | Workflow Type | Adoption Overhead | Key Features | Notes |  # noqa: E501
 | --- | --- | --- | --- | --- | --- |
 | React | High | Component-based | Medium | Virtual DOM, JSX | Popular choice |
 | Vue | Medium | Component-based | Low | Template syntax | Easy to learn |
@@ -139,7 +139,7 @@ def test_data_validation():
     ]
 
     for i, data in enumerate(test_data):
-        print(f"\nTest {i+1}: {data}")
+        print(f"\nTest {i + 1}: {data}")
         values, has_percentages = ChartDataValidator.validate_numeric_data(data)
         print(f"  Result: {values}")
         print(f"  Has percentages: {has_percentages}")
@@ -173,9 +173,9 @@ def test_full_pipeline():
     print("\n=== Testing Full Pipeline ===")
 
     # Full LLM response with multiple elements
-    full_response = """Based on the analysis of our Discord server activity, here are the key findings:
+    full_response = """Based on the analysis of our Discord server activity, here are the key findings:  # noqa: E501
 
-The community shows strong engagement across different time periods with clear patterns emerging.
+The community shows strong engagement across different time periods with clear patterns emerging.  # noqa: E501
 
 | Username | Message Count |
 | --- | --- |
@@ -209,7 +209,7 @@ These patterns indicate a healthy, active community with diverse technical inter
     print(f"Cleaned content length: {len(cleaned_content)} characters")
 
     for i, chart_data in enumerate(chart_data_list):
-        print(f"\nChart {i+1}:")
+        print(f"\nChart {i + 1}:")
         print(f"  Type: {chart_data.get('type')}")
         print(f"  Placeholder: {chart_data.get('placeholder')}")
         print(f"  URL: {chart_data.get('url', '')[:50]}...")

@@ -201,7 +201,10 @@ class MessageResponseSender:
                             )
                         else:
                             self.logger.warning(
-                                f"Failed to download chart {idx + 1}: HTTP {response.status}"
+                                f"Failed to download chart {
+                                    idx +
+                                    1}: HTTP {
+                                    response.status}"
                             )
 
                 except Exception as e:
@@ -337,7 +340,7 @@ class InteractionResponseSender:
         except discord.HTTPException as e:
             if "Must be 2000 or fewer in length" in str(e):
                 self.logger.warning(
-                    "Interaction message too long for charts, falling back to split send"
+                    "Interaction message too long for charts, falling back to split send"  # noqa: E501
                 )
                 # Split the message and send without charts
                 await self.send_in_parts([content], ephemeral)
@@ -389,7 +392,10 @@ class InteractionResponseSender:
                             )
                         else:
                             self.logger.warning(
-                                f"Failed to download chart {idx + 1}: HTTP {response.status}"
+                                f"Failed to download chart {
+                                    idx +
+                                    1}: HTTP {
+                                    response.status}"
                             )
 
                 except Exception as e:
@@ -456,7 +462,7 @@ class ThreadManager:
                 logger.debug(f"Thread creation not supported in {channel_desc}s")
             else:
                 logger.info(
-                    f"Thread creation not supported in {channel_desc}, skipping thread creation"
+                    f"Thread creation not supported in {channel_desc}, skipping thread creation"  # noqa: E501
                 )
             return None
 
@@ -481,34 +487,41 @@ class ThreadManager:
             )
             return None
 
-    async def _handle_missing_guild_info(self, message: discord.Message, name: str) -> Optional[discord.Thread]:
+    async def _handle_missing_guild_info(
+        self, message: discord.Message, name: str
+    ) -> Optional[discord.Thread]:
         """Handle case where message lacks guild info."""
         logger = logging.getLogger(__name__)
         logger.info(
-            f"Message lacks guild info, fetching message with guild info for thread creation: '{name}'"
+            f"Message lacks guild info, fetching message with guild info for thread creation: '{name}'"  # noqa: E501
         )
         try:
             fetched_message = await self.channel.fetch_message(message.id)
             return await fetched_message.create_thread(name=name)
         except (discord.HTTPException, discord.NotFound) as fetch_error:
             logger.warning(
-                f"Failed to fetch message {message.id} for thread creation: {fetch_error}"
+                f"Failed to fetch message {
+                    message.id} for thread creation: {fetch_error}"
             )
             return await self.create_thread(name)
 
-    async def _handle_value_error(self, e: ValueError, message: discord.Message, name: str) -> Optional[discord.Thread]:
+    async def _handle_value_error(
+        self, e: ValueError, message: discord.Message, name: str
+    ) -> Optional[discord.Thread]:
         """Handle ValueError during thread creation."""
         logger = logging.getLogger(__name__)
         if "guild info" in str(e):
             logger.info(
-                f"Message lacks guild info, attempting to fetch with proper guild info: {e}"
+                f"Message lacks guild info, attempting to fetch with proper guild info: {e}"  # noqa: E501
             )
             return await self._handle_missing_guild_info(message, name)
         else:
             logger.error(f"ValueError creating thread from message '{name}': {e}")
             return None
 
-    async def _handle_http_exception(self, e: discord.HTTPException, name: str) -> Optional[discord.Thread]:
+    async def _handle_http_exception(
+        self, e: discord.HTTPException, name: str
+    ) -> Optional[discord.Thread]:
         """Handle HTTPException during thread creation."""
         logger = logging.getLogger(__name__)
         if e.status == 400 and "thread has already been created" in str(e.text).lower():
@@ -516,20 +529,22 @@ class ThreadManager:
                 f"Message already has a thread, creating standalone thread: '{name}'"
             )
             return await self.create_thread(name)
-        elif e.status == 400 and "Cannot execute action on this channel type" in str(e.text):
+        elif e.status == 400 and "Cannot execute action on this channel type" in str(
+            e.text
+        ):
             channel_desc = self._get_channel_type_description()
             logger.info(
-                f"Thread creation not supported in {channel_desc}, this is expected behavior"
+                f"Thread creation not supported in {channel_desc}, this is expected behavior"  # noqa: E501
             )
             return None
         elif e.status == 400:
             logger.info(
-                f"Cannot create thread from message '{name}': HTTP {e.status} - {e.text}"
+                f"Cannot create thread from message '{name}': HTTP {e.status} - {e.text}"  # noqa: E501
             )
             return None
         else:
             logger.warning(
-                f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}"
+                f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}"  # noqa: E501
             )
             return None
 
@@ -544,7 +559,7 @@ class ThreadManager:
                 logger.debug(f"Thread creation not supported in {channel_desc}s")
             else:
                 logger.info(
-                    f"Thread creation not supported in {channel_desc}, falling back to channel response"
+                    f"Thread creation not supported in {channel_desc}, falling back to channel response"  # noqa: E501
                 )
             return None
 
@@ -712,7 +727,9 @@ async def _store_dm_responses(
         logger.error(f"Database error storing DM response: {str(e)}", exc_info=True)
 
 
-async def _validate_summary_inputs(context: CommandContext, response_sender: ResponseSender, hours: int) -> bool:
+async def _validate_summary_inputs(
+    context: CommandContext, response_sender: ResponseSender, hours: int
+) -> bool:
     """Validate inputs for summary command."""
     import config
     import logging
@@ -737,7 +754,9 @@ async def _validate_summary_inputs(context: CommandContext, response_sender: Res
     return True
 
 
-async def _check_rate_limits(context: CommandContext, response_sender: ResponseSender) -> bool:
+async def _check_rate_limits(
+    context: CommandContext, response_sender: ResponseSender
+) -> bool:
     """Check rate limits for summary command."""
     from rate_limiter import check_rate_limit
     import config
@@ -757,7 +776,9 @@ async def _check_rate_limits(context: CommandContext, response_sender: ResponseS
             )
         await response_sender.send(error_msg, ephemeral=True)
         logger.info(
-            f"Rate limited user {context.user_name} ({reason}): wait time {wait_time:.1f}s"
+            f"Rate limited user {
+                context.user_name} ({reason}): wait time {
+                wait_time:.1f}s"
         )
         return False
 
@@ -798,7 +819,7 @@ async def _store_summary_data(
     force_charts: bool,
     channel_id_str: str,
     channel_name_str: str,
-    today
+    today,
 ):
     """Store summary data in thread memory and database."""
     import database
@@ -819,13 +840,18 @@ async def _store_summary_data(
                 user_name=context.user_name,
                 user_message=command_description,
                 bot_response=(
-                    full_summary[:500] + "..." if len(full_summary) > 500 else full_summary
+                    full_summary[:500] + "..."
+                    if len(full_summary) > 500
+                    else full_summary
                 ),
                 guild_id=str(context.guild_id) if context.guild_id else None,
                 channel_id=str(context.channel_id),
                 is_chart_analysis=force_charts,
             )
-            logger.debug(f"Stored summary thread exchange for thread {context.thread_id}")
+            logger.debug(
+                f"Stored summary thread exchange for thread {
+                    context.thread_id}"
+            )
         except Exception as e:
             logger.warning(f"Failed to store summary thread exchange: {e}")
 
@@ -842,9 +868,7 @@ async def _store_summary_data(
 
         # Get all users sorted by activity (most active first)
         sorted_user_tuples = get_top_n_tuples(
-            list(user_counts.items()),
-            n=len(user_counts),
-            reverse=True
+            list(user_counts.items()), n=len(user_counts), reverse=True
         )
         active_users = [user for user, count in sorted_user_tuples]
         database.store_channel_summary(
@@ -884,7 +908,9 @@ async def _get_thread_context(context: CommandContext) -> str:
     return thread_context
 
 
-async def _send_summary_with_charts(sender: ResponseSender, summary_parts: list, chart_data: list):
+async def _send_summary_with_charts(
+    sender: ResponseSender, summary_parts: list, chart_data: list
+):
     """Send summary with charts helper."""
     if chart_data and summary_parts:
         await sender.send_with_charts(summary_parts[0], chart_data)
@@ -894,7 +920,13 @@ async def _send_summary_with_charts(sender: ResponseSender, summary_parts: list,
         await sender.send_in_parts(summary_parts)
 
 
-async def _process_summary_generation(context: CommandContext, messages_for_summary: list, channel_name_str: str, hours: int, force_charts: bool):
+async def _process_summary_generation(
+    context: CommandContext,
+    messages_for_summary: list,
+    channel_name_str: str,
+    hours: int,
+    force_charts: bool,
+):
     """Process summary generation and return summary parts and chart data."""
     from datetime import datetime, timezone
     from llm_handler import call_llm_for_summary
@@ -908,7 +940,8 @@ async def _process_summary_generation(context: CommandContext, messages_for_summ
     thread_context = await _get_thread_context(context)
     if thread_context:
         logger.info(
-            f"Generating summary with thread context awareness for {len(messages_for_summary)} messages"
+            f"Generating summary with thread context awareness for {
+                len(messages_for_summary)} messages"
         )
 
     # Generate summary
@@ -929,7 +962,7 @@ async def _handle_guild_summary(
     chart_data: list,
     channel_name_str: str,
     hours: int,
-    today
+    today,
 ):
     """Handle summary for guild channels with thread creation."""
     import logging
@@ -946,27 +979,39 @@ async def _handle_guild_summary(
 
             if thread:
                 thread_sender = MessageResponseSender(thread)
-                await _send_summary_with_charts(thread_sender, summary_parts, chart_data)
+                await _send_summary_with_charts(
+                    thread_sender, summary_parts, chart_data
+                )
 
                 await initial_message.edit(
-                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
+                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
                 )
             else:
-                logger.warning("Thread creation failed, sending summary in main channel")
-                await initial_message.edit(
-                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
+                logger.warning(
+                    "Thread creation failed, sending summary in main channel"
                 )
-                await _send_summary_with_charts(response_sender, summary_parts, chart_data)
+                await initial_message.edit(
+                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
+                )
+                await _send_summary_with_charts(
+                    response_sender, summary_parts, chart_data
+                )
 
         except discord.HTTPException as e:
             logger.warning(f"Failed to edit initial message: {e}")
             thread = await thread_manager.create_thread(thread_name)
             if thread:
                 thread_sender = MessageResponseSender(thread)
-                await _send_summary_with_charts(thread_sender, summary_parts, chart_data)
-                await response_sender.send(f"Summary posted in thread: {thread.mention}")
+                await _send_summary_with_charts(
+                    thread_sender, summary_parts, chart_data
+                )
+                await response_sender.send(
+                    f"Summary posted in thread: {thread.mention}"
+                )
             else:
-                await _send_summary_with_charts(response_sender, summary_parts, chart_data)
+                await _send_summary_with_charts(
+                    response_sender, summary_parts, chart_data
+                )
     else:
         thread = await thread_manager.create_thread(thread_name)
         if thread:
@@ -1031,12 +1076,13 @@ async def handle_summary_command(
         )
 
         logger.info(
-            f"Found {len(messages_for_summary)} messages for summary in channel {channel_name_str} (past {hours} hours)"
+            f"Found {
+                len(messages_for_summary)} messages for summary in channel {channel_name_str} (past {hours} hours)"  # noqa: E501
         )
 
         if not messages_for_summary:
             logger.info(
-                f"No messages found for summary command in channel {channel_name_str} for the past {hours} hours"
+                f"No messages found for summary command in channel {channel_name_str} for the past {hours} hours"  # noqa: E501
             )
             error_msg = config.ERROR_MESSAGES["no_messages_found"].format(hours=hours)
             await response_sender.send(error_msg, ephemeral=True)
@@ -1053,8 +1099,15 @@ async def handle_summary_command(
         # Send summary
         if context.guild_id:
             await _handle_guild_summary(
-                context, response_sender, thread_manager, initial_message,
-                summary_parts, chart_data, channel_name_str, hours, today
+                context,
+                response_sender,
+                thread_manager,
+                initial_message,
+                summary_parts,
+                chart_data,
+                channel_name_str,
+                hours,
+                today,
             )
         else:
             # For DMs: Send summary directly in the channel
@@ -1066,8 +1119,14 @@ async def handle_summary_command(
 
         # Store summary in thread memory and database
         await _store_summary_data(
-            context, full_summary, messages_for_summary, hours, force_charts,
-            channel_id_str, channel_name_str, today
+            context,
+            full_summary,
+            messages_for_summary,
+            hours,
+            force_charts,
+            channel_id_str,
+            channel_name_str,
+            today,
         )
 
     except Exception as e:

@@ -93,7 +93,7 @@ class ThreadMemoryManager:
                         last_activity DATETIME NOT NULL,
                         message_count INTEGER DEFAULT 0,
                         is_active BOOLEAN DEFAULT 1,
-                        thread_type TEXT DEFAULT 'conversation'  -- 'conversation', 'summary', 'analysis'
+                        thread_type TEXT DEFAULT 'conversation'  -- 'conversation', 'summary', 'analysis'  # noqa: E501
                     )
                 """
                 )
@@ -185,7 +185,7 @@ class ThreadMemoryManager:
                         created_at, last_activity, message_count, is_active
                     ) VALUES (
                         ?, ?, ?, ?, ?,
-                        COALESCE((SELECT created_at FROM thread_metadata WHERE thread_id = ?), ?),
+                        COALESCE((SELECT created_at FROM thread_metadata WHERE thread_id = ?), ?),  # noqa: E501
                         ?, ?, 1
                     )
                 """,
@@ -204,8 +204,7 @@ class ThreadMemoryManager:
 
                 conn.commit()
                 logger.debug(
-                    f"Stored thread exchange for thread {thread_id}, sequence {sequence_number}"
-                )
+                    f"Stored thread exchange for thread {thread_id}, sequence {sequence_number}")  # noqa: E501
                 return True
 
         except sqlite3.Error as e:
@@ -234,7 +233,7 @@ class ThreadMemoryManager:
                 cursor = conn.cursor()
 
                 query = """
-                    SELECT sequence_number, user_message, bot_response, user_id, user_name,
+                    SELECT sequence_number, user_message, bot_response, user_id, user_name,  # noqa: E501
                            timestamp, is_chart_analysis, context_data
                     FROM thread_conversations
                     WHERE thread_id = ?
@@ -369,7 +368,7 @@ class ThreadMemoryManager:
                 cursor.execute(
                     """
                     SELECT COUNT(*) as total_exchanges,
-                           COUNT(CASE WHEN is_chart_analysis = 1 THEN 1 END) as chart_analyses,
+                           COUNT(CASE WHEN is_chart_analysis = 1 THEN 1 END) as chart_analyses,  # noqa: E501
                            MIN(timestamp) as first_exchange,
                            MAX(timestamp) as last_exchange
                     FROM thread_conversations
@@ -602,7 +601,7 @@ def get_thread_stats(thread_id: str) -> Optional[Dict]:
 async def process_thread_memory_command(message, command_parts):
     """Process thread memory management commands."""
     if not command_parts or len(command_parts) < 2:
-        return "Thread memory commands: `/thread-memory status`, `/thread-memory clear`, `/thread-memory stats`"
+        return "Thread memory commands: `/thread-memory status`, `/thread-memory clear`, `/thread-memory stats`"  # noqa: E501
 
     action = command_parts[1].lower()
     thread_id = str(message.channel.id) if hasattr(message.channel, "parent") else None
@@ -617,7 +616,8 @@ async def process_thread_memory_command(message, command_parts):
             )
             last_msg = messages[0] if messages else None
             if last_msg:
-                return f"✅ This thread has conversation memory.\nLast exchange: {last_msg.timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
+                return f"✅ This thread has conversation memory.\nLast exchange: {
+                    last_msg.timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
             else:
                 return "❌ This thread has no conversation memory."
         else:
@@ -637,7 +637,7 @@ async def process_thread_memory_command(message, command_parts):
 **Total Exchanges:** {stats['total_exchanges']}
 **Chart Analyses:** {stats['chart_analyses']}
 **Created:** {stats['created_at'][:16] if stats['created_at'] else 'Unknown'}
-**Last Activity:** {stats['last_activity'][:16] if stats['last_activity'] else 'Unknown'}
+**Last Activity:** {stats['last_activity'][:16] if stats['last_activity'] else 'Unknown'}  # noqa: E501
 **Status:** {'Active' if stats['is_active'] else 'Inactive'}"""
         else:
             return "❌ No statistics available for this thread."

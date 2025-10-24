@@ -1,6 +1,6 @@
 """
 Chart rendering module for Discord bot.
-Detects markdown tables in LLM responses and converts them to chart images using QuickChart API.
+Detects markdown tables in LLM responses and converts them to chart images using QuickChart API.  # noqa: E501
 """
 
 import re
@@ -40,6 +40,7 @@ class ChartDataValidator:
     def _extract_number_from_text(numeric_str: str) -> float:
         """Extract first number from text like 'High (85)' or 'Score: 92'."""
         import re
+
         number_match = re.search(r"(\d+(?:\.\d+)?)", numeric_str)
         if number_match:
             return float(number_match.group(1))
@@ -80,7 +81,9 @@ class ChartDataValidator:
         for value_str in values:
             try:
                 clean_str = str(value_str).strip()
-                numeric_str, has_pct = ChartDataValidator._clean_numeric_string(clean_str)
+                numeric_str, has_pct = ChartDataValidator._clean_numeric_string(
+                    clean_str
+                )
                 has_percentages = has_percentages or has_pct
 
                 # Try direct conversion first
@@ -305,7 +308,10 @@ class ChartRenderer:
                     has_percentages = True
 
                 # Check for time patterns
-                if any(pattern in row[0].lower() for pattern in ["time", "hour", "day", "date", ":"]):
+                if any(
+                    pattern in row[0].lower()
+                    for pattern in ["time", "hour", "day", "date", ":"]
+                ):
                     has_time_data = True
 
                 try:
@@ -319,26 +325,35 @@ class ChartRenderer:
             "numeric_count": numeric_count,
             "total_rows": total_rows,
             "has_percentages": has_percentages,
-            "has_time_data": has_time_data
+            "has_time_data": has_time_data,
         }
 
-    def _check_pie_chart_suitability(self, rows: List[List[str]], has_percentages: bool) -> bool:
+    def _check_pie_chart_suitability(
+        self, rows: List[List[str]], has_percentages: bool
+    ) -> bool:
         """Check if data is suitable for pie chart."""
         if not has_percentages:
             return False
 
         try:
-            values = [float(row[1].replace("%", "").replace(",", "").strip()) for row in rows]
+            values = [
+                float(row[1].replace("%", "").replace(",", "").strip()) for row in rows
+            ]
             total = sum(values)
             return 95 <= total <= 105
         except (ValueError, TypeError, ZeroDivisionError):
             return False
 
-    def _analyze_multicolumn_data(self, headers: List[str], rows: List[List[str]]) -> Dict[str, any]:
+    def _analyze_multicolumn_data(
+        self, headers: List[str], rows: List[List[str]]
+    ) -> Dict[str, any]:
         """Analyze multi-column data for chart type determination."""
         import re
 
-        first_col_time = any(pattern in headers[0].lower() for pattern in ["time", "hour", "day", "date", "period"])
+        first_col_time = any(
+            pattern in headers[0].lower()
+            for pattern in ["time", "hour", "day", "date", "period"]
+        )
         numeric_cols = []
 
         for col_idx in range(1, len(headers)):
@@ -346,7 +361,15 @@ class ChartRenderer:
             for row in rows:
                 if len(row) > col_idx:
                     try:
-                        value = str(row[col_idx]).replace("%", "").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+                        value = (
+                            str(row[col_idx])
+                            .replace("%", "")
+                            .replace(",", "")
+                            .replace("$", "")
+                            .replace("€", "")
+                            .replace("£", "")
+                            .strip()
+                        )
                         number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                         if number_match:
                             float(number_match.group(1))
@@ -360,12 +383,11 @@ class ChartRenderer:
             if numeric_count / len(rows) > 0.3:
                 numeric_cols.append(col_idx)
 
-        return {
-            "first_col_time": first_col_time,
-            "numeric_cols": numeric_cols
-        }
+        return {"first_col_time": first_col_time, "numeric_cols": numeric_cols}
 
-    def _find_any_numeric_column(self, headers: List[str], rows: List[List[str]]) -> bool:
+    def _find_any_numeric_column(
+        self, headers: List[str], rows: List[List[str]]
+    ) -> bool:
         """Find any numeric column with aggressive detection."""
         import re
 
@@ -374,7 +396,15 @@ class ChartRenderer:
             for row in rows:
                 if len(row) > col_idx:
                     try:
-                        value = str(row[col_idx]).replace("%", "").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+                        value = (
+                            str(row[col_idx])
+                            .replace("%", "")
+                            .replace(",", "")
+                            .replace("$", "")
+                            .replace("€", "")
+                            .replace("£", "")
+                            .strip()
+                        )
                         number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                         if number_match:
                             float(number_match.group(1))
@@ -402,7 +432,9 @@ class ChartRenderer:
             return "bar"
         return None
 
-    def _infer_multicolumn_chart_type(self, headers: List[str], rows: List[List[str]]) -> str:
+    def _infer_multicolumn_chart_type(
+        self, headers: List[str], rows: List[List[str]]
+    ) -> str:
         """Infer chart type for 3+ columns."""
         multi_data = self._analyze_multicolumn_data(headers, rows)
 
@@ -414,7 +446,9 @@ class ChartRenderer:
             return "bar"
         return None
 
-    def _infer_fallback_chart_type(self, headers: List[str], rows: List[List[str]]) -> str:
+    def _infer_fallback_chart_type(
+        self, headers: List[str], rows: List[List[str]]
+    ) -> str:
         """Fallback logic for chart type inference."""
         # Try to find any visualizable data
         if self._find_any_numeric_column(headers, rows):
@@ -475,7 +509,7 @@ class ChartRenderer:
                 # If table chart returns None, try to generate a bar chart instead
                 if table_url is None:
                     logger.info(
-                        "Table chart generation returned None, attempting bar chart fallback"
+                        "Table chart generation returned None, attempting bar chart fallback"  # noqa: E501
                     )
                     return self._generate_bar_chart(table_data)
                 return table_url
@@ -493,7 +527,9 @@ class ChartRenderer:
             logger.error(f"Error generating {chart_type} chart: {e}", exc_info=True)
             return None
 
-    def _find_best_numeric_column(self, headers: List[str], rows: List[List[str]]) -> Optional[int]:
+    def _find_best_numeric_column(
+        self, headers: List[str], rows: List[List[str]]
+    ) -> Optional[int]:
         """Find the column with the highest ratio of numeric values."""
         best_numeric_ratio = 0
         value_col_idx = None
@@ -513,6 +549,7 @@ class ChartRenderer:
                             .strip()
                         )
                         import re
+
                         number_match = re.search(r"(\d+(?:\.\d+)?)", value)
                         if number_match:
                             float(number_match.group(1))
@@ -536,6 +573,7 @@ class ChartRenderer:
             return None
 
         from collections import Counter
+
         category_counts = Counter(
             [row[0] if len(row) > 0 else "Unknown" for row in rows]
         )
@@ -556,7 +594,8 @@ class ChartRenderer:
         headers = table_data["headers"]
         rows = table_data["rows"]
 
-        # For complex tables with many columns, try to find the best 2 columns to visualize
+        # For complex tables with many columns, try to find the best 2 columns to
+        # visualize
         if len(headers) > 2:
             value_col_idx = self._find_best_numeric_column(headers, rows)
 
@@ -631,7 +670,7 @@ class ChartRenderer:
 
         # Extract labels and values using the determined columns
         labels = [
-            str(row[label_col_idx]) if len(row) > label_col_idx else f"Item {i+1}"
+            str(row[label_col_idx]) if len(row) > label_col_idx else f"Item {i + 1}"
             for i, row in enumerate(rows)
         ]
         raw_values = []
@@ -802,7 +841,7 @@ class ChartRenderer:
                     "datalabels": {
                         "color": "#fff",
                         "font": {"weight": "bold", "size": 12},
-                        "formatter": '(value, ctx) => { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); const percentage = Math.round((value / total) * 100); return percentage + "%"; }',
+                        "formatter": '(value, ctx) => { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); const percentage = Math.round((value / total) * 100); return percentage + "%"; }',  # noqa: E501
                         "display": "(ctx) => ctx.dataset.data[ctx.dataIndex] > 0",
                     },
                 },
@@ -935,9 +974,11 @@ class ChartRenderer:
 
     def _get_line_chart_title(self, category_header: str, value_header: str) -> str:
         """Generate title for line charts."""
-        if ("time" in category_header.lower() or
-                "date" in category_header.lower() or
-                "period" in category_header.lower()):
+        if (
+            "time" in category_header.lower()
+            or "date" in category_header.lower()
+            or "period" in category_header.lower()
+        ):
             return f"{value_header} Trends Over {category_header}"
         else:
             return f"{value_header} Evolution Across {category_header}"

@@ -26,7 +26,7 @@ def extract_video_id(url: str) -> Optional[str]:
     try:
         # Pattern to match YouTube video IDs in various URL formats
         patterns = [
-            r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([A-Za-z0-9_-]{11})",
+            r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([A-Za-z0-9_-]{11})",  # noqa: E501
             r"youtube\.com/watch\?.*v=([A-Za-z0-9_-]{11})",
             r"youtube\.com/shorts/([A-Za-z0-9_-]{11})",
         ]
@@ -106,7 +106,7 @@ async def scrape_youtube_content(url: str) -> Optional[Dict[str, Any]]:
         url (str): The YouTube URL to scrape
 
     Returns:
-        Optional[Dict[str, Any]]: A dictionary containing the scraped content or None if scraping failed
+        Optional[Dict[str, Any]]: A dictionary containing the scraped content or None if scraping failed  # noqa: E501
     """
     try:
         logger.info(f"Scraping YouTube URL: {url}")
@@ -136,7 +136,8 @@ async def scrape_youtube_content(url: str) -> Optional[Dict[str, Any]]:
         # Get basic metadata
         metadata = await get_video_metadata(video_id)
 
-        # Limit transcript length to prevent token overload (approximately 7000 characters)
+        # Limit transcript length to prevent token overload (approximately 7000
+        # characters)
         if len(transcript) > 7000:
             transcript = transcript[:7000] + "... [transcript truncated]"
 
@@ -211,7 +212,7 @@ def format_transcript_unavailable_message(metadata: Dict[str, Any]) -> str:
 
         markdown += "\n## Transcript Status\n\n"
         markdown += "❌ **Transcript not available**\n\n"
-        markdown += "This video does not have auto-generated captions or manual transcripts available. "
+        markdown += "This video does not have auto-generated captions or manual transcripts available. "  # noqa: E501
         markdown += "The video may be:\n"
         markdown += "- Too new (transcripts are still being generated)\n"
         markdown += "- In a language not supported by auto-captioning\n"

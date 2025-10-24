@@ -1,6 +1,6 @@
 """
-Test script to verify that charts now use actual table data instead of generic "Row 1, Row 2" labels.
-This test specifically addresses the bug where complex tables were showing generic row labels.
+Test script to verify that charts now use actual table data instead of generic "Row 1, Row 2" labels.  # noqa: E501
+This test specifically addresses the bug where complex tables were showing generic row labels.  # noqa: E501
 """
 
 import logging
@@ -71,7 +71,7 @@ def test_complex_multi_column_table():
     """Test complex table with many columns (the problematic case)."""
     print("\n=== Testing Complex Multi-Column Table ===")
 
-    table_text = """| Project/Toolkit | Focus Level | Workflow Type | Adoption Overhead | Key Features | Notes |
+    table_text = """| Project/Toolkit | Focus Level | Workflow Type | Adoption Overhead | Key Features | Notes |  # noqa: E501
 | --- | --- | --- | --- | --- | --- |
 | React | High | Component-based | Medium | Virtual DOM, JSX | Popular choice |
 | Vue | Medium | Component-based | Low | Template syntax | Easy to learn |
@@ -98,7 +98,7 @@ def test_complex_multi_column_table():
     # The key test: this should NOT generate "Row 1, Row 2" labels anymore
     if chart_url:
         print(
-            "SUCCESS: Complex table now generates meaningful charts instead of generic 'Row N' labels"
+            "SUCCESS: Complex table now generates meaningful charts instead of generic 'Row N' labels"  # noqa: E501
         )
 
     return chart_url is not None
@@ -132,7 +132,7 @@ def test_mixed_data_table():
 
     # Should find the numeric "Stars" column and use Framework names as labels
     print(
-        "Expected: Should use Framework names (React, Vue, etc.) as labels with Stars as values"
+        "Expected: Should use Framework names (React, Vue, etc.) as labels with Stars as values"  # noqa: E501
     )
 
     return chart_url is not None
@@ -154,7 +154,7 @@ First, let's look at user activity:
 
 Now, here's a complex comparison of frameworks:
 
-| Framework | Popularity | Learning Curve | Performance | Community | Documentation | Enterprise |
+| Framework | Popularity | Learning Curve | Performance | Community | Documentation | Enterprise |  # noqa: E501
 | --- | --- | --- | --- | --- | --- |
 | React | High | Medium | Good | Excellent | Good | Yes |
 | Vue | High | Easy | Good | Good | Excellent | Partial |

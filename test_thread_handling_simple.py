@@ -164,7 +164,7 @@ def main():
         print("✓ Text channels support thread creation")
         print("✓ HTTP errors handled gracefully")
         print(
-            "\nThe 'Cannot execute action on this channel type' warning should now be reduced!"
+            "\nThe 'Cannot execute action on this channel type' warning should now be reduced!"  # noqa: E501
         )
     else:
         print(f"\n❌ {len(results) - passed} test(s) failed.")

@@ -121,13 +121,17 @@ def get_message_stats() -> None:
     # Print statistics
     print("\n=== Message Statistics ===")
     print(f"Total messages: {total_count}")
-    print(f"Commands: {command_count} ({command_count/total_count*100:.1f}% of total)")
+    print(
+        f"Commands: {command_count} ({
+            command_count /
+            total_count *
+            100:.1f}% of total)")
 
     print("\n--- Command Types ---")
     for cmd in command_types:
-        print(
-            f"{cmd['command_type']}: {cmd['count']} ({cmd['count']/command_count*100:.1f}% of commands)"
-        )
+        print(f"{cmd['command_type']}: {cmd['count']} ({cmd['count'] /
+                                                        command_count *
+                                                        100:.1f}% of commands)")
 
     print("\n--- Top Users ---")
     user_data = [

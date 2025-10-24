@@ -16,7 +16,10 @@ import heapq
 # QUICK SORT - Best general-purpose algorithm for your bot
 # ============================================================================
 
-def quick_sort(items: List[Any], key: Optional[str] = None, reverse: bool = False) -> List[Any]:
+def quick_sort(
+        items: List[Any],
+        key: Optional[str] = None,
+        reverse: bool = False) -> List[Any]:
     """
     Quick Sort implementation - O(n log n) average case.
 
@@ -59,7 +62,10 @@ def quick_sort(items: List[Any], key: Optional[str] = None, reverse: bool = Fals
 # MERGE SORT - Stable and predictable performance
 # ============================================================================
 
-def merge_sort(items: List[Any], key: Optional[str] = None, reverse: bool = False) -> List[Any]:
+def merge_sort(
+        items: List[Any],
+        key: Optional[str] = None,
+        reverse: bool = False) -> List[Any]:
     """
     Merge Sort implementation - O(n log n) worst case (stable).
 
@@ -86,7 +92,11 @@ def merge_sort(items: List[Any], key: Optional[str] = None, reverse: bool = Fals
     return _merge(left, right, key, reverse)
 
 
-def _merge(left: List[Any], right: List[Any], key: Optional[str], reverse: bool) -> List[Any]:
+def _merge(
+        left: List[Any],
+        right: List[Any],
+        key: Optional[str],
+        reverse: bool) -> List[Any]:
     """Helper function for merge sort."""
     result = []
     i = j = 0
@@ -114,7 +124,10 @@ def _merge(left: List[Any], right: List[Any], key: Optional[str], reverse: bool)
 # INSERTION SORT - Best for small datasets
 # ============================================================================
 
-def insertion_sort(items: List[Any], key: Optional[str] = None, reverse: bool = False) -> List[Any]:
+def insertion_sort(
+        items: List[Any],
+        key: Optional[str] = None,
+        reverse: bool = False) -> List[Any]:
     """
     Insertion Sort implementation - O(n²) but efficient for small lists.
 
@@ -157,7 +170,8 @@ def insertion_sort(items: List[Any], key: Optional[str] = None, reverse: bool = 
 # BUCKET SORT - For time-based grouping
 # ============================================================================
 
-def bucket_sort_by_hour(messages: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
+def bucket_sort_by_hour(
+        messages: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
     """
     Bucket Sort by hour of day - O(n + k) where k=24.
 
@@ -184,7 +198,8 @@ def bucket_sort_by_hour(messages: List[Dict[str, Any]]) -> Dict[int, List[Dict[s
     return buckets
 
 
-def bucket_sort_by_day_of_week(messages: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
+def bucket_sort_by_day_of_week(
+        messages: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
     """
     Bucket Sort by day of week - O(n + k) where k=7.
 
@@ -210,7 +225,8 @@ def bucket_sort_by_day_of_week(messages: List[Dict[str, Any]]) -> Dict[int, List
 # ============================================================================
 
 
-def get_top_n(items: List[Dict[str, Any]], n: int, key: str, reverse: bool = True) -> List[Dict[str, Any]]:
+def get_top_n(items: List[Dict[str, Any]], n: int, key: str,
+              reverse: bool = True) -> List[Dict[str, Any]]:
     """
     Get top N items efficiently using heap - O(n + k log n).
 
@@ -252,7 +268,10 @@ def get_top_n_tuples(items: List[tuple], n: int, reverse: bool = True) -> List[t
 # SMART SORT - Automatic algorithm selection
 # ============================================================================
 
-def smart_sort(items: List[Any], key: Optional[str] = None, reverse: bool = False) -> List[Any]:
+def smart_sort(
+        items: List[Any],
+        key: Optional[str] = None,
+        reverse: bool = False) -> List[Any]:
     """
     Automatically choose the best sorting algorithm based on data size.
 
@@ -289,7 +308,8 @@ class MessageSorter:
     """Specialized sorting functions for Discord message data."""
 
     @staticmethod
-    def by_timestamp(messages: List[Dict[str, Any]], reverse: bool = False) -> List[Dict[str, Any]]:
+    def by_timestamp(messages: List[Dict[str, Any]],
+                     reverse: bool = False) -> List[Dict[str, Any]]:
         """Sort messages by creation timestamp."""
         return quick_sort(messages, key='created_at', reverse=reverse)
 
@@ -299,7 +319,8 @@ class MessageSorter:
         return quick_sort(messages, key='author_name', reverse=False)
 
     @staticmethod
-    def by_content_length(messages: List[Dict[str, Any]], reverse: bool = True) -> List[Dict[str, Any]]:
+    def by_content_length(messages: List[Dict[str, Any]],
+                          reverse: bool = True) -> List[Dict[str, Any]]:
         """Sort messages by content length (longest first by default)."""
         messages_with_length = [
             {**msg, '_length': len(msg.get('content', ''))}
@@ -321,12 +342,14 @@ class UserSorter:
     """Specialized sorting functions for user data."""
 
     @staticmethod
-    def by_activity(users: List[Dict[str, Any]], reverse: bool = True) -> List[Dict[str, Any]]:
+    def by_activity(users: List[Dict[str, Any]],
+                    reverse: bool = True) -> List[Dict[str, Any]]:
         """Sort users by activity/message count."""
         return quick_sort(users, key='message_count', reverse=reverse)
 
     @staticmethod
-    def top_n(users: List[Dict[str, Any]], n: int, key: str = 'message_count') -> List[Dict[str, Any]]:
+    def top_n(users: List[Dict[str, Any]], n: int,
+              key: str = 'message_count') -> List[Dict[str, Any]]:
         """Get top N most active users efficiently."""
         return get_top_n(users, n, key, reverse=True)
 
@@ -335,7 +358,8 @@ class ChannelSorter:
     """Specialized sorting functions for channel data."""
 
     @staticmethod
-    def by_activity(channels: List[Dict[str, Any]], reverse: bool = True) -> List[Dict[str, Any]]:
+    def by_activity(channels: List[Dict[str, Any]],
+                    reverse: bool = True) -> List[Dict[str, Any]]:
         """Sort channels by message count."""
         return merge_sort(channels, key='message_count', reverse=reverse)
 

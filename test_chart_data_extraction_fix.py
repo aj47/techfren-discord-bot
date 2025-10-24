@@ -187,7 +187,7 @@ def test_table_parsing():
                 if result:
                     print(f"    Got: {len(result['headers'])}x{len(result['rows'])}")
                 else:
-                    print(f"    Got: None")
+                    print("    Got: None")
         except Exception as e:
             print(f"  Test {i+1}: ✗ ERROR - {e}")
 
@@ -201,8 +201,8 @@ def test_complex_table_handling():
 
     renderer = ChartRenderer()
 
-    # This is the type of table that was generating "Total Rows in **Methodology**" charts
-    complex_table = """| Methodology | Approach | Effectiveness | Implementation | Notes |
+    # This is the type of table that was generating "Total Rows in **Methodology**" charts  # noqa: E501
+    complex_table = """| Methodology | Approach | Effectiveness | Implementation | Notes |  # noqa: E501
 | --- | --- | --- | --- | --- |
 | Agile | Iterative | High | Medium | Flexible approach |
 | Waterfall | Sequential | Medium | Low | Traditional method |
@@ -217,7 +217,7 @@ def test_complex_table_handling():
             return False
 
         print(
-            f"  Parsed table: {len(table_data['headers'])} headers, {len(table_data['rows'])} rows"
+            f"  Parsed table: {len(table_data['headers'])} headers, {len(table_data['rows'])} rows"  # noqa: E501
         )
 
         # Infer chart type
@@ -393,10 +393,10 @@ def run_all_tests():
         print("The chart data extraction fixes are working correctly.")
         print("Charts should now show actual data instead of generic fallbacks.")
     elif passed >= len(results) * 0.75:
-        print(f"\n✅ MOSTLY SUCCESSFUL!")
+        print("\n✅ MOSTLY SUCCESSFUL!")
         print("Most tests passed. Some edge cases may need refinement.")
     else:
-        print(f"\n❌ NEEDS WORK!")
+        print("\n❌ NEEDS WORK!")
         print("Several test failures indicate issues that need to be addressed.")
 
     return passed >= len(results) * 0.75

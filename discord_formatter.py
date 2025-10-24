@@ -30,7 +30,7 @@ class DiscordFormatter:
         Returns:
             Tuple of (formatted_string, chart_data_list)
             - formatted_string: Content with Discord markdown
-            - chart_data_list: List of chart data dicts with 'url', 'type', 'placeholder' keys
+            - chart_data_list: List of chart data dicts with 'url', 'type', 'placeholder' keys  # noqa: E501
         """
         formatted = content
         chart_data_list = []
@@ -48,7 +48,8 @@ class DiscordFormatter:
         # Convert any remaining markdown tables to ASCII tables
         formatted = DiscordFormatter._convert_markdown_tables_to_ascii(formatted)
 
-        # Replace Perplexity-style citations [1], [2] with clickable links if citations provided
+        # Replace Perplexity-style citations [1], [2] with clickable links if
+        # citations provided
         if citations:
             for i, url in enumerate(citations, 1):
                 # Make citation numbers into clickable superscript-like links

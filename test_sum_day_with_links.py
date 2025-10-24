@@ -42,29 +42,31 @@ async def test_sum_day_with_links():
     channel_name = "test-channel"
 
     # Store some test messages
-    messages = [
-        {
-            "id": "msg1",
-            "author_id": "user1",
-            "author_name": "User One",
-            "content": "Hello everyone!",
-            "created_at": today.replace(hour=10, minute=0, second=0),
-        },
-        {
-            "id": "msg2",
-            "author_id": "user2",
-            "author_name": "User Two",
-            "content": "Check out this Twitter post: https://x.com/cline/status/1925002086405832987",
-            "created_at": today.replace(hour=10, minute=15, second=0),
-        },
-        {
-            "id": "msg3",
-            "author_id": "user1",
-            "author_name": "User One",
-            "content": "That's really interesting!",
-            "created_at": today.replace(hour=10, minute=30, second=0),
-        },
-    ]
+    messages = [{"id": "msg1",
+                 "author_id": "user1",
+                 "author_name": "User One",
+                 "content": "Hello everyone!",
+                 "created_at": today.replace(hour=10,
+                                             minute=0,
+                                             second=0),
+                 },
+                {"id": "msg2",
+                 "author_id": "user2",
+                 "author_name": "User Two",
+                 "content": "Check out this Twitter post: https://x.com/cline/status/1925002086405832987",  # noqa: E501
+                 "created_at": today.replace(hour=10,
+                                             minute=15,
+                                             second=0),
+                 },
+                {"id": "msg3",
+                 "author_id": "user1",
+                 "author_name": "User One",
+                 "content": "That's really interesting!",
+                 "created_at": today.replace(hour=10,
+                                             minute=30,
+                                             second=0),
+                 },
+                ]
 
     # Store the messages
     for msg in messages:
@@ -78,13 +80,13 @@ async def test_sum_day_with_links():
             created_at=msg["created_at"],
         )
         if success:
-            logger.info(f"Stored message {msg['id']}")
+            logger.info("Stored message {msg['id']}")
         else:
-            logger.warning(f"Failed to store message {msg['id']}")
+            logger.warning("Failed to store message {msg['id']}")
 
     # Update the message with the URL to include scraped content
     url = "https://x.com/cline/status/1925002086405832987"
-    summary = "Cline announced new Workflows feature in v3.16. Workflows are automation scripts that define a sequence of actions using natural language, Cline's tools, CLI commands, or MCPs within a Markdown file."
+    summary = "Cline announced new Workflows feature in v3.16. Workflows are automation scripts that define a sequence of actions using natural language, Cline's tools, CLI commands, or MCPs within a Markdown file."  # noqa: E501
     key_points = [
         "Cline v3.16 introduces Workflows feature",
         "Workflows are automation scripts defined in Markdown files",
@@ -106,20 +108,20 @@ async def test_sum_day_with_links():
     )
 
     if success:
-        logger.info(f"Updated message msg2 with scraped data")
+        logger.info("Updated message msg2 with scraped data")
     else:
-        logger.warning(f"Failed to update message msg2 with scraped data")
+        logger.warning("Failed to update message msg2 with scraped data")
 
     # Retrieve messages for the day
     messages = get_channel_messages_for_day(channel_id, today)
-    logger.info(f"Retrieved {len(messages)} messages for the day")
+    logger.info("Retrieved {len(messages)} messages for the day")
 
     # Check if the scraped content is included in the retrieved messages
     for msg in messages:
         if msg.get("scraped_url"):
-            logger.info(f"Found message with scraped URL: {msg.get('scraped_url')}")
-            logger.info(f"Scraped summary: {msg.get('scraped_content_summary')}")
-            logger.info(f"Scraped key points: {msg.get('scraped_content_key_points')}")
+            logger.info("Found message with scraped URL: {msg.get('scraped_url')}")
+            logger.info("Scraped summary: {msg.get('scraped_content_summary')}")
+            logger.info("Scraped key points: {msg.get('scraped_content_key_points')}")
 
     # Generate a summary
     summary = await call_llm_for_summary(messages, channel_name, today)

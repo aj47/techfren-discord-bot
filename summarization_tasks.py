@@ -22,7 +22,7 @@ def _validate_discord_client():
     """Validate that discord client is available."""
     if not discord_client:
         logger.error(
-            "Discord client not set in summarization_tasks. Aborting daily summarization."
+            "Discord client not set in summarization_tasks. Aborting daily summarization."  # noqa: E501
         )
         return False
     return True
@@ -55,12 +55,12 @@ async def _process_channel_summary(channel_data, channel_messages, now):
     guild_id = channel_data["guild_id"]
     guild_name = channel_data["guild_name"]
 
-    formatted_messages = _format_channel_messages(channel_messages, guild_id, channel_id)
+    formatted_messages = _format_channel_messages(
+        channel_messages, guild_id, channel_id)
 
     if not formatted_messages:
         logger.info(
-            f"No non-command messages found for channel {channel_name}. Skipping summarization."
-        )
+            f"No non-command messages found for channel {channel_name}. Skipping summarization.")  # noqa: E501
         return 0, 0
 
     try:
@@ -83,7 +83,8 @@ async def _process_channel_summary(channel_data, channel_messages, now):
                 user_counts[user] = user_counts.get(user, 0) + 1
 
         # Sort users by message count (most active first)
-        user_list = [{"name": user, "count": count} for user, count in user_counts.items()]
+        user_list = [{"name": user, "count": count}
+                     for user, count in user_counts.items()]
         if len(user_list) < 20:
             sorted_users = insertion_sort(user_list, key="count", reverse=True)
         else:
@@ -105,7 +106,9 @@ async def _process_channel_summary(channel_data, channel_messages, now):
             metadata={"automated": True, "chart_data": chart_data is not None},
         )
 
-        logger.info(f"Successfully summarized channel {channel_name} ({len(formatted_messages)} messages)")
+        logger.info(
+            f"Successfully summarized channel {channel_name} ({
+                len(formatted_messages)} messages)")
 
         # Post to reports channel if configured
         try:
@@ -129,7 +132,8 @@ async def _get_active_channels_data():
     active_channels = database.get_active_channels(hours=24)
 
     if not active_channels:
-        logger.info("No active channels found in the past 24 hours. Skipping summarization.")
+        logger.info(
+            "No active channels found in the past 24 hours. Skipping summarization.")
         return None, None, None
 
     logger.info(f"Found {len(active_channels)} active channels to summarize")
@@ -147,8 +151,7 @@ async def _process_all_channels(active_channels, messages_by_channel, now):
 
         if channel_id not in messages_by_channel:
             logger.warning(
-                f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active"
-            )
+                f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active")  # noqa: E501
             continue
 
         channel_messages = messages_by_channel[channel_id]["messages"]
@@ -207,10 +210,12 @@ async def daily_channel_summarization():
         await _cleanup_old_messages(now, successful_summaries)
 
         logger.info(
-            f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages."
+            f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages."  # noqa: E501
         )
     except Exception as e:
-        logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error in daily channel summarization task: {
+                str(e)}", exc_info=True)
 
 
 async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
@@ -219,7 +224,7 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
     """
     if not discord_client:
         logger.error(
-            "Discord client not set in summarization_tasks. Cannot post summary to reports channel."
+            "Discord client not set in summarization_tasks. Cannot post summary to reports channel."  # noqa: E501
         )
         return
 
@@ -253,7 +258,7 @@ async def before_daily_summarization():
     """Wait until a specific time to start the daily summarization task."""
     if not discord_client:
         logger.error(
-            "Discord client not set in summarization_tasks. Cannot start before_daily_summarization."
+            "Discord client not set in summarization_tasks. Cannot start before_daily_summarization."  # noqa: E501
         )
         # Fallback to prevent loop from erroring out immediately if client isn't ready
         await asyncio.sleep(60)
@@ -263,8 +268,9 @@ async def before_daily_summarization():
         summary_hour = getattr(config, "summary_hour", 0)
         summary_minute = getattr(config, "summary_minute", 0)
         logger.info(
-            f"Daily summarization scheduled for {summary_hour:02d}:{summary_minute:02d} UTC"
-        )
+            f"Daily summarization scheduled for {
+                summary_hour:02d}:{
+                summary_minute:02d} UTC")
 
         await discord_client.wait_until_ready()
 

@@ -34,11 +34,11 @@ def create_sample_messages():
             "guild_id": "111222333444555666",
             "channel_id": "777888999000111222",
             "scraped_url": "https://example.com/ai-trends",
-            "scraped_content_summary": "This article discusses the latest trends in AI development, including machine learning advances and ethical considerations.",
+            "scraped_content_summary": "This article discusses the latest trends in AI development, including machine learning advances and ethical considerations.",  # noqa: E501
         },
         {
             "id": "987654321098765432",
-            "content": "I totally agree with the points made. The ethical considerations are really important.",
+            "content": "I totally agree with the points made. The ethical considerations are really important.",  # noqa: E501
             "author_name": "Bob",
             "created_at": now - datetime.timedelta(hours=1),
             "guild_id": "111222333444555666",
@@ -81,13 +81,13 @@ def test_discord_formatter(expected_links, channel_name):
     """Test Discord formatter preserves source links."""
     print("\n2. Testing Discord formatter with source links...")
 
-    mock_llm_response = f"""Here's a summary of the recent discussion in #{channel_name}:
+    mock_llm_response = f"""Here's a summary of the recent discussion in #{channel_name}:  # noqa: E501
 
-The conversation was initiated by Alice who shared valuable insights about AI development trends [Jump to message]({expected_links[0]}). The article she referenced discusses important aspects of machine learning advances and ethical considerations.
+The conversation was initiated by Alice who shared valuable insights about AI development trends [Jump to message]({expected_links[0]}). The article she referenced discusses important aspects of machine learning advances and ethical considerations.  # noqa: E501
 
-Bob provided thoughtful commentary on the ethical implications [Jump to message]({expected_links[1]}), emphasizing the importance of considering these factors in development.
+Bob provided thoughtful commentary on the ethical implications [Jump to message]({expected_links[1]}), emphasizing the importance of considering these factors in development.  # noqa: E501
 
-Charlie raised practical questions about implementation [Jump to message]({expected_links[2]}), which shows the community's interest in applying these concepts.
+Charlie raised practical questions about implementation [Jump to message]({expected_links[2]}), which shows the community's interest in applying these concepts.  # noqa: E501
 
 Key topics:
 - AI development trends
@@ -110,12 +110,12 @@ Key topics:
 
     if len(links_in_formatted) >= 3:
         print(
-            f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)"
+            f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)"  # noqa: E501
         )
         return True, formatted_response
     else:
         print(
-            f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)"
+            f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)"  # noqa: E501
         )
         return False, formatted_response
 
@@ -135,12 +135,12 @@ async def test_message_splitting(formatted_response):
 
     if len(total_links) >= 3:
         print(
-            f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)"
+            f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)"  # noqa: E501
         )
         return True, total_links
     else:
         print(
-            f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)"
+            f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)"  # noqa: E501
         )
         return False, total_links
 
@@ -179,7 +179,7 @@ async def test_complete_source_linking_workflow():
         if not success:
             return False
 
-        success, formatted_response = test_discord_formatter(expected_links, channel_name)
+        success, formatted_response = test_discord_formatter(expected_links, channel_name)  # noqa: E501
         if not success:
             return False
 
@@ -219,7 +219,7 @@ async def test_message_context_with_real_workflow():
 
         # Create a mock message with a Discord link in content
         mock_message = Mock()
-        mock_message.content = "Can you analyze this discussion? https://discord.com/channels/111222333444555666/777888999000111222/123456789012345678"
+        mock_message.content = "Can you analyze this discussion? https://discord.com/channels/111222333444555666/777888999000111222/123456789012345678"  # noqa: E501
         mock_message.author.name = "TestUser"
         mock_message.id = 999888777666555444
         mock_message.channel = mock_channel

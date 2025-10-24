@@ -79,7 +79,7 @@ async def split_long_message(message, max_length=1900):
     Args:
         message (str): The message to split
         max_length (int): Maximum length of each part
-                         (default: 1900 to leave room for part indicators and safety margin)
+                         (default: 1900 to leave room for part indicators and safety margin)  # noqa: E501
 
     Returns:
         list: List of message parts
@@ -157,8 +157,8 @@ async def fetch_referenced_message(
                     channel = guild.get_channel(message.reference.channel_id)
                     if not channel:
                         logger.warning(
-                            f"Could not find channel {message.reference.channel_id} for referenced message"
-                        )
+                            f"Could not find channel {
+                                message.reference.channel_id} for referenced message")
                         return None
                 else:
                     logger.warning(
@@ -183,7 +183,7 @@ async def fetch_message_from_link(
     Fetch a Discord message from a Discord message link.
 
     Args:
-        link (str): Discord message link (e.g., https://discord.com/channels/guild_id/channel_id/message_id)
+        link (str): Discord message link (e.g., https://discord.com/channels/guild_id/channel_id/message_id)  # noqa: E501
         bot (discord.Client): The Discord bot client
 
     Returns:

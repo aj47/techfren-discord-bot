@@ -11,13 +11,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_methodology_table_fix():
-    """Test the specific case that was generating 'Total Rows in **Methodology**' charts."""
+    """Test the specific case that was generating 'Total Rows in **Methodology**' charts."""  # noqa: E501
     print("=== Testing Methodology Table Fix ===")
     print("Replicating the exact issue reported by the user...\n")
 
     # This is the type of table that was causing the problem
     # A complex methodology comparison table with mostly text data
-    methodology_table = """| Methodology | Approach | Effectiveness | Implementation Difficulty | Best Use Cases |
+    methodology_table = """| Methodology | Approach | Effectiveness | Implementation Difficulty | Best Use Cases |  # noqa: E501
 | --- | --- | --- | --- | --- |
 | Agile | Iterative development | High | Medium | Complex projects |
 | Waterfall | Sequential phases | Medium | Low | Well-defined requirements |
@@ -35,7 +35,7 @@ def test_methodology_table_fix():
         return False
 
     print(
-        f"   ✓ Parsed successfully: {len(table_data['headers'])} columns, {len(table_data['rows'])} rows"
+        f"   ✓ Parsed successfully: {len(table_data['headers'])} columns, {len(table_data['rows'])} rows"  # noqa: E501
     )
     print(f"   Headers: {table_data['headers']}")
 
@@ -71,7 +71,7 @@ def test_methodology_table_fix():
         print("   Chart now uses real data instead of generic row counts.")
         return True
 
-    # Even if it doesn't contain the exact names, as long as it's not the fallback, it's better
+    # Even if it doesn't contain the exact names, as long as it's not the fallback, it's better  # noqa: E501
     print("   ✓ GOOD: Chart generated without the problematic fallback")
     print("   No longer shows 'Total Rows in **Methodology**'")
     return True
@@ -83,7 +83,7 @@ def test_specific_user_scenario():
     print("Simulating a user asking for methodology comparison...\n")
 
     # Simulate an LLM response that includes the problematic table
-    llm_response = """Based on your request for methodology comparison, here's my analysis:
+    llm_response = """Based on your request for methodology comparison, here's my analysis:  # noqa: E501
 
 Different software development methodologies have varying approaches and effectiveness:
 
@@ -123,7 +123,7 @@ Each methodology has its strengths and should be chosen based on project context
         # The critical test: make sure it's NOT the problematic chart
         if "Total Rows" in chart_url and "Methodology" in chart_url:
             print(
-                "   ✗ CRITICAL FAILURE: Generated 'Total Rows in **Methodology**' chart!"
+                "   ✗ CRITICAL FAILURE: Generated 'Total Rows in **Methodology**' chart!"  # noqa: E501
             )
             print("   This is exactly the bug the user reported!")
             return False

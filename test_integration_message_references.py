@@ -67,22 +67,19 @@ class TestMessageReferenceIntegration:
             nonlocal captured_query, captured_context
             captured_query = query
             captured_context = context
-            return "I can see the referenced message about 'This is the original message being referenced'"
+            return "I can see the referenced message about 'This is the original message being referenced'"  # noqa: E501
 
         # Mock thread creation and response sending
         mock_thread = AsyncMock()
         mock_thread.mention = "#test-thread"
 
-        with patch(
-            "command_handler.get_message_context", return_value=mock_context
-        ), patch("command_handler.call_llm_api", side_effect=mock_llm_call), patch(
-            "command_abstraction.ThreadManager"
-        ) as mock_thread_manager_class, patch(
-            "command_abstraction.MessageResponseSender"
-        ) as mock_sender_class, patch(
-            "command_handler.split_long_message", return_value=["Test response"]
-        ), patch(
-            "command_handler.store_bot_response_db"
+        with (
+            patch("command_handler.get_message_context", return_value=mock_context),
+            patch("command_handler.call_llm_api", side_effect=mock_llm_call),
+            patch("command_abstraction.ThreadManager") as mock_thread_manager_class,
+            patch("command_abstraction.MessageResponseSender") as mock_sender_class,
+            patch("command_handler.split_long_message", return_value=["Test response"]),
+            patch("command_handler.store_bot_response_db"),
         ):
 
             # Setup mocks
@@ -165,16 +162,13 @@ class TestMessageReferenceIntegration:
         mock_thread = AsyncMock()
         mock_thread.mention = "#test-thread"
 
-        with patch(
-            "command_handler.get_message_context", return_value=mock_context
-        ), patch("command_handler.call_llm_api", side_effect=mock_llm_call), patch(
-            "command_abstraction.ThreadManager"
-        ) as mock_thread_manager_class, patch(
-            "command_abstraction.MessageResponseSender"
-        ) as mock_sender_class, patch(
-            "command_handler.split_long_message", return_value=["Test response"]
-        ), patch(
-            "command_handler.store_bot_response_db"
+        with (
+            patch("command_handler.get_message_context", return_value=mock_context),
+            patch("command_handler.call_llm_api", side_effect=mock_llm_call),
+            patch("command_abstraction.ThreadManager") as mock_thread_manager_class,
+            patch("command_abstraction.MessageResponseSender") as mock_sender_class,
+            patch("command_handler.split_long_message", return_value=["Test response"]),
+            patch("command_handler.store_bot_response_db"),
         ):
 
             # Setup mocks
@@ -230,9 +224,10 @@ class TestMessageReferenceIntegration:
         mock_completion.choices = [Mock()]
         mock_completion.choices[0].message.content = "Test response"
 
-        with patch("llm_handler.OpenAI") as mock_openai_class, patch(
-            "llm_handler.config"
-        ) as mock_config:
+        with (
+            patch("llm_handler.OpenAI") as mock_openai_class,
+            patch("llm_handler.config") as mock_config,
+        ):
 
             mock_config.perplexity = "test-key"
             mock_config.llm_model = "test-model"
@@ -242,7 +237,7 @@ class TestMessageReferenceIntegration:
             mock_openai_class.return_value = mock_client
 
             # Call the LLM API
-            result = await call_llm_api(query, message_context)
+            await call_llm_api(query, message_context)
 
             # Verify the API was called
             assert mock_client.chat.completions.create.called

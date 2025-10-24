@@ -103,5 +103,5 @@ def update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute
         RATE_LIMIT_SECONDS = new_rate_limit_seconds
         MAX_REQUESTS_PER_MINUTE = new_max_requests_per_minute
         logger.info(
-            f"Rate limit config updated: {RATE_LIMIT_SECONDS}s cooldown, {MAX_REQUESTS_PER_MINUTE} req/min"
+            f"Rate limit config updated: {RATE_LIMIT_SECONDS}s cooldown, {MAX_REQUESTS_PER_MINUTE} req/min"  # noqa: E501
         )

@@ -25,7 +25,7 @@ try:
         messages=[
             {
                 "role": "user",
-                "content": "What are the latest AI developments in 2024? Please provide sources.",
+                "content": "What are the latest AI developments in 2024? Please provide sources.",  # noqa: E501
             }
         ],
         max_tokens=500,

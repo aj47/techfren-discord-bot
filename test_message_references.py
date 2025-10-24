@@ -188,9 +188,12 @@ class TestGetMessageContext:
         bot = Mock(spec=discord.Client)
 
         # Mock the functions
-        with patch(
-            "message_utils.fetch_referenced_message", return_value=referenced_msg
-        ), patch("message_utils.fetch_message_from_link", return_value=linked_msg):
+        with (
+            patch(
+                "message_utils.fetch_referenced_message", return_value=referenced_msg
+            ),
+            patch("message_utils.fetch_message_from_link", return_value=linked_msg),
+        ):
 
             context = await get_message_context(message, bot)
 

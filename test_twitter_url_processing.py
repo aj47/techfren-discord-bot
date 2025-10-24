@@ -43,10 +43,10 @@ async def test_process_url(url: str):
             tweet_id = extract_tweet_id(url)
             if not tweet_id:
                 logger.warning(
-                    f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}"
+                    f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}"  # noqa: E501
                 )
 
-                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
+                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response  # noqa: E501
                 if url.lower() in [
                     "https://x.com",
                     "https://twitter.com",
@@ -57,7 +57,7 @@ async def test_process_url(url: str):
                         f"Handling base Twitter/X.com URL with custom response: {url}"
                     )
                     scraped_result = {
-                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
+                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"  # noqa: E501
                     }
                 else:
                     # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
@@ -67,7 +67,7 @@ async def test_process_url(url: str):
                 # Check if Apify API token is configured
                 if not hasattr(config, "apify_api_token") or not config.apify_api_token:
                     logger.warning(
-                        "Apify API token not found in config.py or is empty, falling back to Firecrawl"
+                        "Apify API token not found in config.py or is empty, falling back to Firecrawl"  # noqa: E501
                     )
                     scraped_result = await scrape_url_content(url)
                 else:
@@ -78,12 +78,12 @@ async def test_process_url(url: str):
                     # If Apify scraping fails, fall back to Firecrawl
                     if not scraped_result:
                         logger.warning(
-                            f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}"
+                            f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}"  # noqa: E501
                         )
                         scraped_result = await scrape_url_content(url)
                     else:
                         logger.info(
-                            f"Successfully scraped Twitter/X.com content with Apify: {url}"
+                            f"Successfully scraped Twitter/X.com content with Apify: {url}"  # noqa: E501
                         )
                         # Extract markdown content from the scraped result
                         markdown_content = scraped_result.get("markdown")

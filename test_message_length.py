@@ -69,13 +69,13 @@ async def test_message_splitting():
                 all_valid = False
 
             if all_valid:
-                print(f"  Result: PASS")
+                print("  Result: PASS")
             else:
-                print(f"  Result: FAIL")
+                print("  Result: FAIL")
 
         except Exception as e:
             print(f"  ERROR: {e}")
-            print(f"  Result: FAIL")
+            print("  Result: FAIL")
 
 
 async def test_chart_message_lengths():
@@ -103,7 +103,7 @@ Key insights:
         },
         {
             "name": "Detailed chart response",
-            "content": """Based on the conversation analysis, here are the detailed activity patterns:
+            "content": """Based on the conversation analysis, here are the detailed activity patterns:  # noqa: E501
 
 | Username | Message Count | Percentage |
 | --- | --- | --- |
@@ -120,12 +120,12 @@ Key insights:
 | 18:00-21:00 | 201 | all active |
 
 Key insights and patterns:
-- Alice maintained consistent activity throughout the day with peak engagement during morning and evening hours
+- Alice maintained consistent activity throughout the day with peak engagement during morning and evening hours  # noqa: E501
 - Bob showed strong morning presence but reduced activity in afternoon
-- Charlie demonstrated steady participation with emphasis on afternoon technical discussions
+- Charlie demonstrated steady participation with emphasis on afternoon technical discussions  # noqa: E501
 - David's participation was more focused on midday collaborative sessions
 - Overall engagement showed healthy distribution across time zones
-- Technical topics dominated during business hours while casual conversation increased in evening
+- Technical topics dominated during business hours while casual conversation increased in evening  # noqa: E501
 - Link sharing peaked during afternoon hours with 23 technical resources shared
 - Code collaboration was most active during 15:00-18:00 timeframe
 
@@ -195,7 +195,7 @@ def test_thread_context_length():
     context = manager.format_thread_context(messages, max_context_length=2500)
 
     print(f"Thread context length: {len(context)} characters")
-    print(f"Context preview (first 200 chars):")
+    print("Context preview (first 200 chars):")
     print(context[:200] + "..." if len(context) > 200 else context)
 
     if len(context) <= 2500:

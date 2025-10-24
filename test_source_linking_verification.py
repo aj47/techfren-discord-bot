@@ -35,7 +35,7 @@ def test_discord_message_link_generation():
             "123456789012345678",
             "987654321098765432",
             "555666777888999000",
-            "https://discord.com/channels/123456789012345678/987654321098765432/555666777888999000",
+            "https://discord.com/channels/123456789012345678/987654321098765432/555666777888999000",  # noqa: E501
         ),
         # DM channel (no guild)
         (
@@ -83,7 +83,7 @@ def test_message_link_extraction():
         ),
         # Text with multiple links
         (
-            "See https://discord.com/channels/123/456/789 and https://discord.com/channels/111/222/333",
+            "See https://discord.com/channels/123/456/789 and https://discord.com/channels/111/222/333",  # noqa: E501
             [
                 "https://discord.com/channels/123/456/789",
                 "https://discord.com/channels/111/222/333",
@@ -98,7 +98,7 @@ def test_message_link_extraction():
         ("This is just regular text with no links", []),
         # Mixed content
         (
-            "Regular text https://discord.com/channels/123/456/789 more text https://example.com",
+            "Regular text https://discord.com/channels/123/456/789 more text https://example.com",  # noqa: E501
             ["https://discord.com/channels/123/456/789"],
         ),
     ]
@@ -278,10 +278,6 @@ def test_llm_summary_source_preservation():
 
         # Check that Discord links are present
         discord_links = extract_message_links(full_text)
-        expected_links = [
-            f"https://discord.com/channels/111222333/444555666/123456789",
-            f"https://discord.com/channels/111222333/444555666/987654321",
-        ]
 
         # Check markdown link format
         markdown_link_pattern = (
@@ -315,9 +311,9 @@ async def test_source_link_preservation_in_output():
     # Simulate LLM response with Discord links
     mock_llm_response = """Here's a summary of the discussion:
 
-The conversation started when Alice shared an interesting article [Jump to message](https://discord.com/channels/111222333/444555666/123456789).
+The conversation started when Alice shared an interesting article [Jump to message](https://discord.com/channels/111222333/444555666/123456789).  # noqa: E501
 
-Bob responded with valuable insights [Jump to message](https://discord.com/channels/111222333/444555666/987654321).
+Bob responded with valuable insights [Jump to message](https://discord.com/channels/111222333/444555666/987654321).  # noqa: E501
 
 Key topics discussed:
 - AI development trends
@@ -353,16 +349,15 @@ Sources:
         output_links = extract_message_links(full_output)
 
         # Check that all original Discord links are preserved
-        expected_link_count = 4  # 2 in markdown format + 2 in sources section
         actual_link_count = len(output_links)
 
         if actual_link_count >= 2:  # At least the main links should be preserved
             print(
-                f"  ✓ PASS - Discord links preserved in formatted output ({actual_link_count} links)"
+                f"  ✓ PASS - Discord links preserved in formatted output ({actual_link_count} links)"  # noqa: E501
             )
             return True
         else:
-            print(f"  ✗ FAIL - Discord links not preserved in output")
+            print("  ✗ FAIL - Discord links not preserved in output")
             print(f"    Expected at least 2 links, found {actual_link_count}")
             print(f"    Links found: {output_links}")
             return False
@@ -478,11 +473,11 @@ async def run_all_tests():
         print("✓ End-to-end workflow functions correctly")
         print("\nSource linking functionality is working properly!")
     elif passed >= len(results) * 0.75:
-        print(f"\n✅ MOSTLY FUNCTIONAL!")
+        print("\n✅ MOSTLY FUNCTIONAL!")
         print("Most source linking features are working correctly.")
         print("Some edge cases may need attention.")
     else:
-        print(f"\n❌ NEEDS ATTENTION!")
+        print("\n❌ NEEDS ATTENTION!")
         print("Source linking functionality has significant issues.")
         print("Multiple test failures indicate problems that need to be fixed.")
 

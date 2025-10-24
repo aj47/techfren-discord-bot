@@ -228,9 +228,9 @@ def test_before_after_comparison():
 
             if improvements >= 3:
                 success_count += 1
-                print(f"    ✓ PASS - Significant improvement in labeling")
+                print("    ✓ PASS - Significant improvement in labeling")
             else:
-                print(f"    ✗ FAIL - Insufficient improvement")
+                print("    ✗ FAIL - Insufficient improvement")
 
         except Exception as e:
             print(f"    ✗ ERROR - {e}")
@@ -309,13 +309,13 @@ def test_edge_cases_from_user_data():
                     or len(legend_label) > len(headers[1])
                     or len(title) > len(headers[1])
                 ):
-                    print(f"    ✓ PASS - Enhanced labeling applied")
+                    print("    ✓ PASS - Enhanced labeling applied")
                     success_count += 1
                 else:
-                    print(f"    ✓ ACCEPTABLE - Basic labeling maintained")
+                    print("    ✓ ACCEPTABLE - Basic labeling maintained")
                     success_count += 0.5
             else:
-                print(f"    ✗ FAIL - Chart generation failed")
+                print("    ✗ FAIL - Chart generation failed")
 
         except Exception as e:
             print(f"    ✗ ERROR - {e}")
@@ -398,10 +398,10 @@ These patterns show significant variations in both focus and detail levels."""
 
                 if len(found_terms) >= 2:
                     print(
-                        f"    ✓ Enhanced labeling detected: {', '.join(found_terms[:3])}"
+                        f"    ✓ Enhanced labeling detected: {', '.join(found_terms[:3])}"  # noqa: E501
                     )
                 else:
-                    print(f"    ✗ Limited enhancement detected")
+                    print("    ✗ Limited enhancement detected")
                     all_charts_good = False
 
             if all_charts_good:
@@ -462,19 +462,19 @@ def main():
             "✓ Details chart now shows 'Detail Level (Quantity)' instead of 'Details'"
         )
         print(
-            "✓ Chart titles are descriptive: 'Focus Score Comparison: Framework Analysis'"
+            "✓ Chart titles are descriptive: 'Focus Score Comparison: Framework Analysis'"  # noqa: E501
         )
         print(
-            "✓ Axis labels provide context: 'Technologies (Framework)', 'Attributes (Category)'"
+            "✓ Axis labels provide context: 'Technologies (Framework)', 'Attributes (Category)'"  # noqa: E501
         )
         print("✓ Edge cases like years, power data, and zero values handled correctly")
         print("\nYour charts now have professional, detailed labeling!")
     elif passed >= len(results) * 0.8:
-        print(f"\n✅ USER CHART SCENARIOS MOSTLY SUCCESSFUL!")
+        print("\n✅ USER CHART SCENARIOS MOSTLY SUCCESSFUL!")
         print("Enhanced labeling is working for most scenarios.")
         print("Your charts should now be much more informative.")
     else:
-        print(f"\n❌ USER CHART SCENARIOS NEED ATTENTION!")
+        print("\n❌ USER CHART SCENARIOS NEED ATTENTION!")
         print("Enhanced labeling may not be working as expected.")
         print("Charts may still have generic labeling issues.")
 

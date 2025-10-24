@@ -32,7 +32,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         url (str): The URL to scrape
 
     Returns:
-        Optional[Dict[str, Any]]: Dictionary containing summary and key_points, or None if failed
+        Optional[Dict[str, Any]]: Dictionary containing summary and key_points, or None if failed  # noqa: E501
     """
     try:
         # Import here to avoid circular imports
@@ -57,7 +57,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
                 scraped_result = await scrape_twitter_content(url)
                 if not scraped_result:
                     logger.warning(
-                        f"Failed to scrape Twitter content with Apify, falling back to Firecrawl: {url}"
+                        f"Failed to scrape Twitter content with Apify, falling back to Firecrawl: {url}"  # noqa: E501
                     )
                     scraped_result = await scrape_url_content(url)
                     markdown_content = (
@@ -108,9 +108,7 @@ def _prepare_user_content_with_context(query, message_context):
     # Add thread context if available (from thread memory)
     if message_context.get("thread_context"):
         thread_context = message_context["thread_context"]
-        context_parts.append(
-            f"**Thread Conversation History:**\n{thread_context}"
-        )
+        context_parts.append(f"**Thread Conversation History:**\n{thread_context}")
         logger.debug("Added thread memory context to LLM prompt")
 
     # Add referenced message (reply) context
@@ -127,16 +125,14 @@ def _prepare_user_content_with_context(query, message_context):
         )
 
         context_parts.append(
-            f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}"
+            f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}"  # noqa: E501
         )
 
     # Add linked messages context
     if message_context.get("linked_messages"):
         for i, linked_msg in enumerate(message_context["linked_messages"]):
             linked_author = getattr(linked_msg, "author", None)
-            linked_author_name = (
-                str(linked_author) if linked_author else "Unknown"
-            )
+            linked_author_name = str(linked_author) if linked_author else "Unknown"
             linked_content = getattr(linked_msg, "content", "")
             linked_timestamp = getattr(linked_msg, "created_at", None)
             linked_time_str = (
@@ -146,16 +142,17 @@ def _prepare_user_content_with_context(query, message_context):
             )
 
             context_parts.append(
-                f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}"
+                f"**Linked Message {
+                    i +
+                    1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}"  # noqa: E501
             )
 
     if context_parts:
         context_text = "\n\n".join(context_parts)
-        user_content = (
-            f"{context_text}\n\n**User's Question/Request:**\n{query}"
-        )
+        user_content = f"{context_text}\n\n**User's Question/Request:**\n{query}"
         logger.debug(
-            f"Added message context to LLM prompt: {len(context_parts)} context message(s)"
+            f"Added message context to LLM prompt: {
+                len(context_parts)} context message(s)"
         )
 
     return user_content
@@ -170,26 +167,30 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
     scraped_content_parts = []
     for url in all_urls:
         try:
-            scraped_content = await asyncio.to_thread(
-                get_scraped_content_by_url, url
-            )
+            scraped_content = await asyncio.to_thread(get_scraped_content_by_url, url)
             if scraped_content:
                 logger.info(f"Found scraped content for URL: {url}")
                 content_section = f"**Scraped Content for {url}:**\n"
                 content_section += f"Summary: {scraped_content['summary']}\n"
                 if scraped_content["key_points"]:
-                    content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
+                    content_section += f"Key Points: {
+                        ', '.join(
+                            scraped_content['key_points'])}\n"
                 scraped_content_parts.append(content_section)
             else:
                 # URL not found in database, try to scrape it now
-                logger.info(f"No scraped content found for URL {url}, attempting to scrape now...")
+                logger.info(
+                    f"No scraped content found for URL {url}, attempting to scrape now..."  # noqa: E501
+                )
                 scraped_content = await scrape_url_on_demand(url)
                 if scraped_content:
                     logger.info(f"Successfully scraped content for URL: {url}")
                     content_section = f"**Scraped Content for {url}:**\n"
                     content_section += f"Summary: {scraped_content['summary']}\n"
                     if scraped_content["key_points"]:
-                        content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
+                        content_section += f"Key Points: {
+                            ', '.join(
+                                scraped_content['key_points'])}\n"
                     scraped_content_parts.append(content_section)
                 else:
                     logger.warning(f"Failed to scrape content for URL: {url}")
@@ -198,7 +199,10 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
 
     if scraped_content_parts:
         scraped_content_text = "\n\n".join(scraped_content_parts)
-        logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
+        logger.debug(
+            f"Added scraped content to LLM prompt: {
+                len(scraped_content_parts)} URL(s) with content"
+        )
         return f"{scraped_content_text}\n\n"
     return ""
 
@@ -231,7 +235,9 @@ async def _prepare_user_content_with_urls(query, user_content, message_context):
     urls_in_query = extract_urls_from_text(query)
     context_urls = _extract_context_urls(message_context)
 
-    scraped_content_text = await _get_scraped_content_for_urls(urls_in_query, context_urls)
+    scraped_content_text = await _get_scraped_content_for_urls(
+        urls_in_query, context_urls
+    )
     if scraped_content_text:
         if message_context:
             return f"{scraped_content_text}{user_content}"
@@ -279,18 +285,23 @@ async def call_llm_api(query, message_context=None, force_charts=False):
 
     Args:
         query (str): The user's query text
-        message_context (dict, optional): Context containing referenced and linked messages
+        message_context (dict, optional): Context containing referenced and linked messages  # noqa: E501
         force_charts (bool): If True, use chart-focused analysis system
 
     Returns:
         str: The LLM's response or an error message
     """
     try:
-        logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
+        logger.info(
+            f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}"  # noqa: E501
+        )
 
         # Validate API key
         if not _validate_llm_api_key():
-            return "Error: LLM API key is missing. Please contact the bot administrator.", []
+            return (
+                "Error: LLM API key is missing. Please contact the bot administrator.",
+                [],
+            )
 
         # Initialize client
         openai_client = AsyncOpenAI(
@@ -299,22 +310,30 @@ async def call_llm_api(query, message_context=None, force_charts=False):
 
         # Prepare content
         user_content = _prepare_user_content_with_context(query, message_context)
-        user_content = await _prepare_user_content_with_urls(query, user_content, message_context)
+        user_content = await _prepare_user_content_with_urls(
+            query, user_content, message_context
+        )
 
         # Select system prompt
         system_prompt = _select_system_prompt(force_charts, query, user_content)
 
         # Make API request
-        completion = await _make_llm_request(openai_client, config.llm_model, system_prompt, user_content)
+        completion = await _make_llm_request(
+            openai_client, config.llm_model, system_prompt, user_content
+        )
 
         # Extract response and citations
         message = completion.choices[0].message.content
         citations = _extract_citations(completion)
 
         # Format response
-        formatted_message, chart_data = DiscordFormatter.format_llm_response(message, citations)
+        formatted_message, chart_data = DiscordFormatter.format_llm_response(
+            message, citations
+        )
 
-        logger.info(f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
+        logger.info(
+            f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}"  # noqa: E501
+        )
         if chart_data:
             logger.info(f"Extracted {len(chart_data)} chart(s) from LLM response")
 
@@ -325,7 +344,10 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         return "Sorry, the request timed out. Please try again later.", []
     except Exception as e:
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
-        return "Sorry, I encountered an error while processing your request. Please try again later.", []
+        return (
+            "Sorry, I encountered an error while processing your request. Please try again later.",  # noqa: E501
+            [],
+        )
 
 
 def _filter_messages_for_summary(messages):
@@ -357,13 +379,13 @@ def _format_message_for_summary(msg):
     # Generate Discord message link
     message_link = ""
     if message_id and channel_id:
-        message_link = generate_discord_message_link(
-            guild_id, channel_id, message_id
-        )
+        message_link = generate_discord_message_link(guild_id, channel_id, message_id)
 
     # Format the message with the basic content and clickable Discord link
     if message_link:
-        return f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
+        return (
+            f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
+        )
     else:
         return f"[{time_str}] {author_name}: {content}"
 
@@ -376,9 +398,7 @@ def _add_scraped_content_to_message(message_text, msg):
 
     # If there's scraped content, add it to the message
     if scraped_url and scraped_summary:
-        link_content = (
-            f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
-        )
+        link_content = f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
         message_text += link_content
 
         # If there are key points, add them too
@@ -391,16 +411,16 @@ def _add_scraped_content_to_message(message_text, msg):
                         bullet_point = f"\n- {point}"
                         message_text += bullet_point
             except json.JSONDecodeError:
-                logger.warning(
-                    f"Failed to parse key points JSON: {scraped_key_points}"
-                )
+                logger.warning(f"Failed to parse key points JSON: {scraped_key_points}")
 
     return message_text
 
 
 def _truncate_messages_if_needed(messages_text):
     """Truncate input if it's too long to avoid token limits."""
-    max_input_length = 50000  # Reduced to leave more room for thread context and response
+    max_input_length = (
+        50000  # Reduced to leave more room for thread context and response
+    )
     if len(messages_text) > max_input_length:
         original_length = len(messages_text)
         messages_text = (
@@ -408,7 +428,8 @@ def _truncate_messages_if_needed(messages_text):
             + "\n\n[Messages truncated due to length...]"
         )
         logger.info(
-            f"Truncated conversation input from {original_length} to {len(messages_text)} characters"
+            f"Truncated conversation input from {original_length} to {
+                len(messages_text)} characters"
         )
     return messages_text
 
@@ -464,7 +485,7 @@ async def call_llm_for_summary(
         )
 
         if force_charts:
-            prompt = f"""Analyze the following conversation data from #{channel_name} for the past {time_period}:
+            prompt = f"""Analyze the following conversation data from #{channel_name} for the past {time_period}:  # noqa: E501
 
 {messages_text}
 
@@ -485,7 +506,7 @@ ANALYSIS OPTIONS (choose most relevant):
 
 FORMAT: Brief summary + data table(s) + key insights"""
         else:
-            prompt = f"""Summarize the following conversation from #{channel_name} for the past {time_period}:
+            prompt = f"""Summarize the following conversation from #{channel_name} for the past {time_period}:  # noqa: E501
 
 {messages_text}
 
@@ -496,10 +517,10 @@ SUMMARY REQUIREMENTS:
 4. Preserve Discord message links: [Source](https://discord.com/channels/...)
 5. Focus on qualitative insights and community interactions
 
-Keep it natural and engaging - this is for community members to understand what they missed."""
+Keep it natural and engaging - this is for community members to understand what they missed."""  # noqa: E501
 
         logger.info(
-            f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}"
+            f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}"  # noqa: E501
         )
 
         # Check if LLM API key exists
@@ -536,7 +557,7 @@ Keep it natural and engaging - this is for community members to understand what 
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=2500,  # Increased for very detailed summaries with extensive web context
+            max_tokens=2500,  # Increased for very detailed summaries with extensive web context  # noqa: E501
             temperature=0.5,  # Lower temperature for more focused summaries
         )
 
@@ -548,7 +569,7 @@ Keep it natural and engaging - this is for community members to understand what 
         citations = None
         if hasattr(completion, "citations") and completion.citations:
             logger.info(
-                f"Found {len(completion.citations)} citations from LLM provider for summary"
+                f"Found {len(completion.citations)} citations from LLM provider for summary"  # noqa: E501
             )
             citations = completion.citations
 
@@ -565,7 +586,7 @@ Keep it natural and engaging - this is for community members to understand what 
         )
 
         logger.info(
-            f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}"
+            f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}"  # noqa: E501
         )
         if chart_data:
             logger.info(f"Extracted {len(chart_data)} chart(s) from summary")
@@ -578,14 +599,14 @@ Keep it natural and engaging - this is for community members to understand what 
     except Exception as e:
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return (
-            "Sorry, I encountered an error while generating the summary. Please try again later.",
+            "Sorry, I encountered an error while generating the summary. Please try again later.",  # noqa: E501
             [],
         )
 
 
 def _get_regular_summary_system_prompt() -> str:
     """Get the regular summary system prompt focused on qualitative analysis."""
-    return """You are a Discord conversation summarizer for the techfren community. Focus on creating engaging, qualitative summaries.
+    return """You are a Discord conversation summarizer for the techfren community. Focus on creating engaging, qualitative summaries.  # noqa: E501
 
 SUMMARY APPROACH:
 - Conversational and community-focused tone
@@ -594,7 +615,7 @@ SUMMARY APPROACH:
 - Include interesting insights and notable moments
 
 THREAD CONTEXT AWARENESS:
-If thread conversation history is provided, acknowledge ongoing discussions and build upon previous summaries when relevant.
+If thread conversation history is provided, acknowledge ongoing discussions and build upon previous summaries when relevant.  # noqa: E501
 
 STRUCTURE:
 1. Brief overview of main topics discussed
@@ -608,9 +629,9 @@ FORMATTING:
 - Include Discord message links: [Source](https://discord.com/channels/...)
 - Focus on storytelling rather than data analysis
 
-TONE: Friendly, informative, and engaging - like telling a friend what they missed in the conversation.
+TONE: Friendly, informative, and engaging - like telling a friend what they missed in the conversation.  # noqa: E501
 
-Note: Only include data tables if the conversation naturally contains specific metrics that users shared or discussed."""
+Note: Only include data tables if the conversation naturally contains specific metrics that users shared or discussed."""  # noqa: E501
 
 
 def _should_use_chart_system(query: str, full_content: str) -> bool:
@@ -680,7 +701,7 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
 
 def _get_chart_analysis_system_prompt() -> str:
     """Get the chart analysis system prompt focused on data visualization."""
-    return """You are a data analysis assistant for the techfren community Discord server. Your specialty is creating accurate charts and visualizations.
+    return """You are a data analysis assistant for the techfren community Discord server. Your specialty is creating accurate charts and visualizations.  # noqa: E501
 
 ═══════════════════════════════════════════════════════════
 CHART ANALYSIS SYSTEM - DATA VISUALIZATION FOCUS
@@ -689,7 +710,7 @@ CHART ANALYSIS SYSTEM - DATA VISUALIZATION FOCUS
 CORE MISSION: Transform conversation data into accurate, meaningful visualizations.
 
 THREAD MEMORY AWARENESS:
-If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:
+If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:  # noqa: E501
 - Reference previous discussions naturally
 - Build upon earlier analyses
 - Avoid repeating information already covered
@@ -754,12 +775,12 @@ PROHIBITED:
 ✗ Tables without proper formatting
 ✗ Code blocks around tables (```table```)
 
-REMEMBER: Tables automatically become visual charts. Accurate data + clear labels = meaningful insights."""
+REMEMBER: Tables automatically become visual charts. Accurate data + clear labels = meaningful insights."""  # noqa: E501
 
 
 def _get_regular_system_prompt() -> str:
     """Get the regular system prompt for general conversations."""
-    return """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
+    return """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.  # noqa: E501
 
 CORE BEHAVIOR:
 - Be direct and concise
@@ -768,7 +789,7 @@ CORE BEHAVIOR:
 - Use context from referenced/linked messages when available
 
 THREAD MEMORY AWARENESS:
-If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:
+If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:  # noqa: E501
 - Continue conversations naturally without reintroducing yourself
 - Reference previous points and build upon them
 - Maintain conversation continuity and flow
@@ -795,14 +816,17 @@ Only create data tables if:
 
 OTHERWISE: Focus on qualitative insights, explanations, and natural conversation.
 
-Note: For data analysis requests, use /chart-analysis or similar commands to get detailed visualizations."""
+Note: For data analysis requests, use /chart-analysis or similar commands to get detailed visualizations."""  # noqa: E501
 
 
 def _truncate_content(markdown_content: str) -> str:
     """Truncate content if too long to avoid token limits."""
     max_content_length = 15000
     if len(markdown_content) > max_content_length:
-        return markdown_content[:max_content_length] + "\n\n[Content truncated due to length...]"
+        return (
+            markdown_content[:max_content_length]
+            + "\n\n[Content truncated due to length...]"
+        )
     return markdown_content
 
 
@@ -849,7 +873,9 @@ def _validate_summary_result(result: dict) -> dict:
         if "summary" not in result:
             result["summary"] = "Summary could not be extracted from the content."
         if "key_points" not in result:
-            result["key_points"] = ["Key points could not be extracted from the content."]
+            result["key_points"] = [
+                "Key points could not be extracted from the content."
+            ]
     return result
 
 
@@ -857,7 +883,9 @@ def _create_fallback_summary() -> dict:
     """Create fallback summary when parsing fails."""
     return {
         "summary": "Failed to generate a proper summary from the content.",
-        "key_points": ["The content could not be properly summarized due to a processing error."]
+        "key_points": [
+            "The content could not be properly summarized due to a processing error."
+        ],
     }
 
 
@@ -899,7 +927,7 @@ async def summarize_scraped_content(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested.",
+                    "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested.",  # noqa: E501
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -909,7 +937,9 @@ async def summarize_scraped_content(
 
         # Extract and parse response
         response_text = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+        logger.info(
+            f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}"  # noqa: E501
+        )
 
         try:
             json_str = _extract_json_from_response(response_text)
@@ -921,8 +951,14 @@ async def summarize_scraped_content(
             return _create_fallback_summary()
 
     except asyncio.TimeoutError:
-        logger.error(f"LLM API request timed out while summarizing content from URL {url}")
+        logger.error(
+            f"LLM API request timed out while summarizing content from URL {url}"
+        )
         return None
     except Exception as e:
-        logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error summarizing content from URL {url}: {
+                str(e)}",
+            exc_info=True,
+        )
         return None

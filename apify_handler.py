@@ -266,7 +266,8 @@ async def scrape_twitter_content(url: str) -> Optional[Dict[str, Any]]:
         url (str): The Twitter/X.com URL to scrape
 
     Returns:
-        Optional[Dict[str, Any]]: A dictionary containing the scraped content or None if scraping failed
+        Optional[Dict[str, Any]]: A dictionary containing the scraped
+            content or None if scraping failed
     """
     try:
         logger.info(f"Scraping Twitter/X.com URL: {url}")
@@ -370,10 +371,10 @@ async def is_twitter_url(url: str) -> bool:
         bool: True if the URL is from Twitter/X.com, False otherwise
     """
     # More specific pattern to match Twitter/X.com domains
-    # This ensures we're matching the domain part of the URL, not just any occurrence of these strings
-    return bool(
-        re.search(
-            r"(?:^https?://(?:www\.)?(?:twitter\.com|x\.com))|(?://(?:www\.)?(?:twitter\.com|x\.com))",
-            url,
-        )
+    # This ensures we're matching the domain part of the URL, not just any
+    # occurrence of these strings
+    pattern = (
+        r"(?:^https?://(?:www\.)?(?:twitter\.com|x\.com))"
+        r"|(?://(?:www\.)?(?:twitter\.com|x\.com))"
     )
+    return bool(re.search(pattern, url))

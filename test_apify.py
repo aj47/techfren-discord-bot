@@ -25,7 +25,7 @@ logger = logging.getLogger("test_apify")
 async def test_fetch_tweet():
     """Test the fetch_tweet function with a specific URL."""
     url = "https://x.com/cline/status/1925002086405832987"
-    logger.info(f"Testing fetch_tweet with URL: {url}")
+    logger.info("Testing fetch_tweet with URL: {url}")
 
     # Call the fetch_tweet function
     tweet_data = await apify_handler.fetch_tweet(url)
@@ -38,7 +38,7 @@ async def test_fetch_tweet():
             print(f"Tweet Text: {tweet_data['text']}")
         if "user" in tweet_data and "name" in tweet_data["user"]:
             print(
-                f"Author: {tweet_data['user']['name']} (@{tweet_data['user'].get('screen_name', '')})"
+                f"Author: {tweet_data['user']['name']} (@{tweet_data['user'].get('screen_name', '')})"  # noqa: E501
             )
 
         # Check for video
@@ -59,7 +59,7 @@ async def test_fetch_tweet():
 async def test_scrape_twitter_content():
     """Test the scrape_twitter_content function with a specific URL."""
     url = "https://x.com/cline/status/1925002086405832987"
-    logger.info(f"Testing scrape_twitter_content with URL: {url}")
+    logger.info("Testing scrape_twitter_content with URL: {url}")
 
     # Call the scrape_twitter_content function
     content = await apify_handler.scrape_twitter_content(url)

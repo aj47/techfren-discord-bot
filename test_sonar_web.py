@@ -24,7 +24,7 @@ try:
         messages=[
             {
                 "role": "user",
-                "content": "What is the current weather in New York City today? Please provide sources.",
+                "content": "What is the current weather in New York City today? Please provide sources.",  # noqa: E501
             }
         ],
         max_tokens=200,
@@ -44,7 +44,7 @@ try:
         print("✓ Model appears to have web search capabilities!")
     else:
         print(
-            "⚠ Model may not have web search capabilities or couldn't retrieve current data"
+            "⚠ Model may not have web search capabilities or couldn't retrieve current data"  # noqa: E501
         )
 
 except Exception as e:

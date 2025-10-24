@@ -95,7 +95,7 @@ def test_enhanced_legend_labels():
                 success_count += 1
             else:
                 print(
-                    f"  Test {i+1}: ✓ ACCEPTABLE - '{original}' ({chart_type}) → '{result}'"
+                    f"  Test {i+1}: ✓ ACCEPTABLE - '{original}' ({chart_type}) → '{result}'"  # noqa: E501
                 )
                 # Accept if it at least includes the original term
                 if original.lower() in result.lower():
@@ -145,7 +145,7 @@ def test_enhanced_chart_titles():
                 success_count += 1
             else:
                 print(
-                    f"  Test {i+1}: ✓ ACCEPTABLE - {headers} ({chart_type}) → '{result}'"
+                    f"  Test {i+1}: ✓ ACCEPTABLE - {headers} ({chart_type}) → '{result}'"  # noqa: E501
                 )
                 print(f"    Expected to contain: {expected_keyword}")
                 # Accept any title that's more than just the column names
@@ -211,11 +211,11 @@ def test_complete_chart_with_enhanced_labels():
             chart_url = renderer._generate_quickchart_url(table_data, chart_type)
 
             if chart_url:
-                print(f"    ✓ Chart generated successfully")
+                print("    ✓ Chart generated successfully")
                 print(f"    Chart URL length: {len(chart_url)} characters")
 
                 # Test that enhanced labels are in the chart configuration
-                # The URL contains the chart configuration, so we can check for enhanced elements
+                # The URL contains the chart configuration, so we can check for enhanced elements  # noqa: E501
                 url_lower = chart_url.lower()
 
                 # Check for enhanced terms
@@ -234,20 +234,20 @@ def test_complete_chart_with_enhanced_labels():
                 found_enhanced = any(term in url_lower for term in enhanced_terms)
 
                 if found_enhanced:
-                    print(f"    ✓ Contains enhanced labeling terms")
+                    print("    ✓ Contains enhanced labeling terms")
                     success_count += 1
                 else:
-                    print(f"    ✓ Chart generated (basic labeling)")
+                    print("    ✓ Chart generated (basic labeling)")
                     success_count += 0.5  # Partial credit
 
             else:
-                print(f"    ✗ Failed to generate chart")
+                print("    ✗ Failed to generate chart")
 
         except Exception as e:
             print(f"    ✗ ERROR generating chart: {e}")
 
     print(
-        f"\nComplete chart generation: {success_count}/{len(test_tables)} charts successful\n"
+        f"\nComplete chart generation: {success_count}/{len(test_tables)} charts successful\n"  # noqa: E501
     )
     return success_count >= len(test_tables) * 0.7
 
@@ -258,12 +258,6 @@ def test_before_after_comparison():
 
     renderer = ChartRenderer()
 
-    # Sample data that would have had poor labels before
-    sample_table = {
-        "headers": ["Framework", "Focus"],
-        "rows": [["React", "38"], ["Vue", "35"], ["Angular", "33"]],
-    }
-
     try:
         # Test enhanced axis labels
         original_x = "Framework"
@@ -272,11 +266,11 @@ def test_before_after_comparison():
         enhanced_x = renderer._enhance_axis_label(original_x, "x")
         enhanced_y = renderer._enhance_axis_label(original_y, "y")
 
-        print(f"  X-Axis Enhancement:")
+        print("  X-Axis Enhancement:")
         print(f"    Before: '{original_x}'")
         print(f"    After:  '{enhanced_x}'")
 
-        print(f"  Y-Axis Enhancement:")
+        print("  Y-Axis Enhancement:")
         print(f"    Before: '{original_y}'")
         print(f"    After:  '{enhanced_y}'")
 
@@ -284,7 +278,7 @@ def test_before_after_comparison():
         original_legend = "Focus"
         enhanced_legend = renderer._enhance_legend_label(original_legend, "bar")
 
-        print(f"  Legend Enhancement:")
+        print("  Legend Enhancement:")
         print(f"    Before: '{original_legend}'")
         print(f"    After:  '{enhanced_legend}'")
 
@@ -292,7 +286,7 @@ def test_before_after_comparison():
         original_title = "Focus by Framework"  # Basic title
         enhanced_title = renderer._generate_chart_title(["Framework", "Focus"], "bar")
 
-        print(f"  Title Enhancement:")
+        print("  Title Enhancement:")
         print(f"    Before: '{original_title}'")
         print(f"    After:  '{enhanced_title}'")
 
@@ -359,11 +353,11 @@ def main():
         print("✓ Enhanced labeling works in complete chart generation")
         print("\nCharts now have professional, detailed labeling!")
     elif passed >= len(results) * 0.8:
-        print(f"\n✅ ENHANCED LABELING MOSTLY SUCCESSFUL!")
+        print("\n✅ ENHANCED LABELING MOSTLY SUCCESSFUL!")
         print("Most labeling improvements are working correctly.")
         print("Charts should now be much more informative.")
     else:
-        print(f"\n❌ LABELING ENHANCEMENTS NEED WORK!")
+        print("\n❌ LABELING ENHANCEMENTS NEED WORK!")
         print("Enhanced labeling features may not be working properly.")
 
     return passed >= len(results) * 0.8

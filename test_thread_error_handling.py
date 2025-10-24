@@ -332,10 +332,10 @@ def main():
         print("✓ No more unnecessary WARNING logs for expected limitations")
         print("\nThread creation errors are now handled gracefully!")
     elif passed >= len(results) * 0.8:
-        print(f"\n✅ THREAD ERROR HANDLING MOSTLY WORKING!")
+        print("\n✅ THREAD ERROR HANDLING MOSTLY WORKING!")
         print("Most error handling improvements are working correctly.")
     else:
-        print(f"\n❌ THREAD ERROR HANDLING NEEDS WORK!")
+        print("\n❌ THREAD ERROR HANDLING NEEDS WORK!")
         print("Error handling improvements may not be working properly.")
 
     return passed >= len(results) * 0.8
