@@ -465,7 +465,6 @@ async def on_message(message):
 async def handle_analyze_images_command(message):
     """Handle the /analyze-images command"""
     await _handle_analyze_images_command(message, slash=False)
-        # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
