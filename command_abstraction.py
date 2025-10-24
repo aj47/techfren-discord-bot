@@ -292,13 +292,56 @@ class InteractionResponseSender:
 class ThreadManager:
     """Handles thread creation for both message and interaction contexts."""
 
-    def __init__(self, channel: discord.TextChannel, guild: Optional[discord.Guild] = None):
+    def __init__(self, channel, guild: Optional[discord.Guild] = None):
         self.channel = channel
         self.guild = guild
 
+    def _can_create_threads(self) -> bool:
+        """Check if threads can be created in this channel."""
+        # Threads are only supported in guild text channels and news channels
+        if not self.guild:
+            return False
+
+        # Check if channel supports threads
+        if isinstance(self.channel, discord.TextChannel):
+            return True
+
+        # Try to check for NewsChannel if it exists in this discord.py version
+        try:
+            if hasattr(discord, 'NewsChannel') and isinstance(self.channel, discord.NewsChannel):
+                return True
+        except AttributeError:
+            pass
+
+        # DMs, voice channels, categories, etc. don't support threads
+        return False
+
+    def _get_channel_type_description(self) -> str:
+        """Get a user-friendly description of the channel type."""
+        if isinstance(self.channel, discord.DMChannel):
+            return "DM"
+        elif isinstance(self.channel, discord.GroupChannel):
+            return "Group DM"
+        elif isinstance(self.channel, discord.VoiceChannel):
+            return "Voice Channel"
+        elif isinstance(self.channel, discord.CategoryChannel):
+            return "Category"
+        elif isinstance(self.channel, discord.Thread):
+            return "Thread"
+        elif isinstance(self.channel, discord.TextChannel):
+            return "TextChannel"
+        else:
+            return type(self.channel).__name__
+
     async def create_thread(self, name: str) -> Optional[discord.Thread]:
         """Create a thread in the channel."""
-        if not self.guild:
+        if not self._can_create_threads():
+            logger = logging.getLogger(__name__)
+            channel_desc = self._get_channel_type_description()
+            if isinstance(self.channel, discord.DMChannel):
+                logger.debug(f"Thread creation not supported in {channel_desc}s")
+            else:
+                logger.info(f"Thread creation not supported in {channel_desc}, skipping thread creation")
             return None
 
         try:
@@ -321,7 +364,13 @@ class ThreadManager:
 
     async def create_thread_from_message(self, message: discord.Message, name: str) -> Optional[discord.Thread]:
         """Create a thread from an existing message."""
-        if not self.guild:
+        if not self._can_create_threads():
+            logger = logging.getLogger(__name__)
+            channel_desc = self._get_channel_type_description()
+            if isinstance(self.channel, discord.DMChannel):
+                logger.debug(f"Thread creation not supported in {channel_desc}s")
+            else:
+                logger.info(f"Thread creation not supported in {channel_desc}, falling back to channel response")
             return None
 
         try:
@@ -364,7 +413,16 @@ class ThreadManager:
                 logger.info(f"Message already has a thread, creating standalone thread: '{name}'")
                 # Create a standalone thread in the channel (not attached to any message)
                 return await self.create_thread(name)
-            logger.warning(f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}")
+            elif e.status == 400 and "Cannot execute action on this channel type" in str(e.text):
+                channel_desc = self._get_channel_type_description()
+                logger.info(f"Thread creation not supported in {channel_desc}, this is expected behavior")
+                return None
+            elif e.status == 400:
+                # Other 400 errors that might be expected (permissions, etc.)
+                logger.info(f"Cannot create thread from message '{name}': HTTP {e.status} - {e.text}")
+                return None
+            else:
+                logger.warning(f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}")
             return None
         except discord.Forbidden as e:
             logger = logging.getLogger(__name__)

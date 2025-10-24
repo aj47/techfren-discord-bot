@@ -145,8 +145,11 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                 except discord.NotFound:
                     pass
         else:
-            # Fallback: if thread creation completely failed, send response in main channel
-            logger.warning("Thread creation failed for bot command, falling back to channel response")
+            # Fallback: if thread creation failed (DMs, unsupported channels, etc.), send response in main channel
+            if isinstance(message.channel, discord.DMChannel):
+                logger.debug("Thread creation not supported in DMs, using channel response")
+            else:
+                logger.info(f"Thread creation failed in {type(message.channel).__name__}, falling back to channel response")
             await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
     except Exception as e:
@@ -171,7 +174,7 @@ async def _send_error_response_thread(message: discord.Message, client_user: dis
             if bot_response:
                 await store_bot_response_db(bot_response, client_user, message.guild, thread, error_msg)
         else:
-            # Fallback to channel response
+            # Fallback to channel response (expected for DMs and unsupported channel types)
             allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
             bot_response = await message.channel.send(error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True)
             await store_bot_response_db(bot_response, client_user, message.guild, message.channel, error_msg)
