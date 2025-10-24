@@ -177,6 +177,57 @@ def extract_tweet_id(url: str) -> Optional[str]:
         return None
 
 
+def _get_video_url_from_variants(
+    variants: List[Dict[str, Any]], url_key: str, content_type_key: str
+) -> Optional[str]:
+    """Extracts the best video URL from a list of variants."""
+    if not variants:
+        return None
+
+    # Prefer MP4 format
+    mp4_variants = [v for v in variants if v.get(content_type_key) == "video/mp4"]
+
+    if mp4_variants:
+        # Sort by bitrate if available, otherwise just take the first one
+        if "bitrate" in mp4_variants[0]:
+            from sorting_utils import quick_sort
+            mp4_variants = quick_sort(mp4_variants, key="bitrate", reverse=True)
+        return mp4_variants[0].get(url_key)
+
+    # If no MP4 variants, return the first variant's source
+    return variants[0].get(url_key)
+
+
+def _extract_from_video_field(tweet_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts video URL from the 'video' field of tweet data."""
+    if (
+        "video" in tweet_data
+        and tweet_data["video"]
+        and "variants" in tweet_data["video"]
+    ):
+        return _get_video_url_from_variants(
+            tweet_data["video"]["variants"], "src", "type"
+        )
+    return None
+
+
+def _extract_from_media_details(tweet_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts video URL from the 'mediaDetails' field of tweet data."""
+    if "mediaDetails" in tweet_data:
+        for media in tweet_data["mediaDetails"]:
+            if (
+                media.get("type") == "video"
+                and "video_info" in media
+                and "variants" in media["video_info"]
+            ):
+                video_url = _get_video_url_from_variants(
+                    media["video_info"]["variants"], "url", "content_type"
+                )
+                if video_url:
+                    return video_url
+    return None
+
+
 def extract_video_url(tweet_data: Dict[str, Any]) -> Optional[str]:
     """
     Extract the video URL from tweet data if it exists.
@@ -188,55 +239,15 @@ def extract_video_url(tweet_data: Dict[str, Any]) -> Optional[str]:
         Optional[str]: The video URL or None if no video exists
     """
     try:
-        # Check if video exists in the tweet data
-        if (
-            "video" in tweet_data
-            and tweet_data["video"]
-            and "variants" in tweet_data["video"]
-        ):
-            variants = tweet_data["video"]["variants"]
+        # Check primary 'video' field first
+        video_url = _extract_from_video_field(tweet_data)
+        if video_url:
+            return video_url
 
-            # Prefer MP4 format
-            mp4_variants = [v for v in variants if v.get("type") == "video/mp4"]
-
-            if mp4_variants:
-                # Sort by bitrate if available, otherwise just take the first one
-                if "bitrate" in mp4_variants[0]:
-                    mp4_variants.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
-
-                return mp4_variants[0].get("src")
-
-            # If no MP4 variants, return the first variant's source
-            if variants:
-                return variants[0].get("src")
-
-        # Check mediaDetails as an alternative
-        if "mediaDetails" in tweet_data:
-            for media in tweet_data["mediaDetails"]:
-                if (
-                    media.get("type") == "video"
-                    and "video_info" in media
-                    and "variants" in media["video_info"]
-                ):
-                    variants = media["video_info"]["variants"]
-
-                    # Prefer MP4 format
-                    mp4_variants = [
-                        v for v in variants if v.get("content_type") == "video/mp4"
-                    ]
-
-                    if mp4_variants:
-                        # Sort by bitrate if available
-                        if "bitrate" in mp4_variants[0]:
-                            mp4_variants.sort(
-                                key=lambda x: x.get("bitrate", 0), reverse=True
-                            )
-
-                        return mp4_variants[0].get("url")
-
-                    # If no MP4 variants, return the first variant's URL
-                    if variants:
-                        return variants[0].get("url")
+        # Check 'mediaDetails' as an alternative
+        video_url = _extract_from_media_details(tweet_data)
+        if video_url:
+            return video_url
 
         return None
     except Exception as e:

@@ -18,7 +18,6 @@ def set_discord_client(client_instance):
     discord_client = client_instance
 
 
-@tasks.loop(hours=24)
 def _validate_discord_client():
     """Validate that discord client is available."""
     if not discord_client:
@@ -73,14 +72,25 @@ async def _process_channel_summary(channel_data, channel_messages, now):
             logger.info(f"No meaningful summary generated for channel {channel_name}")
             return 0, 0
 
-        # Extract unique users from messages
-        active_users = list(
-            set(
-                msg["author_name"]
-                for msg in formatted_messages
-                if not msg["is_bot"]
-            )
-        )
+        # Extract unique users from messages and sort them by activity
+        from sorting_utils import insertion_sort
+
+        # Convert to list of dicts for sorting by activity
+        user_counts = {}
+        for msg in formatted_messages:
+            if not msg["is_bot"]:
+                user = msg["author_name"]
+                user_counts[user] = user_counts.get(user, 0) + 1
+
+        # Sort users by message count (most active first)
+        user_list = [{"name": user, "count": count} for user, count in user_counts.items()]
+        if len(user_list) < 20:
+            sorted_users = insertion_sort(user_list, key="count", reverse=True)
+        else:
+            from sorting_utils import quick_sort
+            sorted_users = quick_sort(user_list, key="count", reverse=True)
+
+        active_users = [user["name"] for user in sorted_users]
 
         # Store the summary in the database
         database.store_channel_summary(
@@ -112,6 +122,60 @@ async def _process_channel_summary(channel_data, channel_messages, now):
         return 0, 0
 
 
+async def _get_active_channels_data():
+    """Get active channels and their time range."""
+    now = datetime.now(timezone.utc)
+    yesterday = now - timedelta(hours=24)
+    active_channels = database.get_active_channels(hours=24)
+
+    if not active_channels:
+        logger.info("No active channels found in the past 24 hours. Skipping summarization.")
+        return None, None, None
+
+    logger.info(f"Found {len(active_channels)} active channels to summarize")
+    return active_channels, yesterday, now
+
+
+async def _process_all_channels(active_channels, messages_by_channel, now):
+    """Process summaries for all active channels."""
+    successful_summaries = 0
+    total_messages_processed = 0
+
+    for channel_data in active_channels:
+        channel_id = channel_data["channel_id"]
+        channel_name = channel_data["channel_name"]
+
+        if channel_id not in messages_by_channel:
+            logger.warning(
+                f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active"
+            )
+            continue
+
+        channel_messages = messages_by_channel[channel_id]["messages"]
+        if not channel_messages:
+            continue
+
+        success_count, message_count = await _process_channel_summary(
+            channel_data, channel_messages, now
+        )
+        successful_summaries += success_count
+        total_messages_processed += message_count
+
+    return successful_summaries, total_messages_processed
+
+
+async def _cleanup_old_messages(now, successful_summaries):
+    """Delete old messages if summaries were successful."""
+    if successful_summaries > 0:
+        try:
+            cutoff_time = now - timedelta(hours=24)
+            deleted_count = database.delete_messages_older_than(cutoff_time)
+            logger.info(f"Deleted {deleted_count} messages older than {cutoff_time}")
+        except Exception as e:
+            logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
+
+
+@tasks.loop(hours=24)
 async def daily_channel_summarization():
     """
     Task that runs once per day to:
@@ -126,68 +190,27 @@ async def daily_channel_summarization():
     try:
         logger.info("Starting daily automated channel summarization")
 
-        # Get the current time and 24 hours ago (in UTC)
-        now = datetime.now(timezone.utc)
-        yesterday = now - timedelta(hours=24)
-
-        # Get active channels from the past 24 hours
-        active_channels = database.get_active_channels(hours=24)
-
+        # Get active channels
+        active_channels, yesterday, now = await _get_active_channels_data()
         if not active_channels:
-            logger.info(
-                "No active channels found in the past 24 hours. Skipping summarization."
-            )
             return
 
-        logger.info(f"Found {len(active_channels)} active channels to summarize")
-
-        # Get messages for each channel
+        # Get messages for time range
         messages_by_channel = database.get_messages_for_time_range(yesterday, now)
 
-        # Track successful summaries for reporting
-        successful_summaries = 0
-        total_messages_processed = 0
+        # Process all channels
+        successful_summaries, total_messages_processed = await _process_all_channels(
+            active_channels, messages_by_channel, now
+        )
 
-        # Process each active channel
-        for channel_data in active_channels:
-            channel_id = channel_data["channel_id"]
-            channel_name = channel_data["channel_name"]
-
-            if channel_id not in messages_by_channel:
-                logger.warning(
-                    f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active"
-                )
-                continue
-
-            channel_messages = messages_by_channel[channel_id]["messages"]
-
-            if not channel_messages:
-                continue
-
-            # Process channel summary
-            success_count, message_count = await _process_channel_summary(
-                channel_data, channel_messages, now
-            )
-            successful_summaries += success_count
-            total_messages_processed += message_count
-
-        if successful_summaries > 0:
-            try:
-                cutoff_time = now - timedelta(hours=24)
-                deleted_count = database.delete_messages_older_than(cutoff_time)
-                logger.info(
-                    f"Deleted {deleted_count} messages older than {cutoff_time}"
-                )
-            except Exception as e:
-                logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
+        # Cleanup old messages
+        await _cleanup_old_messages(now, successful_summaries)
 
         logger.info(
             f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages."
         )
     except Exception as e:
-        logger.error(
-            f"Error in daily channel summarization task: {str(e)}", exc_info=True
-        )
+        logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
 
 
 async def post_summary_to_reports_channel(_, channel_name, __, summary_text):

@@ -203,6 +203,76 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
     return ""
 
 
+def _validate_llm_api_key():
+    """Validate LLM API key exists."""
+    if not hasattr(config, "llm_api_key") or not config.llm_api_key:
+        logger.error("LLM API key not found in config.py or is empty")
+        return False
+    return True
+
+
+def _extract_context_urls(message_context):
+    """Extract URLs from message context."""
+    context_urls = []
+    if message_context:
+        if message_context.get("referenced_message"):
+            ref_content = getattr(message_context["referenced_message"], "content", "")
+            context_urls.extend(extract_urls_from_text(ref_content))
+
+        if message_context.get("linked_messages"):
+            for linked_msg in message_context["linked_messages"]:
+                linked_content = getattr(linked_msg, "content", "")
+                context_urls.extend(extract_urls_from_text(linked_content))
+    return context_urls
+
+
+async def _prepare_user_content_with_urls(query, user_content, message_context):
+    """Prepare user content with scraped URL data."""
+    urls_in_query = extract_urls_from_text(query)
+    context_urls = _extract_context_urls(message_context)
+
+    scraped_content_text = await _get_scraped_content_for_urls(urls_in_query, context_urls)
+    if scraped_content_text:
+        if message_context:
+            return f"{scraped_content_text}{user_content}"
+        else:
+            return f"{scraped_content_text}**User's Question/Request:**\n{query}"
+    return user_content
+
+
+def _select_system_prompt(force_charts, query, user_content):
+    """Select appropriate system prompt based on analysis type."""
+    if force_charts or _should_use_chart_system(query, user_content):
+        return _get_chart_analysis_system_prompt()
+    else:
+        return _get_regular_system_prompt()
+
+
+async def _make_llm_request(openai_client, model, system_prompt, user_content):
+    """Make the API request to LLM."""
+    return await openai_client.chat.completions.create(
+        extra_headers={
+            "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
+            "X-Title": getattr(config, "x_title", "TechFren Discord Bot"),
+        },
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=1000,
+        temperature=0.7,
+    )
+
+
+def _extract_citations(completion):
+    """Extract citations from completion if available."""
+    if hasattr(completion, "citations") and completion.citations:
+        logger.info(f"Found {len(completion.citations)} citations from LLM provider")
+        return completion.citations
+    return None
+
+
 async def call_llm_api(query, message_context=None, force_charts=False):
     """
     Call the LLM API with the user's query and return the response
@@ -216,99 +286,35 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         str: The LLM's response or an error message
     """
     try:
-        logger.info(
-            f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}"
-        )
+        logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if LLM API key exists
-        if not hasattr(config, "llm_api_key") or not config.llm_api_key:
-            logger.error("LLM API key not found in config.py or is empty")
-            return (
-                "Error: LLM API key is missing. Please contact the bot administrator.",
-                [],
-            )
+        # Validate API key
+        if not _validate_llm_api_key():
+            return "Error: LLM API key is missing. Please contact the bot administrator.", []
 
-        # Initialize the OpenAI-compatible client
+        # Initialize client
         openai_client = AsyncOpenAI(
             base_url=config.llm_base_url, api_key=config.llm_api_key, timeout=60.0
         )
 
-        # Get the model from config
-        model = config.llm_model
-
-        # Prepare the user content with message context if available
+        # Prepare content
         user_content = _prepare_user_content_with_context(query, message_context)
+        user_content = await _prepare_user_content_with_urls(query, user_content, message_context)
 
-        # Check for URLs in the query and message context, add scraped content if available
-        urls_in_query = extract_urls_from_text(query)
+        # Select system prompt
+        system_prompt = _select_system_prompt(force_charts, query, user_content)
 
-        # Get URLs from message context
-        context_urls = []
-        if message_context:
-            if message_context.get("referenced_message"):
-                ref_content = getattr(message_context["referenced_message"], "content", "")
-                context_urls.extend(extract_urls_from_text(ref_content))
+        # Make API request
+        completion = await _make_llm_request(openai_client, config.llm_model, system_prompt, user_content)
 
-            if message_context.get("linked_messages"):
-                for linked_msg in message_context["linked_messages"]:
-                    linked_content = getattr(linked_msg, "content", "")
-                    context_urls.extend(extract_urls_from_text(linked_content))
-
-        # Add scraped content if URLs are found
-        scraped_content_text = await _get_scraped_content_for_urls(urls_in_query, context_urls)
-        if scraped_content_text:
-            if message_context:
-                user_content = f"{scraped_content_text}{user_content}"
-            else:
-                user_content = f"{scraped_content_text}**User's Question/Request:**\n{query}"
-
-        # Choose system prompt based on analysis type
-        if force_charts or _should_use_chart_system(query, user_content):
-            system_prompt = _get_chart_analysis_system_prompt()
-        else:
-            system_prompt = _get_regular_system_prompt()
-
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(
-                    config, "http_referer", "https://techfren.net"
-                ),  # Optional site URL
-                "X-Title": getattr(
-                    config, "x_title", "TechFren Discord Bot"
-                ),  # Optional site title
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            max_tokens=1000,  # Increased for better responses
-            temperature=0.7,
-        )
-
-        # Extract the response
+        # Extract response and citations
         message = completion.choices[0].message.content
+        citations = _extract_citations(completion)
 
-        # Check if the LLM provider returned citations (optional feature)
-        # Some providers like Perplexity support this, others don't
-        citations = None
-        if hasattr(completion, "citations") and completion.citations:
-            logger.info(
-                f"Found {len(completion.citations)} citations from LLM provider"
-            )
-            citations = completion.citations
+        # Format response
+        formatted_message, chart_data = DiscordFormatter.format_llm_response(message, citations)
 
-        # Apply Discord formatting enhancements and extract charts
-        # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
-        # and extract any markdown tables for chart rendering
-        formatted_message, chart_data = DiscordFormatter.format_llm_response(
-            message, citations
-        )
-
-        logger.info(
-            f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}"
-        )
+        logger.info(f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
         if chart_data:
             logger.info(f"Extracted {len(chart_data)} chart(s) from LLM response")
 
@@ -319,10 +325,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         return "Sorry, the request timed out. Please try again later.", []
     except Exception as e:
         logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
-        return (
-            "Sorry, I encountered an error while processing your request. Please try again later.",
-            [],
-        )
+        return "Sorry, I encountered an error while processing your request. Please try again later.", []
 
 
 def _filter_messages_for_summary(messages):
@@ -795,44 +798,17 @@ OTHERWISE: Focus on qualitative insights, explanations, and natural conversation
 Note: For data analysis requests, use /chart-analysis or similar commands to get detailed visualizations."""
 
 
-async def summarize_scraped_content(
-    markdown_content: str, url: str
-) -> Optional[Dict[str, Any]]:
-    """
-    Call the LLM API to summarize scraped content from a URL and extract key points.
+def _truncate_content(markdown_content: str) -> str:
+    """Truncate content if too long to avoid token limits."""
+    max_content_length = 15000
+    if len(markdown_content) > max_content_length:
+        return markdown_content[:max_content_length] + "\n\n[Content truncated due to length...]"
+    return markdown_content
 
-    Args:
-        markdown_content (str): The scraped content in markdown format
-        url (str): The URL that was scraped
 
-    Returns:
-        Optional[Dict[str, Any]]: A dictionary containing the summary and key points,
-                                 or None if summarization failed
-    """
-    try:
-        # Truncate content if it's too long (to avoid token limits)
-        max_content_length = 15000  # Adjust based on model's context window
-        truncated_content = markdown_content[:max_content_length]
-        if len(markdown_content) > max_content_length:
-            truncated_content += "\n\n[Content truncated due to length...]"
-
-        logger.info(f"Summarizing content from URL: {url}")
-
-        # Check if LLM API key exists
-        if not hasattr(config, "llm_api_key") or not config.llm_api_key:
-            logger.error("LLM API key not found in config.py or is empty")
-            return None
-
-        # Initialize the OpenAI-compatible client
-        openai_client = AsyncOpenAI(
-            base_url=config.llm_base_url, api_key=config.llm_api_key, timeout=60.0
-        )
-
-        # Get the model from config
-        model = config.llm_model
-
-        # Create the prompt for the LLM
-        prompt = f"""Please analyze the following content from the URL: {url}
+def _create_summarization_prompt(truncated_content: str, url: str) -> str:
+    """Create prompt for content summarization."""
+    return f"""Please analyze the following content from the URL: {url}
 
 {truncated_content}
 
@@ -855,13 +831,71 @@ Format your response exactly as follows:
 ```
 """
 
-        # Make the API request
+
+def _extract_json_from_response(response_text: str) -> str:
+    """Extract JSON string from LLM response."""
+    if "```json" in response_text and "```" in response_text.split("```json", 1)[1]:
+        return response_text.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in response_text and "```" in response_text.split("```", 1)[1]:
+        return response_text.split("```", 1)[1].split("```", 1)[0].strip()
+    else:
+        return response_text.strip()
+
+
+def _validate_summary_result(result: dict) -> dict:
+    """Validate and fix summary result structure."""
+    if "summary" not in result or "key_points" not in result:
+        logger.warning(f"LLM response missing required fields: {result}")
+        if "summary" not in result:
+            result["summary"] = "Summary could not be extracted from the content."
+        if "key_points" not in result:
+            result["key_points"] = ["Key points could not be extracted from the content."]
+    return result
+
+
+def _create_fallback_summary() -> dict:
+    """Create fallback summary when parsing fails."""
+    return {
+        "summary": "Failed to generate a proper summary from the content.",
+        "key_points": ["The content could not be properly summarized due to a processing error."]
+    }
+
+
+async def summarize_scraped_content(
+    markdown_content: str, url: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Call the LLM API to summarize scraped content from a URL and extract key points.
+
+    Args:
+        markdown_content (str): The scraped content in markdown format
+        url (str): The URL that was scraped
+
+    Returns:
+        Optional[Dict[str, Any]]: A dictionary containing the summary and key points,
+                                 or None if summarization failed
+    """
+    try:
+        truncated_content = _truncate_content(markdown_content)
+        logger.info(f"Summarizing content from URL: {url}")
+
+        # Validate API key
+        if not _validate_llm_api_key():
+            return None
+
+        # Initialize client
+        openai_client = AsyncOpenAI(
+            base_url=config.llm_base_url, api_key=config.llm_api_key, timeout=60.0
+        )
+
+        # Create prompt and make request
+        prompt = _create_summarization_prompt(truncated_content, url)
         completion = await openai_client.chat.completions.create(
             extra_headers={
                 "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
                 "X-Title": getattr(config, "x_title", "TechFren Discord Bot"),
             },
-            model=model,  # Use the model from config
+            model=config.llm_model,
             messages=[
                 {
                     "role": "system",
@@ -869,69 +903,26 @@ Format your response exactly as follows:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,  # Limit for content summarization
-            temperature=0.3,  # Lower temperature for more focused and consistent summaries
+            max_tokens=200,
+            temperature=0.3,
         )
 
-        # Extract the response
+        # Extract and parse response
         response_text = completion.choices[0].message.content
-        logger.info(
-            f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}"
-        )
+        logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
-        # Extract the JSON part from the response
         try:
-            # Find JSON between triple backticks if present
-            if (
-                "```json" in response_text
-                and "```" in response_text.split("```json", 1)[1]
-            ):
-                json_str = (
-                    response_text.split("```json", 1)[1].split("```", 1)[0].strip()
-                )
-            elif "```" in response_text and "```" in response_text.split("```", 1)[1]:
-                json_str = response_text.split("```", 1)[1].split("```", 1)[0].strip()
-            else:
-                # If no backticks, try to parse the whole response
-                json_str = response_text.strip()
-
-            # Parse the JSON
+            json_str = _extract_json_from_response(response_text)
             result = json.loads(json_str)
-
-            # Validate the expected structure
-            if "summary" not in result or "key_points" not in result:
-                logger.warning(f"LLM response missing required fields: {result}")
-                # Create a fallback structure
-                if "summary" not in result:
-                    result["summary"] = (
-                        "Summary could not be extracted from the content."
-                    )
-                if "key_points" not in result:
-                    result["key_points"] = [
-                        "Key points could not be extracted from the content."
-                    ]
-
-            return result
-
+            return _validate_summary_result(result)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from LLM response: {e}", exc_info=True)
             logger.error(f"Raw response: {response_text}")
-
-            # Create a fallback response
-            return {
-                "summary": "Failed to generate a proper summary from the content.",
-                "key_points": [
-                    "The content could not be properly summarized due to a processing error."
-                ],
-            }
+            return _create_fallback_summary()
 
     except asyncio.TimeoutError:
-        logger.error(
-            f"LLM API request timed out while summarizing content from URL {url}"
-        )
+        logger.error(f"LLM API request timed out while summarizing content from URL {url}")
         return None
     except Exception as e:
-        logger.error(
-            f"Error summarizing content from URL {url}: {str(e)}", exc_info=True
-        )
+        logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
         return None

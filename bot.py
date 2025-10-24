@@ -99,6 +99,50 @@ async def _handle_twitter_url(url: str) -> str:
         return scraped_result.get("markdown") if scraped_result else None
 
 
+async def _scrape_url_by_type(url: str):
+    """Scrape URL content based on URL type."""
+    if await is_youtube_url(url):
+        return await _handle_youtube_url(url)
+    elif await is_twitter_url(url):
+        return await _handle_twitter_url(url)
+    else:
+        return await scrape_url_content(url)
+
+
+async def _extract_markdown_content(scraped_result, url: str) -> str:
+    """Extract markdown content from scraped result based on result type."""
+    if not scraped_result:
+        logger.warning(f"Failed to scrape content from URL: {url}")
+        return None
+
+    # Check if it's a YouTube URL
+    if await is_youtube_url(url):
+        if isinstance(scraped_result, dict) and "markdown" in scraped_result:
+            return scraped_result.get("markdown", "")
+        logger.warning(
+            f"Invalid scraped result structure for YouTube URL {url}: expected dict with 'markdown' key"
+        )
+        return None
+
+    # Check if it's a Twitter URL with Apify
+    if await is_twitter_url(url) and hasattr(config, "apify_api_token") and config.apify_api_token:
+        if isinstance(scraped_result, dict) and "markdown" in scraped_result:
+            return scraped_result.get("markdown", "")
+        logger.warning(
+            f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key"
+        )
+        return None
+
+    # Handle Firecrawl string result
+    if isinstance(scraped_result, str):
+        return scraped_result
+
+    logger.warning(
+        f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}"
+    )
+    return None
+
+
 async def process_url(message_id: str, url: str):
     """
     Process a URL found in a message by scraping its content, summarizing it,
@@ -111,54 +155,12 @@ async def process_url(message_id: str, url: str):
     try:
         logger.info(f"Processing URL {url} from message {message_id}")
 
-        # Process URL based on type
-        if await is_youtube_url(url):
-            markdown_content = await _handle_youtube_url(url)
-        elif await is_twitter_url(url):
-            markdown_content = await _handle_twitter_url(url)
-        else:
-            # For other URLs, use Firecrawl
-            scraped_result = await scrape_url_content(url)
-            markdown_content = scraped_result.get("markdown") if scraped_result else None
-            markdown_content = scraped_result  # Firecrawl returns markdown directly
+        # Step 1: Scrape URL content
+        scraped_result = await _scrape_url_by_type(url)
+        markdown_content = await _extract_markdown_content(scraped_result, url)
 
-        # Check if scraping was successful
-        if not scraped_result:
-            logger.warning(f"Failed to scrape content from URL: {url}")
+        if not markdown_content:
             return
-
-        # Handle different types of scraped results
-        if await is_youtube_url(url):
-            # YouTube handler returns a dict with 'markdown' key
-            if isinstance(scraped_result, dict) and "markdown" in scraped_result:
-                markdown_content = scraped_result.get("markdown", "")
-            else:
-                logger.warning(
-                    f"Invalid scraped result structure for YouTube URL {url}: expected dict with 'markdown' key"
-                )
-                return
-        elif (
-            await is_twitter_url(url)
-            and hasattr(config, "apify_api_token")
-            and config.apify_api_token
-        ):
-            # Twitter/X.com URLs scraped with Apify return a dict with 'markdown' key
-            if isinstance(scraped_result, dict) and "markdown" in scraped_result:
-                markdown_content = scraped_result.get("markdown", "")
-            else:
-                logger.warning(
-                    f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key"
-                )
-                return
-        else:
-            # Firecrawl returns markdown directly as a string
-            if isinstance(scraped_result, str):
-                markdown_content = scraped_result
-            else:
-                logger.warning(
-                    f"Invalid scraped result for URL {url}: expected string, got {type(scraped_result)}"
-                )
-                return
 
         # Step 2: Summarize the scraped content
         scraped_data = await summarize_scraped_content(markdown_content, url)
@@ -504,58 +506,51 @@ def _check_command_types(message, bot_user_id):
     }
 
 
-@bot.event
-async def on_message(message):
-    # Ignore messages from the bot itself
+async def _should_process_message(message) -> bool:
+    """Check if message should be processed."""
     if message.author == bot.user:
-        return
+        return False
 
-    # Handle links dump channel logic first
     handled_by_links_dump = await handle_links_dump_channel(message)
-    if handled_by_links_dump:
-        return  # Message was handled (deleted), stop processing
+    return not handled_by_links_dump
 
-    # Get channel and author information
-    guild_name, channel_name = _get_channel_info(message)
-    author_display = _get_author_display(message)
 
+async def _log_message_info(message, guild_name: str, channel_name: str, author_display: str):
+    """Log message information."""
+    content_preview = message.content[:50] + '...' if len(message.content) > 50 else message.content
     logger.info(
-        f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}"
+        f"Message received - Guild: {guild_name} | Channel: {channel_name} | "
+        f"Author: {author_display} | Content: {content_preview}"
     )
 
-    # Detect command type and store message in database
-    is_command, command_type = _detect_command_type(message, bot.user.id)
-    await _store_message_in_database(message, guild_name, channel_name, is_command, command_type)
 
-    # Check command types
-    commands = _check_command_types(message, bot.user.id)
-
-    # Process mention commands in any channel
-    if commands["is_mention_command"]:
-        logger.debug(f"Processing mention command in channel #{channel_name}")
-        await handle_bot_command(message, bot.user, bot)
-        return
-
-    # If not a command we recognize, ignore
-    if not any([
+async def _is_recognized_command(commands: dict) -> bool:
+    """Check if any recognized command is present."""
+    return any([
         commands["is_sum_day_command"],
         commands["is_sum_hr_command"],
         commands["is_chart_day_command"],
         commands["is_chart_hr_command"],
         commands["is_thread_memory_command"]
-    ]):
-        return
+    ])
 
-    # Check allowed channels for non-mention commands
-    if message.guild and hasattr(message.channel, "name"):
-        allowed_channels = [config.ALLOWED_CHANNEL_NAME]
-        if message.channel.name not in allowed_channels:
-            logger.debug(
-                f"Command ignored - channel #{message.channel.name} not in allowed channels: {allowed_channels}"
-            )
-            return
 
-    # Process the command
+async def _is_channel_allowed(message) -> bool:
+    """Check if message is in an allowed channel."""
+    if not message.guild or not hasattr(message.channel, "name"):
+        return True
+
+    allowed_channels = [config.ALLOWED_CHANNEL_NAME]
+    if message.channel.name not in allowed_channels:
+        logger.debug(
+            f"Command ignored - channel #{message.channel.name} not in allowed channels: {allowed_channels}"
+        )
+        return False
+    return True
+
+
+async def _process_command(message, commands: dict):
+    """Process the recognized command."""
     if commands["is_sum_day_command"]:
         await handle_sum_day_command(message, bot.user)
     elif commands["is_sum_hr_command"]:
@@ -574,6 +569,42 @@ async def on_message(message):
             await message.channel.send(
                 "Sorry, an error occurred while processing the thread memory command."
             )
+
+
+@bot.event
+async def on_message(message):
+    # Check if message should be processed
+    if not await _should_process_message(message):
+        return
+
+    # Get channel and author information
+    guild_name, channel_name = _get_channel_info(message)
+    author_display = _get_author_display(message)
+    await _log_message_info(message, guild_name, channel_name, author_display)
+
+    # Detect command type and store message in database
+    is_command, command_type = _detect_command_type(message, bot.user.id)
+    await _store_message_in_database(message, guild_name, channel_name, is_command, command_type)
+
+    # Check command types
+    commands = _check_command_types(message, bot.user.id)
+
+    # Process mention commands in any channel
+    if commands["is_mention_command"]:
+        logger.debug(f"Processing mention command in channel #{channel_name}")
+        await handle_bot_command(message, bot.user, bot)
+        return
+
+    # Check if recognized command exists
+    if not await _is_recognized_command(commands):
+        return
+
+    # Check if channel is allowed
+    if not await _is_channel_allowed(message):
+        return
+
+    # Process the command
+    await _process_command(message, commands)
 
 
 async def _ensure_interaction_deferred(interaction: discord.Interaction, command_name: str) -> bool:
@@ -712,15 +743,6 @@ async def _handle_slash_command_wrapper(
 )
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
-    # Defer IMMEDIATELY to avoid 3-second timeout
-    try:
-        await interaction.response.defer()
-    except discord.errors.NotFound as e:
-        logger.error(f"sum-day interaction not found during defer: {e}")
-        return
-    except Exception as e:
-        logger.error(f"Failed to defer sum-day interaction: {e}")
-        return
     await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 
@@ -729,15 +751,6 @@ async def sum_day_slash(interaction: discord.Interaction):
 )
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    # Defer IMMEDIATELY to avoid 3-second timeout
-    try:
-        await interaction.response.defer()
-    except discord.errors.NotFound as e:
-        logger.error(f"sum-hr interaction not found during defer: {e}")
-        return
-    except Exception as e:
-        logger.error(f"Failed to defer sum-hr interaction: {e}")
-        return
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 
@@ -747,15 +760,6 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
 )
 async def chart_day_slash(interaction: discord.Interaction):
     """Slash command version of /chart-day for data visualization"""
-    # Defer IMMEDIATELY to avoid 3-second timeout
-    try:
-        await interaction.response.defer()
-    except discord.errors.NotFound as e:
-        logger.error(f"chart-day interaction not found during defer: {e}")
-        return
-    except Exception as e:
-        logger.error(f"Failed to defer chart-day interaction: {e}")
-        return
     await _handle_slash_command_wrapper(
         interaction, "chart-day", hours=24, force_charts=True
     )
@@ -767,15 +771,6 @@ async def chart_day_slash(interaction: discord.Interaction):
 )
 async def chart_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /chart-hr for data visualization"""
-    # Defer IMMEDIATELY to avoid 3-second timeout
-    try:
-        await interaction.response.defer()
-    except discord.errors.NotFound as e:
-        logger.error(f"chart-hr interaction not found during defer: {e}")
-        return
-    except Exception as e:
-        logger.error(f"Failed to defer chart-hr interaction: {e}")
-        return
     await _handle_slash_command_wrapper(
         interaction, "chart-hr", hours=hours, force_charts=True
     )

@@ -15,6 +15,55 @@ class ChartDataValidator:
     """Utility class for validating and normalizing chart data."""
 
     @staticmethod
+    def _clean_numeric_string(clean_str: str) -> Tuple[str, bool]:
+        """Remove formatting characters from numeric string."""
+        has_percentages = "%" in clean_str
+        numeric_str = (
+            clean_str.replace("%", "")
+            .replace(",", "")
+            .replace("$", "")
+            .replace("€", "")
+            .replace("£", "")
+            .strip()
+        )
+        return numeric_str, has_percentages
+
+    @staticmethod
+    def _try_direct_conversion(numeric_str: str) -> float:
+        """Try direct conversion to float."""
+        try:
+            return float(numeric_str)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_number_from_text(numeric_str: str) -> float:
+        """Extract first number from text like 'High (85)' or 'Score: 92'."""
+        import re
+        number_match = re.search(r"(\d+(?:\.\d+)?)", numeric_str)
+        if number_match:
+            return float(number_match.group(1))
+        return None
+
+    @staticmethod
+    def _map_text_to_number(clean_str: str) -> float:
+        """Map text descriptions to numeric values."""
+        text_lower = clean_str.lower()
+        if "high" in text_lower or "excellent" in text_lower:
+            return 3.0
+        elif "medium" in text_lower or "good" in text_lower:
+            return 2.0
+        elif "low" in text_lower or "poor" in text_lower:
+            return 1.0
+        elif "yes" in text_lower or "true" in text_lower or "active" in text_lower:
+            return 1.0
+        elif "no" in text_lower or "false" in text_lower or "inactive" in text_lower:
+            return 0.0
+        else:
+            # Last resort: use string length as a proxy
+            return float(len(clean_str))
+
+    @staticmethod
     def validate_numeric_data(values: List[str]) -> Tuple[List[float], bool]:
         """
         Validate and convert string values to numeric data with aggressive extraction.
@@ -25,64 +74,30 @@ class ChartDataValidator:
         Returns:
             Tuple of (cleaned_values, has_percentages)
         """
-        import re
-
         cleaned_values = []
         has_percentages = False
 
         for value_str in values:
             try:
                 clean_str = str(value_str).strip()
-                if "%" in clean_str:
-                    has_percentages = True
-
-                # Remove formatting characters
-                numeric_str = (
-                    clean_str.replace("%", "")
-                    .replace(",", "")
-                    .replace("$", "")
-                    .replace("€", "")
-                    .replace("£", "")
-                    .strip()
-                )
+                numeric_str, has_pct = ChartDataValidator._clean_numeric_string(clean_str)
+                has_percentages = has_percentages or has_pct
 
                 # Try direct conversion first
-                try:
-                    cleaned_values.append(float(numeric_str))
-                    continue
-                except ValueError:
-                    pass
-
-                # If direct conversion fails, try to extract first number from text
-                # This handles cases like "High (85)", "Level 3", "Score: 92", etc.
-                number_match = re.search(r"(\d+(?:\.\d+)?)", numeric_str)
-                if number_match:
-                    cleaned_values.append(float(number_match.group(1)))
+                value = ChartDataValidator._try_direct_conversion(numeric_str)
+                if value is not None:
+                    cleaned_values.append(value)
                     continue
 
-                # If no number found, try mapping text to numbers
-                text_lower = clean_str.lower()
-                if "high" in text_lower or "excellent" in text_lower:
-                    cleaned_values.append(3.0)
-                elif "medium" in text_lower or "good" in text_lower:
-                    cleaned_values.append(2.0)
-                elif "low" in text_lower or "poor" in text_lower:
-                    cleaned_values.append(1.0)
-                elif (
-                    "yes" in text_lower
-                    or "true" in text_lower
-                    or "active" in text_lower
-                ):
-                    cleaned_values.append(1.0)
-                elif (
-                    "no" in text_lower
-                    or "false" in text_lower
-                    or "inactive" in text_lower
-                ):
-                    cleaned_values.append(0.0)
-                else:
-                    # Last resort: use string length as a proxy for "size" of data
-                    cleaned_values.append(float(len(clean_str)))
+                # Try extracting number from text
+                value = ChartDataValidator._extract_number_from_text(numeric_str)
+                if value is not None:
+                    cleaned_values.append(value)
+                    continue
+
+                # Map text to numbers
+                value = ChartDataValidator._map_text_to_number(clean_str)
+                cleaned_values.append(value)
 
             except (ValueError, AttributeError, TypeError):
                 cleaned_values.append(0.0)
@@ -374,6 +389,45 @@ class ChartRenderer:
                 return True
         return False
 
+    def _infer_two_column_chart_type(self, rows: List[List[str]]) -> str:
+        """Infer chart type for 2-column data."""
+        patterns = self._analyze_data_patterns(rows)
+
+        # If more than 30% numeric, choose appropriate chart type
+        if patterns["numeric_count"] / patterns["total_rows"] > 0.3:
+            if self._check_pie_chart_suitability(rows, patterns["has_percentages"]):
+                return "pie"
+            if patterns["has_time_data"] and len(rows) >= 3:
+                return "line"
+            return "bar"
+        return None
+
+    def _infer_multicolumn_chart_type(self, headers: List[str], rows: List[List[str]]) -> str:
+        """Infer chart type for 3+ columns."""
+        multi_data = self._analyze_multicolumn_data(headers, rows)
+
+        if multi_data["first_col_time"] and len(multi_data["numeric_cols"]) >= 2:
+            return "line"
+        elif len(multi_data["numeric_cols"]) >= 2:
+            return "line"
+        elif len(multi_data["numeric_cols"]) == 1:
+            return "bar"
+        return None
+
+    def _infer_fallback_chart_type(self, headers: List[str], rows: List[List[str]]) -> str:
+        """Fallback logic for chart type inference."""
+        # Try to find any visualizable data
+        if self._find_any_numeric_column(headers, rows):
+            return "bar"
+
+        # Check for categorical data that varies
+        if len(headers) >= 2 and len(rows) > 1:
+            unique_values = set(str(row[0]) for row in rows if len(row) > 0)
+            if len(unique_values) > 1 and len(unique_values) <= 10:
+                return "bar"
+
+        return "table"
+
     def _infer_chart_type(self, table_data: Dict) -> str:
         """
         Analyze table data to determine the best chart type based on content patterns.
@@ -389,45 +443,18 @@ class ChartRenderer:
 
         # If only 2 columns, analyze the content type
         if len(headers) == 2:
-            patterns = self._analyze_data_patterns(rows)
-
-            # If more than 30% numeric, choose appropriate chart type
-            if patterns["numeric_count"] / patterns["total_rows"] > 0.3:
-                # Check for pie chart suitability
-                if self._check_pie_chart_suitability(rows, patterns["has_percentages"]):
-                    return "pie"
-
-                # For time-based data, prefer line chart
-                if patterns["has_time_data"] and len(rows) >= 3:
-                    return "line"
-
-                # Default to bar chart for numeric comparisons
-                return "bar"
+            chart_type = self._infer_two_column_chart_type(rows)
+            if chart_type:
+                return chart_type
 
         # If 3+ columns with numeric data, analyze for time series
         if len(headers) >= 3:
-            multi_data = self._analyze_multicolumn_data(headers, rows)
+            chart_type = self._infer_multicolumn_chart_type(headers, rows)
+            if chart_type:
+                return chart_type
 
-            # If we have time data and multiple numeric columns, use line chart
-            if multi_data["first_col_time"] and len(multi_data["numeric_cols"]) >= 2:
-                return "line"
-            elif len(multi_data["numeric_cols"]) >= 2:
-                return "line"
-            elif len(multi_data["numeric_cols"]) == 1:
-                return "bar"
-
-        # For multi-column tables, try to find any visualizable data
-        if self._find_any_numeric_column(headers, rows):
-            return "bar"
-
-        # If no numeric data, but we have categorical data that varies, still try bar chart
-        if len(headers) >= 2 and len(rows) > 1:
-            unique_values = set(str(row[0]) for row in rows if len(row) > 0)
-            if len(unique_values) > 1 and len(unique_values) <= 10:
-                return "bar"
-
-        # Default to table image for complex/text data
-        return "table"
+        # Fallback logic
+        return self._infer_fallback_chart_type(headers, rows)
 
     def _generate_quickchart_url(
         self, table_data: Dict, chart_type: str
@@ -466,6 +493,64 @@ class ChartRenderer:
             logger.error(f"Error generating {chart_type} chart: {e}", exc_info=True)
             return None
 
+    def _find_best_numeric_column(self, headers: List[str], rows: List[List[str]]) -> Optional[int]:
+        """Find the column with the highest ratio of numeric values."""
+        best_numeric_ratio = 0
+        value_col_idx = None
+
+        for col_idx in range(1, len(headers)):
+            numeric_count = 0
+            for row in rows:
+                if len(row) > col_idx:
+                    try:
+                        value = (
+                            str(row[col_idx])
+                            .replace("%", "")
+                            .replace(",", "")
+                            .replace("$", "")
+                            .replace("€", "")
+                            .replace("£", "")
+                            .strip()
+                        )
+                        import re
+                        number_match = re.search(r"(\d+(?:\.\d+)?)", value)
+                        if number_match:
+                            float(number_match.group(1))
+                            numeric_count += 1
+                        else:
+                            float(value)
+                            numeric_count += 1
+                    except (ValueError, AttributeError):
+                        pass
+
+            numeric_ratio = numeric_count / len(rows) if len(rows) > 0 else 0
+            if numeric_ratio > 0.3 and numeric_ratio > best_numeric_ratio:
+                value_col_idx = col_idx
+                best_numeric_ratio = numeric_ratio
+
+        return value_col_idx
+
+    def _create_frequency_chart(self, rows: List[List[str]]) -> Optional[str]:
+        """Create a frequency distribution chart from categorical data."""
+        if len(rows) <= 1:
+            return None
+
+        from collections import Counter
+        category_counts = Counter(
+            [row[0] if len(row) > 0 else "Unknown" for row in rows]
+        )
+
+        if len(category_counts) > 1 and len(category_counts) <= 10:
+            simplified_table = {
+                "headers": ["Category", "Count"],
+                "rows": [
+                    [category, count] for category, count in category_counts.items()
+                ],
+            }
+            return self._generate_bar_chart(simplified_table)
+
+        return None
+
     def _generate_table_chart(self, table_data: Dict) -> Optional[str]:
         """Generate a formatted table image using QuickChart."""
         headers = table_data["headers"]
@@ -473,62 +558,19 @@ class ChartRenderer:
 
         # For complex tables with many columns, try to find the best 2 columns to visualize
         if len(headers) > 2:
-            # Look for the first column (usually labels) and best numeric column
-            label_col_idx = 0
-            value_col_idx = None
-            best_numeric_ratio = 0
+            value_col_idx = self._find_best_numeric_column(headers, rows)
 
-            # Find the column with the highest ratio of numeric values
-            for col_idx in range(1, len(headers)):
-                numeric_count = 0
-                for row in rows:
-                    if len(row) > col_idx:
-                        try:
-                            # More aggressive cleaning for numeric detection
-                            value = (
-                                str(row[col_idx])
-                                .replace("%", "")
-                                .replace(",", "")
-                                .replace("$", "")
-                                .replace("€", "")
-                                .replace("£", "")
-                                .strip()
-                            )
-                            # Also try to extract numbers from text like "High (85%)" or "Level 3"
-                            import re
-
-                            number_match = re.search(r"(\d+(?:\.\d+)?)", value)
-                            if number_match:
-                                float(number_match.group(1))
-                                numeric_count += 1
-                            else:
-                                float(value)
-                                numeric_count += 1
-                        except (ValueError, AttributeError):
-                            pass
-
-                numeric_ratio = numeric_count / len(rows) if len(rows) > 0 else 0
-
-                # Use column if it has any numeric data (lowered threshold to 30%)
-                if numeric_ratio > 0.3 and numeric_ratio > best_numeric_ratio:
-                    value_col_idx = col_idx
-                    best_numeric_ratio = numeric_ratio
-
-            # If we found any numeric column, create a simplified 2-column table for charting
             if value_col_idx is not None:
                 simplified_table = {
-                    "headers": [headers[label_col_idx], headers[value_col_idx]],
+                    "headers": [headers[0], headers[value_col_idx]],
                     "rows": [
-                        [row[label_col_idx], row[value_col_idx]]
+                        [row[0], row[value_col_idx]]
                         for row in rows
                         if len(row) > value_col_idx
                     ],
                 }
 
-                # Determine chart type for the simplified data
                 chart_type = self._infer_chart_type(simplified_table)
-
-                # Generate appropriate chart based on the simplified data
                 if chart_type == "bar":
                     return self._generate_bar_chart(simplified_table)
                 elif chart_type == "pie":
@@ -536,29 +578,20 @@ class ChartRenderer:
                 elif chart_type == "line":
                     return self._generate_line_chart(simplified_table)
 
-            # If no numeric data found, try to create a categorical distribution chart
-            # Use the first column as categories and count occurrences or create frequency chart
-            if len(rows) > 1:
-                # Create a frequency distribution of the first column values
-                from collections import Counter
+            # Try frequency chart as fallback
+            return self._create_frequency_chart(rows)
 
-                category_counts = Counter(
-                    [row[0] if len(row) > 0 else "Unknown" for row in rows]
-                )
+        # For 2-column tables, proceed with normal chart generation
+        if len(headers) == 2:
+            chart_type = self._infer_chart_type(table_data)
+            if chart_type == "bar":
+                return self._generate_bar_chart(table_data)
+            elif chart_type == "pie":
+                return self._generate_pie_chart(table_data)
+            elif chart_type == "line":
+                return self._generate_line_chart(table_data)
 
-                # Only create chart if we have varied data (not all the same)
-                if len(category_counts) > 1 and len(category_counts) <= 10:
-                    simplified_table = {
-                        "headers": [headers[0], "Count"],
-                        "rows": [
-                            [category, str(count)]
-                            for category, count in category_counts.most_common()
-                        ],
-                    }
-                    return self._generate_bar_chart(simplified_table)
-
-        # Final fallback: return None to indicate no chart should be generated
-        # This prevents meaningless "row count" charts
+        # Fallback for all other cases
         return None
 
     def _generate_bar_chart(self, table_data: Dict) -> Optional[str]:
@@ -903,8 +936,8 @@ class ChartRenderer:
     def _get_line_chart_title(self, category_header: str, value_header: str) -> str:
         """Generate title for line charts."""
         if ("time" in category_header.lower() or
-            "date" in category_header.lower() or
-            "period" in category_header.lower()):
+                "date" in category_header.lower() or
+                "period" in category_header.lower()):
             return f"{value_header} Trends Over {category_header}"
         else:
             return f"{value_header} Evolution Across {category_header}"
@@ -948,6 +981,44 @@ class ChartRenderer:
         else:
             return f"Comprehensive {category_header} Analysis"
 
+    def _enhance_x_axis_label(self, label: str) -> str:
+        """Enhance X-axis labels (typically categories)."""
+        if label.lower() in ["category", "item", "name"]:
+            return "Categories"
+        elif any(word in label.lower() for word in ["time", "date", "period"]):
+            return f"Time Period ({label})"
+        elif any(word in label.lower() for word in ["user", "author"]):
+            return f"Users ({label})"
+        elif any(word in label.lower() for word in ["technology", "tool", "framework"]):
+            return f"Technologies ({label})"
+        elif any(word in label.lower() for word in ["method", "approach"]):
+            return f"Methodologies ({label})"
+        else:
+            return f"{label} (Categories)"
+
+    def _enhance_y_axis_label(self, label: str, suffix: str = "") -> str:
+        """Enhance Y-axis labels (typically values/measurements)."""
+        if label.lower() in ["value", "count", "number"]:
+            return f'Measurement Values{" (" + suffix + ")" if suffix else ""}'
+        elif "focus" in label.lower():
+            return f'Focus Level (Score){" " + suffix if suffix else ""}'
+        elif "detail" in label.lower():
+            return f'Detail Level (Quantity){" " + suffix if suffix else ""}'
+        elif any(word in label.lower() for word in ["score", "rating"]):
+            return f'{label} (Rating Scale){" " + suffix if suffix else ""}'
+        elif any(word in label.lower() for word in ["count", "number"]):
+            return f'{label} (Quantity){" " + suffix if suffix else ""}'
+        elif "%" in label or "percent" in label.lower() or suffix == "%":
+            return f'{label} (Percentage){" " + suffix if suffix else ""}'
+        elif "year" in label.lower():
+            return f"{label} (Year)"
+        elif "goal" in label.lower():
+            return f'{label} (Target Value){" " + suffix if suffix else ""}'
+        elif "power" in label.lower():
+            return f'{label} (Power Units){" " + suffix if suffix else ""}'
+        else:
+            return f'{label} (Value){" " + suffix if suffix else ""}'
+
     def _enhance_axis_label(
         self, original_label: str, axis_type: str, suffix: str = ""
     ) -> str:
@@ -962,57 +1033,53 @@ class ChartRenderer:
         Returns:
             Enhanced, more descriptive axis label
         """
-        # Clean up the original label
         label = original_label.strip()
 
-        # Axis-specific enhancements
         if axis_type == "x":
-            # X-axis typically shows categories/items
-            if label.lower() in ["category", "item", "name"]:
-                return "Categories"
-            elif (
-                "time" in label.lower()
-                or "date" in label.lower()
-                or "period" in label.lower()
-            ):
-                return f"Time Period ({label})"
-            elif "user" in label.lower() or "author" in label.lower():
-                return f"Users ({label})"
-            elif (
-                "technology" in label.lower()
-                or "tool" in label.lower()
-                or "framework" in label.lower()
-            ):
-                return f"Technologies ({label})"
-            elif "method" in label.lower() or "approach" in label.lower():
-                return f"Methodologies ({label})"
-            else:
-                return f"{label} (Categories)"
-
+            return self._enhance_x_axis_label(label)
         elif axis_type == "y":
-            # Y-axis typically shows values/measurements
-            if label.lower() in ["value", "count", "number"]:
-                return f'Measurement Values{" (" + suffix + ")" if suffix else ""}'
-            elif "focus" in label.lower():
-                return f'Focus Level (Score){" " + suffix if suffix else ""}'
-            elif "detail" in label.lower():
-                return f'Detail Level (Quantity){" " + suffix if suffix else ""}'
-            elif "score" in label.lower() or "rating" in label.lower():
-                return f'{label} (Rating Scale){" " + suffix if suffix else ""}'
-            elif "count" in label.lower() or "number" in label.lower():
-                return f'{label} (Quantity){" " + suffix if suffix else ""}'
-            elif "%" in label or "percent" in label.lower() or suffix == "%":
-                return f'{label} (Percentage){" " + suffix if suffix else ""}'
-            elif "year" in label.lower():
-                return f"{label} (Year)"
-            elif "goal" in label.lower():
-                return f'{label} (Target Value){" " + suffix if suffix else ""}'
-            elif "power" in label.lower():
-                return f'{label} (Power Units){" " + suffix if suffix else ""}'
-            else:
-                return f'{label} (Value){" " + suffix if suffix else ""}'
+            return self._enhance_y_axis_label(label, suffix)
 
         return label
+
+    def _enhance_pie_legend_label(self, label: str, suffix: str = "") -> str:
+        """Enhance legend labels for pie charts."""
+        if "focus" in label.lower():
+            return f'Focus Distribution{" (" + suffix + ")" if suffix else ""}'
+        elif "detail" in label.lower():
+            return f'Detail Breakdown{" (" + suffix + ")" if suffix else ""}'
+        elif "%" in label or "percent" in label.lower() or suffix == "%":
+            return f'{label} Share{" (" + suffix + ")" if suffix else ""}'
+        else:
+            return f'{label} Distribution{" (" + suffix + ")" if suffix else ""}'
+
+    def _enhance_bar_legend_label(self, label: str, suffix: str = "") -> str:
+        """Enhance legend labels for bar charts."""
+        if "focus" in label.lower():
+            return f'Focus Score{" (" + suffix + ")" if suffix else ""}'
+        elif "detail" in label.lower():
+            return f'Detail Level{" (" + suffix + ")" if suffix else ""}'
+        elif any(word in label.lower() for word in ["count", "number"]):
+            return f'{label}{" (" + suffix + ")" if suffix else ""}'
+        elif any(word in label.lower() for word in ["score", "rating"]):
+            return f'{label} Rating{" (" + suffix + ")" if suffix else ""}'
+        elif "year" in label.lower():
+            return f"{label} (Timeline)"
+        elif "goal" in label.lower():
+            return f'{label} Target{" (" + suffix + ")" if suffix else ""}'
+        elif "power" in label.lower():
+            return f'{label} Capacity{" (" + suffix + ")" if suffix else ""}'
+        else:
+            return f'{label} Measurement{" (" + suffix + ")" if suffix else ""}'
+
+    def _enhance_line_legend_label(self, label: str, suffix: str = "") -> str:
+        """Enhance legend labels for line charts."""
+        if "focus" in label.lower():
+            return f'Focus Trends{" (" + suffix + ")" if suffix else ""}'
+        elif "detail" in label.lower():
+            return f'Detail Evolution{" (" + suffix + ")" if suffix else ""}'
+        else:
+            return f'{label} Over Time{" (" + suffix + ")" if suffix else ""}'
 
     def _enhance_legend_label(
         self, original_label: str, chart_type: str, suffix: str = ""
@@ -1030,42 +1097,12 @@ class ChartRenderer:
         """
         label = original_label.strip()
 
-        # Chart type specific enhancements
         if chart_type == "pie":
-            if "focus" in label.lower():
-                return f'Focus Distribution{" (" + suffix + ")" if suffix else ""}'
-            elif "detail" in label.lower():
-                return f'Detail Breakdown{" (" + suffix + ")" if suffix else ""}'
-            elif "%" in label or "percent" in label.lower() or suffix == "%":
-                return f'{label} Share{" (" + suffix + ")" if suffix else ""}'
-            else:
-                return f'{label} Distribution{" (" + suffix + ")" if suffix else ""}'
-
+            return self._enhance_pie_legend_label(label, suffix)
         elif chart_type == "bar":
-            if "focus" in label.lower():
-                return f'Focus Score{" (" + suffix + ")" if suffix else ""}'
-            elif "detail" in label.lower():
-                return f'Detail Level{" (" + suffix + ")" if suffix else ""}'
-            elif "count" in label.lower() or "number" in label.lower():
-                return f'{label}{" (" + suffix + ")" if suffix else ""}'
-            elif "score" in label.lower() or "rating" in label.lower():
-                return f'{label} Rating{" (" + suffix + ")" if suffix else ""}'
-            elif "year" in label.lower():
-                return f"{label} (Timeline)"
-            elif "goal" in label.lower():
-                return f'{label} Target{" (" + suffix + ")" if suffix else ""}'
-            elif "power" in label.lower():
-                return f'{label} Capacity{" (" + suffix + ")" if suffix else ""}'
-            else:
-                return f'{label} Measurement{" (" + suffix + ")" if suffix else ""}'
-
+            return self._enhance_bar_legend_label(label, suffix)
         elif chart_type == "line":
-            if "focus" in label.lower():
-                return f'Focus Trends{" (" + suffix + ")" if suffix else ""}'
-            elif "detail" in label.lower():
-                return f'Detail Evolution{" (" + suffix + ")" if suffix else ""}'
-            else:
-                return f'{label} Over Time{" (" + suffix + ")" if suffix else ""}'
+            return self._enhance_line_legend_label(label, suffix)
 
         # Fallback
         return f'{label}{" (" + suffix + ")" if suffix else ""}'

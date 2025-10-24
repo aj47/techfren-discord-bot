@@ -790,6 +790,81 @@ async def _validate_database_connection(response_sender: ResponseSender) -> bool
     return True
 
 
+async def _store_summary_data(
+    context: CommandContext,
+    full_summary: str,
+    messages_for_summary: list,
+    hours: int,
+    force_charts: bool,
+    channel_id_str: str,
+    channel_name_str: str,
+    today
+):
+    """Store summary data in thread memory and database."""
+    import database
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Store thread context memory if available
+    thread_context = await _get_thread_context(context)
+    if thread_context and hasattr(context, "thread_id") and context.thread_id:
+        try:
+            command_description = f"Requested {hours}h summary" + (
+                " with charts" if force_charts else ""
+            )
+            store_thread_exchange(
+                thread_id=context.thread_id,
+                user_id=str(context.user_id),
+                user_name=context.user_name,
+                user_message=command_description,
+                bot_response=(
+                    full_summary[:500] + "..." if len(full_summary) > 500 else full_summary
+                ),
+                guild_id=str(context.guild_id) if context.guild_id else None,
+                channel_id=str(context.channel_id),
+                is_chart_analysis=force_charts,
+            )
+            logger.debug(f"Stored summary thread exchange for thread {context.thread_id}")
+        except Exception as e:
+            logger.warning(f"Failed to store summary thread exchange: {e}")
+
+    # Store summary in database
+    try:
+        from sorting_utils import get_top_n_tuples
+
+        # Count messages per user
+        user_counts = {}
+        for msg in messages_for_summary:
+            if not msg.get("is_bot", False):
+                user = msg.get("author_name", "Unknown")
+                user_counts[user] = user_counts.get(user, 0) + 1
+
+        # Get all users sorted by activity (most active first)
+        sorted_user_tuples = get_top_n_tuples(
+            list(user_counts.items()),
+            n=len(user_counts),
+            reverse=True
+        )
+        active_users = [user for user, count in sorted_user_tuples]
+        database.store_channel_summary(
+            channel_id=channel_id_str,
+            channel_name=channel_name_str,
+            date=today,
+            summary_text=full_summary,
+            message_count=len(messages_for_summary),
+            active_users=active_users,
+            guild_id=str(context.guild_id) if context.guild_id else None,
+            guild_name=context.guild_name,
+            metadata={
+                "hours_summarized": hours,
+                "requested_by": str(context.user_id),
+            },
+        )
+    except Exception as e:
+        logger.error(f"Failed to store summary in database: {str(e)}")
+
+
 async def _get_thread_context(context: CommandContext) -> str:
     """Get thread context if available."""
     import logging
@@ -817,6 +892,32 @@ async def _send_summary_with_charts(sender: ResponseSender, summary_parts: list,
             await sender.send_in_parts(summary_parts[1:])
     else:
         await sender.send_in_parts(summary_parts)
+
+
+async def _process_summary_generation(context: CommandContext, messages_for_summary: list, channel_name_str: str, hours: int, force_charts: bool):
+    """Process summary generation and return summary parts and chart data."""
+    from datetime import datetime, timezone
+    from llm_handler import call_llm_for_summary
+    from message_utils import split_long_message
+    import logging
+
+    logger = logging.getLogger(__name__)
+    today = datetime.now(timezone.utc)
+
+    # Check for thread context if we're in a thread
+    thread_context = await _get_thread_context(context)
+    if thread_context:
+        logger.info(
+            f"Generating summary with thread context awareness for {len(messages_for_summary)} messages"
+        )
+
+    # Generate summary
+    summary, chart_data = await call_llm_for_summary(
+        messages_for_summary, channel_name_str, today, hours, force_charts
+    )
+    summary_parts = await split_long_message(summary)
+
+    return summary_parts, chart_data, today
 
 
 async def _handle_guild_summary(
@@ -896,8 +997,6 @@ async def handle_summary_command(
         force_charts: If True, use chart-focused analysis system
     """
     from datetime import datetime, timezone
-    from llm_handler import call_llm_for_summary
-    from message_utils import split_long_message
     import database
     import config
     import logging
@@ -943,18 +1042,13 @@ async def handle_summary_command(
             await response_sender.send(error_msg, ephemeral=True)
             return
 
-        # Check for thread context if we're in a thread
-        thread_context = await _get_thread_context(context)
-        if thread_context:
-            logger.info(
-                f"Generating summary with thread context awareness for {len(messages_for_summary)} messages"
-            )
-
-        # Generate summary
-        summary, chart_data = await call_llm_for_summary(
-            messages_for_summary, channel_name_str, today, hours, force_charts
+        # Process summary generation
+        summary_parts, chart_data, today = await _process_summary_generation(
+            context, messages_for_summary, channel_name_str, hours, force_charts
         )
-        summary_parts = await split_long_message(summary)
+
+        # Combine summary parts for storage
+        full_summary = " ".join(summary_parts)
 
         # Send summary
         if context.guild_id:
@@ -970,56 +1064,11 @@ async def handle_summary_command(
         if context.source_type == "message" and not context.guild_id:
             await _store_dm_responses(summary_parts, context, bot_user)
 
-        # Store thread context memory if available
-        thread_context = await _get_thread_context(context)
-        if thread_context and hasattr(context, "thread_id") and context.thread_id:
-            try:
-                command_description = f"Requested {hours}h summary" + (
-                    " with charts" if force_charts else ""
-                )
-
-                store_thread_exchange(
-                    thread_id=context.thread_id,
-                    user_id=str(context.user_id),
-                    user_name=context.user_name,
-                    user_message=command_description,
-                    bot_response=(
-                        summary[:500] + "..." if len(summary) > 500 else summary
-                    ),
-                    guild_id=str(context.guild_id) if context.guild_id else None,
-                    channel_id=str(context.channel_id),
-                    is_chart_analysis=force_charts,
-                )
-                logger.debug(f"Stored summary thread exchange for thread {context.thread_id}")
-            except Exception as e:
-                logger.warning(f"Failed to store summary thread exchange: {e}")
-
-        # Store summary in database
-        try:
-            active_users = list(
-                set(
-                    msg.get("author_name", "Unknown")
-                    for msg in messages_for_summary
-                    if not msg.get("is_bot", False)
-                )
-            )
-
-            database.store_channel_summary(
-                channel_id=channel_id_str,
-                channel_name=channel_name_str,
-                date=today,
-                summary_text=summary,
-                message_count=len(messages_for_summary),
-                active_users=active_users,
-                guild_id=str(context.guild_id) if context.guild_id else None,
-                guild_name=context.guild_name,
-                metadata={
-                    "hours_summarized": hours,
-                    "requested_by": str(context.user_id),
-                },
-            )
-        except Exception as e:
-            logger.error(f"Failed to store summary in database: {str(e)}")
+        # Store summary in thread memory and database
+        await _store_summary_data(
+            context, full_summary, messages_for_summary, hours, force_charts,
+            channel_id_str, channel_name_str, today
+        )
 
     except Exception as e:
         logger.error(f"Error in handle_summary_command: {str(e)}", exc_info=True)

@@ -104,33 +104,82 @@ async def _store_thread_memory(message, thread_id, query, response, force_charts
             logger.warning(f"Failed to store thread exchange: {e}")
 
 
+async def _send_message_parts(thread_sender, parts, chart_data):
+    """Send message parts with optional charts."""
+    if chart_data and parts:
+        await thread_sender.send_with_charts(parts[0], chart_data)
+        if len(parts) > 1:
+            await thread_sender.send_in_parts(parts[1:])
+    else:
+        await thread_sender.send_in_parts(parts)
+
+
+async def _cleanup_processing_message(processing_msg):
+    """Delete processing message if it exists."""
+    if processing_msg:
+        try:
+            await processing_msg.delete()
+        except Exception as e:
+            logger.debug(f"Could not delete processing message: {e}")
+
+
+async def _handle_send_error(processing_msg):
+    """Handle error when sending bot response."""
+    if processing_msg:
+        try:
+            await processing_msg.edit(
+                content="Sorry, there was an error processing your request."
+            )
+        except Exception as edit_e:
+            logger.debug(f"Could not edit processing message: {edit_e}")
+
+
 async def _send_bot_response(thread_sender, response, chart_data, processing_msg):
     """Send bot response with charts if available."""
     try:
         parts = await split_long_message(response)
-
-        if chart_data and parts:
-            await thread_sender.send_with_charts(parts[0], chart_data)
-            if len(parts) > 1:
-                await thread_sender.send_in_parts(parts[1:])
-        else:
-            await thread_sender.send_in_parts(parts)
-
-        if processing_msg:
-            try:
-                await processing_msg.delete()
-            except Exception as e:
-                logger.debug(f"Could not delete processing message: {e}")
-
+        await _send_message_parts(thread_sender, parts, chart_data)
+        await _cleanup_processing_message(processing_msg)
     except Exception as e:
         logger.error(f"Error sending bot response: {e}")
-        if processing_msg:
-            try:
-                await processing_msg.edit(
-                    content="Sorry, there was an error processing your request."
-                )
-            except Exception as edit_e:
-                logger.debug(f"Could not edit processing message: {edit_e}")
+        await _handle_send_error(processing_msg)
+
+
+async def _process_bot_command_in_thread(
+    thread_sender, processing_msg, message, query, bot_client, thread_id
+):
+    """Process bot command within a thread."""
+    try:
+        # Check if this is a chart analysis request
+        force_charts = _should_force_charts(query)
+
+        # Get all context information
+        thread_context, thread_id, message_context = await _get_bot_command_context(message, bot_client)
+
+        # Combine contexts
+        message_context = await _combine_contexts(thread_context, message_context)
+
+        # Get LLM response
+        response, chart_data = await call_llm_api(query, message_context, force_charts)
+        logger.debug(f"Raw response length: {len(response)} characters")
+
+        # Store thread memory
+        await _store_thread_memory(message, thread_id, query, response, force_charts, chart_data)
+
+        # Send response
+        await _send_bot_response(thread_sender, response, chart_data, processing_msg)
+
+        logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Posted in thread")
+    except Exception as e:
+        logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
+        import config
+        error_msg = config.ERROR_MESSAGES["processing_error"]
+        await thread_sender.send(error_msg)
+        try:
+            if processing_msg:
+                await processing_msg.delete()
+        except discord.NotFound:
+            pass
 
 
 async def handle_bot_command(
@@ -156,57 +205,19 @@ async def handle_bot_command(
         from command_abstraction import ThreadManager, MessageResponseSender
 
         thread_manager = ThreadManager(message.channel, message.guild)
-
-        # Create thread from the user's original message
         thread = await thread_manager.create_thread_from_message(message, thread_name)
 
         if thread:
-            # Send processing message in the thread
+            # Process command in thread
             thread_sender = MessageResponseSender(thread)
-            processing_msg = await thread_sender.send(
-                "Processing your request, please wait..."
+            processing_msg = await thread_sender.send("Processing your request, please wait...")
+            await _process_bot_command_in_thread(
+                thread_sender, processing_msg, message, query, bot_client, thread.id
             )
-
-            try:
-                # Check if this is a chart analysis request
-                force_charts = _should_force_charts(query)
-
-                # Get all context information
-                thread_context, thread_id, message_context = await _get_bot_command_context(message, bot_client)
-
-                # Combine contexts
-                message_context = await _combine_contexts(thread_context, message_context)
-
-                # Get LLM response
-                response, chart_data = await call_llm_api(query, message_context, force_charts)
-                logger.debug(f"Raw response length: {len(response)} characters")
-
-                # Store thread memory
-                await _store_thread_memory(message, thread_id, query, response, force_charts, chart_data)
-
-                # Send response
-                await _send_bot_response(thread_sender, response, chart_data, processing_msg)
-
-                logger.info(f"Command executed successfully: mention - Response length: {len(response)} - Posted in thread")
-            except Exception as e:
-                logger.error(
-                    f"Error processing mention command: {str(e)}", exc_info=True
-                )
-                import config
-
-                error_msg = config.ERROR_MESSAGES["processing_error"]
-                await thread_sender.send(error_msg)
-                try:
-                    if processing_msg:
-                        await processing_msg.delete()
-                except discord.NotFound:
-                    pass
         else:
-            # Fallback: if thread creation failed (DMs, unsupported channels, etc.), send response in main channel
+            # Fallback to channel response
             if isinstance(message.channel, discord.DMChannel):
-                logger.debug(
-                    "Thread creation not supported in DMs, using channel response"
-                )
+                logger.debug("Thread creation not supported in DMs, using channel response")
             else:
                 logger.info(
                     f"Thread creation failed in {type(message.channel).__name__}, falling back to channel response"
@@ -214,10 +225,7 @@ async def handle_bot_command(
             await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
     except Exception as e:
-        logger.error(
-            f"Error in thread-based bot command handling: {str(e)}", exc_info=True
-        )
-        # Fallback to original behavior
+        logger.error(f"Error in thread-based bot command handling: {str(e)}", exc_info=True)
         await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
 
@@ -266,6 +274,78 @@ async def _send_error_response_thread(
         )
 
 
+async def _get_fallback_message_context(message, bot_client):
+    """Get message context for fallback handler."""
+    if bot_client and (message.reference or "discord.com/channels/" in message.content):
+        try:
+            message_context = await get_message_context(message, bot_client)
+            logger.debug(
+                f"Retrieved message context in fallback: referenced={message_context['referenced_message'] is not None}, "
+                f"linked_count={len(message_context['linked_messages'])}"
+            )
+            return message_context
+        except Exception as e:
+            logger.warning(f"Failed to get message context in fallback: {e}")
+    return None
+
+
+async def _send_fallback_response_with_charts(message, client_user, response, chart_data, processing_msg):
+    """Send fallback response with charts."""
+    logger.info(f"Sending fallback response with {len(chart_data)} chart(s)")
+    from command_abstraction import MessageResponseSender
+
+    channel_sender = MessageResponseSender(message.channel)
+    bot_response = await channel_sender.send_with_charts(response, chart_data)
+    if bot_response:
+        await store_bot_response_db(
+            bot_response, client_user, message.guild, message.channel, response
+        )
+    await processing_msg.delete()
+    logger.info(
+        f"Command executed successfully (fallback): mention - Response length: {len(response)} - With {len(chart_data)} chart(s)"
+    )
+
+
+async def _send_fallback_response_text(message, client_user, response, processing_msg):
+    """Send fallback response as text (split if needed)."""
+    if len(response) > 1900:
+        message_parts = await split_long_message(response, max_length=1900)
+    else:
+        message_parts = [response]
+
+    for part in message_parts:
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        bot_response = await message.channel.send(
+            part, allowed_mentions=allowed_mentions, suppress_embeds=True
+        )
+        await store_bot_response_db(
+            bot_response, client_user, message.guild, message.channel, part
+        )
+
+    await processing_msg.delete()
+    logger.info(
+        f"Command executed successfully (fallback): mention - Response length: {len(response)} - Split into {len(message_parts)} parts"
+    )
+
+
+async def _handle_fallback_error(message, client_user, processing_msg):
+    """Handle errors in fallback command processing."""
+    import config
+
+    error_msg = config.ERROR_MESSAGES["processing_error"]
+    allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+    bot_response = await message.channel.send(
+        error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True
+    )
+    await store_bot_response_db(
+        bot_response, client_user, message.guild, message.channel, error_msg
+    )
+    try:
+        await processing_msg.delete()
+    except discord.NotFound:
+        pass
+
+
 async def _handle_bot_command_fallback(
     message: discord.Message,
     client_user: discord.ClientUser,
@@ -273,83 +353,20 @@ async def _handle_bot_command_fallback(
     bot_client: discord.Client = None,
 ) -> None:
     """Fallback handler for bot commands when thread creation fails."""
-    processing_msg = await message.channel.send(
-        "Processing your request, please wait..."
-    )
+    processing_msg = await message.channel.send("Processing your request, please wait...")
     try:
-        # Get message context (referenced messages and linked messages)
-        message_context = None
-        if bot_client and (
-            message.reference or "discord.com/channels/" in message.content
-        ):
-            try:
-                message_context = await get_message_context(message, bot_client)
-                logger.debug(
-                    f"Retrieved message context in fallback: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to get message context in fallback: {e}")
-
+        # Get message context
+        message_context = await _get_fallback_message_context(message, bot_client)
         response, chart_data = await call_llm_api(query, message_context)
 
-        # Check if we have charts to send
+        # Send response with charts or as text
         if chart_data:
-            logger.info(f"Sending fallback response with {len(chart_data)} chart(s)")
-            # Use MessageResponseSender for chart support
-            from command_abstraction import MessageResponseSender
-
-            channel_sender = MessageResponseSender(message.channel)
-            bot_response = await channel_sender.send_with_charts(response, chart_data)
-            if bot_response:
-                await store_bot_response_db(
-                    bot_response, client_user, message.guild, message.channel, response
-                )
-            await processing_msg.delete()
-            logger.info(
-                f"Command executed successfully (fallback): mention - Response length: {len(response)} - With {len(chart_data)} chart(s)"
-            )
+            await _send_fallback_response_with_charts(message, client_user, response, chart_data, processing_msg)
         else:
-            # Always split if response is over 1900 chars to ensure it doesn't get cut off
-            if len(response) > 1900:
-                message_parts = await split_long_message(response, max_length=1900)
-            else:
-                message_parts = [response]
-
-            for part in message_parts:
-                allowed_mentions = discord.AllowedMentions(
-                    everyone=False, roles=False, users=True
-                )
-                bot_response = await message.channel.send(
-                    part, allowed_mentions=allowed_mentions, suppress_embeds=True
-                )
-                await store_bot_response_db(
-                    bot_response, client_user, message.guild, message.channel, part
-                )
-
-            await processing_msg.delete()
-            logger.info(
-                f"Command executed successfully (fallback): mention - Response length: {len(response)} - Split into {len(message_parts)} parts"
-            )
+            await _send_fallback_response_text(message, client_user, response, processing_msg)
     except Exception as e:
-        logger.error(
-            f"Error processing mention command (fallback): {str(e)}", exc_info=True
-        )
-        import config
-
-        error_msg = config.ERROR_MESSAGES["processing_error"]
-        allowed_mentions = discord.AllowedMentions(
-            everyone=False, roles=False, users=True
-        )
-        bot_response = await message.channel.send(
-            error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True
-        )
-        await store_bot_response_db(
-            bot_response, client_user, message.guild, message.channel, error_msg
-        )
-        try:
-            await processing_msg.delete()
-        except discord.NotFound:
-            pass
+        logger.error(f"Error processing mention command (fallback): {str(e)}", exc_info=True)
+        await _handle_fallback_error(message, client_user, processing_msg)
 
 
 # Helper functions for parameter validation

@@ -57,40 +57,31 @@ def create_sample_messages():
     return messages
 
 
-async def test_complete_source_linking_workflow():
-    """Test the complete source linking workflow from message to formatted output."""
-    print("=== Integration Test: Complete Source Linking Workflow ===")
+def test_message_link_generation(messages):
+    """Test message link generation for all messages."""
+    print("\n1. Testing message link generation in summary...")
 
-    # Create sample messages
-    messages = create_sample_messages()
-    channel_name = "general"
-    datetime.date.today()
+    expected_links = []
+    for msg in messages:
+        link = generate_discord_message_link(
+            msg["guild_id"], msg["channel_id"], msg["id"]
+        )
+        expected_links.append(link)
+        print(f"   Generated link: {link}")
 
-    print(f"Testing with {len(messages)} sample messages...")
+    if len(expected_links) == 3:
+        print("   ✓ PASS - All message links generated correctly")
+        return True, expected_links
+    else:
+        print("   ✗ FAIL - Incorrect number of links generated")
+        return False, expected_links
 
-    try:
-        # Test 1: Verify message link generation during summary preparation
-        print("\n1. Testing message link generation in summary...")
 
-        expected_links = []
-        for msg in messages:
-            link = generate_discord_message_link(
-                msg["guild_id"], msg["channel_id"], msg["id"]
-            )
-            expected_links.append(link)
-            print(f"   Generated link: {link}")
+def test_discord_formatter(expected_links, channel_name):
+    """Test Discord formatter preserves source links."""
+    print("\n2. Testing Discord formatter with source links...")
 
-        if len(expected_links) == 3:
-            print("   ✓ PASS - All message links generated correctly")
-        else:
-            print("   ✗ FAIL - Incorrect number of links generated")
-            return False
-
-        # Test 2: Test Discord formatter with source links
-        print("\n2. Testing Discord formatter with source links...")
-
-        # Simulate an LLM response that contains source links
-        mock_llm_response = f"""Here's a summary of the recent discussion in #{channel_name}:
+    mock_llm_response = f"""Here's a summary of the recent discussion in #{channel_name}:
 
 The conversation was initiated by Alice who shared valuable insights about AI development trends [Jump to message]({expected_links[0]}). The article she referenced discusses important aspects of machine learning advances and ethical considerations.
 
@@ -108,67 +99,95 @@ Key topics:
 - [Ethics commentary]({expected_links[1]})
 - [Implementation questions]({expected_links[2]})"""
 
-        formatter = DiscordFormatter()
-        formatted_response, chart_data = formatter.format_llm_response(
-            mock_llm_response
+    formatter = DiscordFormatter()
+    formatted_response, chart_data = formatter.format_llm_response(
+        mock_llm_response
+    )
+
+    from message_utils import extract_message_links
+
+    links_in_formatted = extract_message_links(formatted_response)
+
+    if len(links_in_formatted) >= 3:
+        print(
+            f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)"
         )
+        return True, formatted_response
+    else:
+        print(
+            f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)"
+        )
+        return False, formatted_response
 
-        # Count Discord links in formatted response
-        from message_utils import extract_message_links
 
-        links_in_formatted = extract_message_links(formatted_response)
+async def test_message_splitting(formatted_response):
+    """Test message splitting preserves source links."""
+    print("\n3. Testing message splitting preserves source links...")
 
-        if len(links_in_formatted) >= 3:
-            print(
-                f"   ✓ PASS - Discord links preserved in formatted output ({len(links_in_formatted)} links)"
-            )
-        else:
-            print(
-                f"   ✗ FAIL - Discord links lost in formatting (found {len(links_in_formatted)}, expected ≥3)"
-            )
+    from message_utils import split_long_message, extract_message_links
+
+    message_parts = await split_long_message(formatted_response, max_length=1000)
+
+    total_links = []
+    for part in message_parts:
+        part_links = extract_message_links(part)
+        total_links.extend(part_links)
+
+    if len(total_links) >= 3:
+        print(
+            f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)"
+        )
+        return True, total_links
+    else:
+        print(
+            f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)"
+        )
+        return False, total_links
+
+
+def test_link_format_compatibility(total_links):
+    """Verify link format is clickable in Discord."""
+    print("\n4. Testing Discord link format compatibility...")
+
+    import re
+
+    discord_link_pattern = r"https://discord\.com/channels/\d+/\d+/\d+"
+    valid_links = sum(1 for link in total_links if re.match(discord_link_pattern, link))
+
+    if valid_links == len(total_links):
+        print(f"   ✓ PASS - All {valid_links} links follow correct Discord format")
+        return True
+    else:
+        print(
+            f"   ✗ FAIL - {len(total_links) - valid_links} links have invalid format"
+        )
+        return False
+
+
+async def test_complete_source_linking_workflow():
+    """Test the complete source linking workflow from message to formatted output."""
+    print("=== Integration Test: Complete Source Linking Workflow ===")
+
+    messages = create_sample_messages()
+    channel_name = "general"
+    datetime.date.today()
+
+    print(f"Testing with {len(messages)} sample messages...")
+
+    try:
+        success, expected_links = test_message_link_generation(messages)
+        if not success:
             return False
 
-        # Test 3: Test message splitting preserves links
-        print("\n3. Testing message splitting preserves source links...")
-
-        from message_utils import split_long_message
-
-        message_parts = await split_long_message(formatted_response, max_length=1000)
-
-        # Count links across all parts
-        total_links = []
-        for part in message_parts:
-            part_links = extract_message_links(part)
-            total_links.extend(part_links)
-
-        if len(total_links) >= 3:
-            print(
-                f"   ✓ PASS - Links preserved across {len(message_parts)} message parts ({len(total_links)} total links)"
-            )
-        else:
-            print(
-                f"   ✗ FAIL - Links lost during message splitting (found {len(total_links)}, expected ≥3)"
-            )
+        success, formatted_response = test_discord_formatter(expected_links, channel_name)
+        if not success:
             return False
 
-        # Test 4: Verify link format is clickable in Discord
-        print("\n4. Testing Discord link format compatibility...")
+        success, total_links = await test_message_splitting(formatted_response)
+        if not success:
+            return False
 
-        # Check that links follow Discord's expected format
-        discord_link_pattern = r"https://discord\.com/channels/\d+/\d+/\d+"
-        import re
-
-        valid_links = 0
-        for link in total_links:
-            if re.match(discord_link_pattern, link):
-                valid_links += 1
-
-        if valid_links == len(total_links):
-            print(f"   ✓ PASS - All {valid_links} links follow correct Discord format")
-        else:
-            print(
-                f"   ✗ FAIL - {len(total_links) - valid_links} links have invalid format"
-            )
+        if not test_link_format_compatibility(total_links):
             return False
 
         print("\n🎉 ALL INTEGRATION TESTS PASSED!")
