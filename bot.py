@@ -538,7 +538,7 @@ async def on_message(message):
 
     # Check allowed channels for non-mention commands
     if message.guild and hasattr(message.channel, "name"):
-        allowed_channels = [ALLOWED_CHANNEL_NAME]
+        allowed_channels = [config.ALLOWED_CHANNEL_NAME]
         if message.channel.name not in allowed_channels:
             logger.debug(
                 f"Command ignored - channel #{message.channel.name} not in allowed channels: {allowed_channels}"
@@ -547,13 +547,13 @@ async def on_message(message):
 
     # Process the command
     if commands["is_sum_day_command"]:
-        await handle_summary_command(message, 24, False, bot.user)
+        await handle_sum_day_command(message, bot.user)
     elif commands["is_sum_hr_command"]:
-        await handle_summary_command(message, 1, False, bot.user)
+        await handle_sum_hr_command(message, bot.user)
     elif commands["is_chart_day_command"]:
-        await handle_summary_command(message, 24, True, bot.user)
+        await handle_chart_day_command(message, bot.user)
     elif commands["is_chart_hr_command"]:
-        await handle_summary_command(message, 1, True, bot.user)
+        await handle_chart_hr_command(message, bot.user)
     elif commands["is_thread_memory_command"]:
         try:
             command_parts = message.content.split()
