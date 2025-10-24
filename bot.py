@@ -654,14 +654,14 @@ async def _ensure_interaction_deferred(
 ) -> bool:
     """Ensure interaction is deferred, return False if failed."""
     if not interaction.response.is_done():
-        logger.warning(
-            f"Interaction for {command_name} was not deferred by command handler, deferring now"  # noqa: E501
+        logger.debug(
+            f"Interaction for {command_name} not yet deferred, deferring now"
         )
         try:
             await interaction.response.defer()
         except discord.errors.NotFound as e:
             logger.error(
-                f"Interaction for {command_name} not found during safety defer: {e}"
+                f"Interaction for {command_name} expired before defer: {e}"
             )
             return False
         except Exception as e:
@@ -793,6 +793,7 @@ async def _handle_slash_command_wrapper(
 )
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 
@@ -801,6 +802,7 @@ async def sum_day_slash(interaction: discord.Interaction):
 )
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 
@@ -810,6 +812,7 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
 )
 async def chart_day_slash(interaction: discord.Interaction):
     """Slash command version of /chart-day for data visualization"""
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(
         interaction, "chart-day", hours=24, force_charts=True
     )
@@ -821,6 +824,7 @@ async def chart_day_slash(interaction: discord.Interaction):
 )
 async def chart_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /chart-hr for data visualization"""
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(
         interaction, "chart-hr", hours=hours, force_charts=True
     )
