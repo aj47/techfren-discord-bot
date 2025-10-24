@@ -1,6 +1,6 @@
 """
 Test script to verify that charts now use actual table data instead of generic "Row 1, Row 2" labels.  # noqa: E501
-This test specifically addresses the bug where complex tables were showing generic row labels.  # noqa: E501
+This test specifically addresses the bug where complex tables were showing generic row labels.
 """
 
 import logging
