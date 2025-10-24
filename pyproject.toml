@@ -1,0 +1,71 @@
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | migrations
+  | \.claude
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.autoflake]
+remove-all-unused-imports = true
+remove-unused-variables = true
+remove-duplicate-keys = true
+in-place = true
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "techfren-discord-bot"
+version = "1.0.0"
+description = "A Discord bot for technical community management"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "discord.py",
+    "openai",
+    "tabulate",
+    "pynacl",
+    "firecrawl",
+    "apify-client",
+    "pytest-asyncio",
+    "python-dotenv",
+    "youtube-transcript-api",
+    "quickchart-io",
+    "aiohttp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "flake8",
+    "isort",
+    "autoflake",
+    "pytest",
+    "pytest-asyncio",
+]
