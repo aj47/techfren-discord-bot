@@ -505,12 +505,15 @@ async def _handle_slash_command_wrapper(
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
+    # Defer IMMEDIATELY to avoid 3-second timeout
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    # Immediately defer to avoid timeout, then do validation in wrapper
+    # Defer IMMEDIATELY to avoid 3-second timeout
+    await interaction.response.defer()
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
