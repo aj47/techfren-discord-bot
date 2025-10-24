@@ -272,7 +272,7 @@ def store_message(
         command_type (Optional[str]): The type of command (if applicable)
         scraped_url (Optional[str]): The URL that was scraped from the message (if any)
         scraped_content_summary (Optional[str]): Summary of the scraped content (if any)
-        scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)  # noqa: E501
+        scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)
 
     Returns:
         bool: True if the message was stored successfully, False otherwise
@@ -325,10 +325,10 @@ def store_message(
 
 async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
     """
-    Store multiple messages in a single transaction for better performance and consistency.  # noqa: E501
+    Store multiple messages in a single transaction for better performance and consistency.
 
     Args:
-        messages (List[Dict[str, Any]]): List of message dictionaries with required fields  # noqa: E501
+        messages (List[Dict[str, Any]]): List of message dictionaries with required fields
 
     Returns:
         bool: True if all messages were stored successfully, False otherwise
@@ -563,7 +563,7 @@ def get_channel_messages_for_day(
 
     Args:
         channel_id (str): The Discord channel ID
-        date (datetime): The reference date (will get messages for 24 hours before this date)  # noqa: E501
+        date (datetime): The reference date (will get messages for 24 hours before this date)
 
     Returns:
         List[Dict[str, Any]]: A list of messages as dictionaries
@@ -575,11 +575,11 @@ def get_channel_messages_for_hours(
     channel_id: str, date: datetime, hours: int
 ) -> List[Dict[str, Any]]:
     """
-    Get all messages from a specific channel for the past specified hours from the given date.  # noqa: E501
+    Get all messages from a specific channel for the past specified hours from the given date.
 
     Args:
         channel_id (str): The Discord channel ID
-        date (datetime): The reference date (will get messages for specified hours before this date)  # noqa: E501
+        date (datetime): The reference date (will get messages for specified hours before this date)
         hours (int): Number of hours to look back
 
     Returns:
@@ -620,7 +620,7 @@ def get_channel_messages_for_hours(
                 WHERE channel_id = ?
                 AND (
                     datetime(created_at) BETWEEN datetime(?) AND datetime(?)
-                    OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)  # noqa: E501
+                    OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
                 )
                 ORDER BY created_at ASC
                 """,
@@ -680,7 +680,7 @@ def get_messages_for_time_range(
         end_time (datetime): The end time for the range
 
     Returns:
-        Dict[str, List[Dict[str, Any]]]: A dictionary mapping channel_id to a list of messages  # noqa: E501
+        Dict[str, List[Dict[str, Any]]]: A dictionary mapping channel_id to a list of messages
     """
     try:
         start_date_str = start_time.isoformat()
@@ -923,7 +923,7 @@ def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
         url (str): The URL to search for
 
     Returns:
-        Optional[Dict[str, Any]]: Dictionary containing scraped content if found, None otherwise  # noqa: E501
+        Optional[Dict[str, Any]]: Dictionary containing scraped content if found, None otherwise
     """
     try:
         with get_connection() as conn:
