@@ -5,10 +5,9 @@ This test replicates the exact problem the user reported and verifies it's fixed
 
 import sys
 import os
+from chart_renderer import ChartRenderer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from chart_renderer import ChartRenderer
 
 
 def test_methodology_table_fix():

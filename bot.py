@@ -50,6 +50,55 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 client = bot
 
 
+async def _handle_youtube_url(url: str) -> str:
+    """Handle YouTube URL processing."""
+    logger.info(f"Detected YouTube URL: {url}")
+
+    scraped_result = await scrape_youtube_content(url)
+
+    if not scraped_result:
+        logger.warning(f"Failed to scrape YouTube content, falling back to Firecrawl: {url}")
+        scraped_result = await scrape_url_content(url)
+    else:
+        logger.info(f"Successfully scraped YouTube content: {url}")
+
+    return scraped_result.get("markdown") if scraped_result else None
+
+
+async def _handle_twitter_url(url: str) -> str:
+    """Handle Twitter/X.com URL processing."""
+    logger.info(f"Detected Twitter/X.com URL: {url}")
+
+    from apify_handler import extract_tweet_id
+
+    tweet_id = extract_tweet_id(url)
+    if not tweet_id:
+        logger.warning(f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}")
+
+        # Handle base Twitter/X.com URLs
+        if url.lower() in ["https://x.com", "https://twitter.com", "http://x.com", "http://twitter.com"]:
+            logger.info(f"Handling base Twitter/X.com URL with custom response: {url}")
+            return f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
+        else:
+            scraped_result = await scrape_url_content(url)
+            return scraped_result if scraped_result else None
+    else:
+        # Check if Apify API token is configured
+        if not hasattr(config, "apify_api_token") or not config.apify_api_token:
+            logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+            scraped_result = await scrape_url_content(url)
+        else:
+            scraped_result = await scrape_twitter_content(url)
+
+            if not scraped_result:
+                logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                scraped_result = await scrape_url_content(url)
+            else:
+                logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
+
+        return scraped_result.get("markdown") if scraped_result else None
+
+
 async def process_url(message_id: str, url: str):
     """
     Process a URL found in a message by scraping its content, summarizing it,
@@ -62,78 +111,15 @@ async def process_url(message_id: str, url: str):
     try:
         logger.info(f"Processing URL {url} from message {message_id}")
 
-        # Check if the URL is from YouTube
+        # Process URL based on type
         if await is_youtube_url(url):
-            logger.info(f"Detected YouTube URL: {url}")
-
-            # Use YouTube handler to scrape content
-            scraped_result = await scrape_youtube_content(url)
-
-            # If YouTube scraping fails, fall back to Firecrawl
-            if not scraped_result:
-                logger.warning(
-                    f"Failed to scrape YouTube content, falling back to Firecrawl: {url}"
-                )
-                scraped_result = await scrape_url_content(url)
-            else:
-                logger.info(f"Successfully scraped YouTube content: {url}")
-                # Extract markdown content from the scraped result
-                markdown_content = scraped_result.get("markdown")
-        # Check if the URL is from Twitter/X.com
+            markdown_content = await _handle_youtube_url(url)
         elif await is_twitter_url(url):
-            logger.info(f"Detected Twitter/X.com URL: {url}")
-
-            # Validate if the URL contains a tweet ID (status)
-            from apify_handler import extract_tweet_id
-
-            tweet_id = extract_tweet_id(url)
-            if not tweet_id:
-                logger.warning(
-                    f"URL appears to be Twitter/X.com but doesn't contain a valid tweet ID: {url}"
-                )
-
-                # For base Twitter/X.com URLs without a tweet ID, create a simple markdown response
-                if url.lower() in [
-                    "https://x.com",
-                    "https://twitter.com",
-                    "http://x.com",
-                    "http://twitter.com",
-                ]:
-                    logger.info(
-                        f"Handling base Twitter/X.com URL with custom response: {url}"
-                    )
-                    scraped_result = {
-                        "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
-                    }
-                else:
-                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
-                    scraped_result = await scrape_url_content(url)
-            else:
-                # Check if Apify API token is configured
-                if not hasattr(config, "apify_api_token") or not config.apify_api_token:
-                    logger.warning(
-                        "Apify API token not found in config.py or is empty, falling back to Firecrawl"
-                    )
-                    scraped_result = await scrape_url_content(url)
-                else:
-                    # Use Apify to scrape Twitter/X.com content
-                    scraped_result = await scrape_twitter_content(url)
-
-                    # If Apify scraping fails, fall back to Firecrawl
-                    if not scraped_result:
-                        logger.warning(
-                            f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}"
-                        )
-                        scraped_result = await scrape_url_content(url)
-                    else:
-                        logger.info(
-                            f"Successfully scraped Twitter/X.com content with Apify: {url}"
-                        )
-                        # Extract markdown content from the scraped result
-                        markdown_content = scraped_result.get("markdown")
+            markdown_content = await _handle_twitter_url(url)
         else:
-            # For non-Twitter/X.com and non-YouTube URLs, use Firecrawl
+            # For other URLs, use Firecrawl
             scraped_result = await scrape_url_content(url)
+            markdown_content = scraped_result.get("markdown") if scraped_result else None
             markdown_content = scraped_result  # Firecrawl returns markdown directly
 
         # Check if scraping was successful
@@ -404,77 +390,68 @@ async def on_error(event, *args, **kwargs):
         logger.error(f"Error context kwargs: {kwargs}")
 
 
-@bot.event
-async def on_message(message):
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
-        return
-
-    # Handle links dump channel logic first
-    # This needs to happen before storing in database to avoid storing deleted messages
-    handled_by_links_dump = await handle_links_dump_channel(message)
-    if handled_by_links_dump:
-        return  # Message was handled (deleted), stop processing
-
-    # Log message details - safely handle DMs and different channel types
+def _get_channel_info(message):
+    """Get channel and guild information from message."""
     guild_name = message.guild.name if message.guild else "DM"
 
-    # Safely get channel name - different channel types might not have a name attribute
     if hasattr(message.channel, "name"):
         channel_name = message.channel.name
     elif hasattr(message.channel, "recipient"):
-        # This is a DM channel
         channel_name = f"DM with {message.channel.recipient}"
     else:
         channel_name = "Unknown Channel"
 
-    # Use display_name to show user's server nickname when available
-    author_display = (
+    return guild_name, channel_name
+
+
+def _get_author_display(message):
+    """Get author display name from message."""
+    return (
         message.author.display_name
         if isinstance(message.author, discord.Member)
         else str(message.author)
     )
-    logger.info(
-        f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}"
-    )
 
-    # Store message in database
+
+def _detect_command_type(message, bot_user_id):
+    """Detect if message is a command and return command type."""
+    is_command = False
+    command_type = None
+
+    bot_mention = f"<@{bot_user_id}>"
+    bot_mention_alt = f"<@!{bot_user_id}>"
+
+    if message.content.startswith(bot_mention) or message.content.startswith(bot_mention_alt):
+        is_command = True
+        command_type = "mention"
+    elif message.content.startswith("/bot"):
+        is_command = True
+        command_type = "/bot"
+    elif message.content.startswith("/sum-day"):
+        is_command = True
+        command_type = "/sum-day"
+    elif message.content.startswith("/sum-hr"):
+        is_command = True
+        command_type = "/sum-hr"
+    elif message.content.startswith("/chart-day"):
+        is_command = True
+        command_type = "/chart-day"
+    elif message.content.startswith("/chart-hr"):
+        is_command = True
+        command_type = "/chart-hr"
+    elif message.content.startswith("/thread-memory"):
+        is_command = True
+        command_type = "/thread-memory"
+
+    return is_command, command_type
+
+
+async def _store_message_in_database(message, guild_name, channel_name, is_command, command_type):
+    """Store message in database."""
     try:
-        # Determine if this is a command and what type
-        is_command = False
-        command_type = None
-
-        bot_mention = f"<@{bot.user.id}>"
-        bot_mention_alt = f"<@!{bot.user.id}>"
-        if message.content.startswith(bot_mention) or message.content.startswith(
-            bot_mention_alt
-        ):
-            is_command = True
-            command_type = "mention"
-        elif message.content.startswith("/bot"):
-            is_command = True
-            command_type = "/bot"
-        elif message.content.startswith("/sum-day"):
-            is_command = True
-            command_type = "/sum-day"
-        elif message.content.startswith("/sum-hr"):
-            is_command = True
-            command_type = "/sum-hr"
-        elif message.content.startswith("/chart-day"):
-            is_command = True
-            command_type = "/chart-day"
-        elif message.content.startswith("/chart-hr"):
-            is_command = True
-            command_type = "/chart-hr"
-        elif message.content.startswith("/thread-memory"):
-            is_command = True
-            command_type = "/thread-memory"
-
-        # Store in database
         guild_id = str(message.guild.id) if message.guild else None
         channel_id = str(message.channel.id)
 
-        # Ensure database module is accessible
         if not database:
             logger.error("Database module not properly imported or initialized")
             return
@@ -495,68 +472,98 @@ async def on_message(message):
         )
 
         if not success:
-            # This is usually because the message already exists (common when bot restarts)
             logger.debug(
                 f"Failed to store message {message.id} in database (likely duplicate)"
             )
-
-        # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
-        # This saves resources and avoids processing URLs that nobody asks about
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
-    # Check if this is a command
-    bot_mention = f"<@{bot.user.id}>"
-    bot_mention_alt = f"<@!{bot.user.id}>"
-    is_mention_command = (
-        bot_mention in message.content or bot_mention_alt in message.content
+
+def _check_command_types(message, bot_user_id):
+    """Check what type of commands the message contains."""
+    bot_mention = f"<@{bot_user_id}>"
+    bot_mention_alt = f"<@!{bot_user_id}>"
+
+    return {
+        "is_mention_command": bot_mention in message.content or bot_mention_alt in message.content,
+        "is_sum_day_command": message.content.startswith("/sum-day"),
+        "is_sum_hr_command": message.content.startswith("/sum-hr"),
+        "is_chart_day_command": message.content.startswith("/chart-day"),
+        "is_chart_hr_command": message.content.startswith("/chart-hr"),
+        "is_thread_memory_command": message.content.startswith("/thread-memory"),
+    }
+
+
+@bot.event
+async def on_message(message):
+    # Ignore messages from the bot itself
+    if message.author == bot.user:
+        return
+
+    # Handle links dump channel logic first
+    handled_by_links_dump = await handle_links_dump_channel(message)
+    if handled_by_links_dump:
+        return  # Message was handled (deleted), stop processing
+
+    # Get channel and author information
+    guild_name, channel_name = _get_channel_info(message)
+    author_display = _get_author_display(message)
+
+    logger.info(
+        f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}"
     )
-    is_sum_day_command = message.content.startswith("/sum-day")
-    is_sum_hr_command = message.content.startswith("/sum-hr")
-    is_chart_day_command = message.content.startswith("/chart-day")
-    is_chart_hr_command = message.content.startswith("/chart-hr")
-    is_thread_memory_command = message.content.startswith("/thread-memory")
+
+    # Detect command type and store message in database
+    is_command, command_type = _detect_command_type(message, bot.user.id)
+    await _store_message_in_database(message, guild_name, channel_name, is_command, command_type)
+
+    # Check command types
+    commands = _check_command_types(message, bot.user.id)
 
     # Process mention commands in any channel
-    if is_mention_command:
-        logger.debug(f"Processing mention command in channel #{message.channel.name}")
+    if commands["is_mention_command"]:
+        logger.debug(f"Processing mention command in channel #{channel_name}")
         await handle_bot_command(message, bot.user, bot)
         return
 
     # If not a command we recognize, ignore
-    if not (
-        is_sum_day_command
-        or is_sum_hr_command
-        or is_chart_day_command
-        or is_chart_hr_command
-        or is_thread_memory_command
-    ):
+    if not any([
+        commands["is_sum_day_command"],
+        commands["is_sum_hr_command"],
+        commands["is_chart_day_command"],
+        commands["is_chart_hr_command"],
+        commands["is_thread_memory_command"]
+    ]):
         return
 
-    # Process commands
-    try:
-        if is_sum_day_command:
-            await handle_sum_day_command(message, bot.user)
-        elif is_sum_hr_command:
-            await handle_sum_hr_command(message, bot.user)
-        elif is_chart_day_command:
-            await handle_chart_day_command(message, bot.user)
-        elif is_chart_hr_command:
-            await handle_chart_hr_command(message, bot.user)
-        elif is_thread_memory_command:
-            try:
-                command_parts = message.content.split()
-                response = await process_thread_memory_command(message, command_parts)
-                await message.channel.send(response)
-            except Exception as e:
-                logger.error(f"Error processing thread memory command: {e}")
-                await message.channel.send(
-                    "Sorry, an error occurred while processing the thread memory command."
-                )
-    except Exception as e:
-        logger.error(f"Error processing command in on_message: {e}", exc_info=True)
-        # Optionally notify about the error in the channel if it's a user-facing command error
-        # await message.channel.send("Sorry, an error occurred while processing your command.")
+    # Check allowed channels for non-mention commands
+    if message.guild and hasattr(message.channel, "name"):
+        allowed_channels = [ALLOWED_CHANNEL_NAME]
+        if message.channel.name not in allowed_channels:
+            logger.debug(
+                f"Command ignored - channel #{message.channel.name} not in allowed channels: {allowed_channels}"
+            )
+            return
+
+    # Process the command
+    if commands["is_sum_day_command"]:
+        await handle_summary_command(message, 24, False, bot.user)
+    elif commands["is_sum_hr_command"]:
+        await handle_summary_command(message, 1, False, bot.user)
+    elif commands["is_chart_day_command"]:
+        await handle_summary_command(message, 24, True, bot.user)
+    elif commands["is_chart_hr_command"]:
+        await handle_summary_command(message, 1, True, bot.user)
+    elif commands["is_thread_memory_command"]:
+        try:
+            command_parts = message.content.split()
+            response = await process_thread_memory_command(message, command_parts)
+            await message.channel.send(response)
+        except Exception as e:
+            logger.error(f"Error processing thread memory command: {e}")
+            await message.channel.send(
+                "Sorry, an error occurred while processing the thread memory command."
+            )
 
 
 # Helper function for slash command handling

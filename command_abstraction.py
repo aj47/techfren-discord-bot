@@ -721,6 +721,170 @@ async def _store_dm_responses(
         logger.error(f"Database error storing DM response: {str(e)}", exc_info=True)
 
 
+async def _validate_summary_inputs(context: CommandContext, response_sender: ResponseSender, hours: int) -> bool:
+    """Validate inputs for summary command."""
+    import config
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if not isinstance(hours, int) or hours < 1:
+        logger.warning(f"Invalid hours parameter: {hours} (must be positive integer)")
+        await response_sender.send(
+            "Invalid hours parameter. Must be a positive number.", ephemeral=True
+        )
+        return False
+
+    if hours > config.MAX_SUMMARY_HOURS:
+        logger.warning(
+            f"Hours parameter {hours} exceeds maximum {config.MAX_SUMMARY_HOURS}"
+        )
+        error_msg = config.ERROR_MESSAGES["invalid_hours_range"]
+        await response_sender.send(error_msg, ephemeral=True)
+        return False
+
+    return True
+
+
+async def _check_rate_limits(context: CommandContext, response_sender: ResponseSender) -> bool:
+    """Check rate limits for summary command."""
+    from rate_limiter import check_rate_limit
+    import config
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    is_limited, wait_time, reason = check_rate_limit(str(context.user_id))
+    if is_limited:
+        if reason == "cooldown":
+            error_msg = config.ERROR_MESSAGES["rate_limit_cooldown"].format(
+                wait_time=wait_time
+            )
+        else:
+            error_msg = config.ERROR_MESSAGES["rate_limit_exceeded"].format(
+                wait_time=wait_time
+            )
+        await response_sender.send(error_msg, ephemeral=True)
+        logger.info(
+            f"Rate limited user {context.user_name} ({reason}): wait time {wait_time:.1f}s"
+        )
+        return False
+
+    return True
+
+
+async def _validate_database_connection(response_sender: ResponseSender) -> bool:
+    """Validate database connection for summary command."""
+    from database import check_database_connection
+    import database
+    import config
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if not database:
+        logger.error("Database module not available in handle_summary_command")
+        await response_sender.send(
+            config.ERROR_MESSAGES["database_unavailable"], ephemeral=True
+        )
+        return False
+
+    if not check_database_connection():
+        logger.error("Database connection check failed in handle_summary_command")
+        await response_sender.send(
+            config.ERROR_MESSAGES["database_error"], ephemeral=True
+        )
+        return False
+
+    return True
+
+
+async def _get_thread_context(context: CommandContext) -> str:
+    """Get thread context if available."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    thread_context = ""
+
+    if context.source_type == "message":
+        if hasattr(context, "thread_id") and context.thread_id:
+            thread_id = context.thread_id
+            if has_thread_memory(thread_id):
+                thread_context = get_thread_context(thread_id, max_exchanges=3)
+                logger.debug(
+                    f"Retrieved thread context for summary in thread {thread_id}"
+                )
+
+    return thread_context
+
+
+async def _send_summary_with_charts(sender: ResponseSender, summary_parts: list, chart_data: list):
+    """Send summary with charts helper."""
+    if chart_data and summary_parts:
+        await sender.send_with_charts(summary_parts[0], chart_data)
+        if len(summary_parts) > 1:
+            await sender.send_in_parts(summary_parts[1:])
+    else:
+        await sender.send_in_parts(summary_parts)
+
+
+async def _handle_guild_summary(
+    context: CommandContext,
+    response_sender: ResponseSender,
+    thread_manager: ThreadManager,
+    initial_message,
+    summary_parts: list,
+    chart_data: list,
+    channel_name_str: str,
+    hours: int,
+    today
+):
+    """Handle summary for guild channels with thread creation."""
+    import logging
+    import discord
+
+    logger = logging.getLogger(__name__)
+    thread_name = f"Summary - {channel_name_str} - {today.strftime('%Y-%m-%d')}"
+
+    if initial_message:
+        try:
+            thread = await thread_manager.create_thread_from_message(
+                initial_message, thread_name
+            )
+
+            if thread:
+                thread_sender = MessageResponseSender(thread)
+                await _send_summary_with_charts(thread_sender, summary_parts, chart_data)
+
+                await initial_message.edit(
+                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
+                )
+            else:
+                logger.warning("Thread creation failed, sending summary in main channel")
+                await initial_message.edit(
+                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
+                )
+                await _send_summary_with_charts(response_sender, summary_parts, chart_data)
+
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to edit initial message: {e}")
+            thread = await thread_manager.create_thread(thread_name)
+            if thread:
+                thread_sender = MessageResponseSender(thread)
+                await _send_summary_with_charts(thread_sender, summary_parts, chart_data)
+                await response_sender.send(f"Summary posted in thread: {thread.mention}")
+            else:
+                await _send_summary_with_charts(response_sender, summary_parts, chart_data)
+    else:
+        thread = await thread_manager.create_thread(thread_name)
+        if thread:
+            thread_sender = MessageResponseSender(thread)
+            await _send_summary_with_charts(thread_sender, summary_parts, chart_data)
+            await response_sender.send(f"Summary posted in thread: {thread.mention}")
+        else:
+            await _send_summary_with_charts(response_sender, summary_parts, chart_data)
+
+
 async def handle_summary_command(
     context: CommandContext,
     response_sender: ResponseSender,
@@ -741,48 +905,20 @@ async def handle_summary_command(
         force_charts: If True, use chart-focused analysis system
     """
     from datetime import datetime, timezone
-    from rate_limiter import check_rate_limit
-    from database import check_database_connection
     from llm_handler import call_llm_for_summary
     from message_utils import split_long_message
     import database
+    import config
     import logging
 
     logger = logging.getLogger(__name__)
 
     # Input validation
-    if not isinstance(hours, int) or hours < 1:
-        logger.warning(f"Invalid hours parameter: {hours} (must be positive integer)")
-        await response_sender.send(
-            "Invalid hours parameter. Must be a positive number.", ephemeral=True
-        )
-        return
-
-    import config
-
-    if hours > config.MAX_SUMMARY_HOURS:
-        logger.warning(
-            f"Hours parameter {hours} exceeds maximum {config.MAX_SUMMARY_HOURS}"
-        )
-        error_msg = config.ERROR_MESSAGES["invalid_hours_range"]
-        await response_sender.send(error_msg, ephemeral=True)
+    if not await _validate_summary_inputs(context, response_sender, hours):
         return
 
     # Rate limiting
-    is_limited, wait_time, reason = check_rate_limit(str(context.user_id))
-    if is_limited:
-        if reason == "cooldown":
-            error_msg = config.ERROR_MESSAGES["rate_limit_cooldown"].format(
-                wait_time=wait_time
-            )
-        else:
-            error_msg = config.ERROR_MESSAGES["rate_limit_exceeded"].format(
-                wait_time=wait_time
-            )
-        await response_sender.send(error_msg, ephemeral=True)
-        logger.info(
-            f"Rate limited user {context.user_name} ({reason}): wait time {wait_time:.1f}s"
-        )
+    if not await _check_rate_limits(context, response_sender):
         return
 
     # Send initial response
@@ -796,18 +932,7 @@ async def handle_summary_command(
         channel_name_str = context.channel_name or "DM"
 
         # Database checks
-        if not database:
-            logger.error("Database module not available in handle_summary_command")
-            await response_sender.send(
-                config.ERROR_MESSAGES["database_unavailable"], ephemeral=True
-            )
-            return
-
-        if not check_database_connection():
-            logger.error("Database connection check failed in handle_summary_command")
-            await response_sender.send(
-                config.ERROR_MESSAGES["database_error"], ephemeral=True
-            )
+        if not await _validate_database_connection(response_sender):
             return
 
         # Get messages for the specified time period
@@ -828,184 +953,58 @@ async def handle_summary_command(
             return
 
         # Check for thread context if we're in a thread
-        thread_context = ""
-        thread_id = None
-        if context.source_type == "message":
-            # For message-based commands, we might be in a thread
-            # We'll get the thread ID from the context if available
-            if hasattr(context, "thread_id") and context.thread_id:
-                thread_id = context.thread_id
-                if has_thread_memory(thread_id):
-                    thread_context = get_thread_context(thread_id, max_exchanges=3)
-                    logger.debug(
-                        f"Retrieved thread context for summary in thread {thread_id}"
-                    )
-
-        # Generate summary with thread context if available
+        thread_context = await _get_thread_context(context)
         if thread_context:
-            # Add thread context to the summary generation
-            enhanced_messages = messages_for_summary.copy()
-            # We could add the thread context as a synthetic message, but for now just log it
             logger.info(
-                f"Generating summary with thread context awareness for {len(enhanced_messages)} messages"
+                f"Generating summary with thread context awareness for {len(messages_for_summary)} messages"
             )
 
+        # Generate summary
         summary, chart_data = await call_llm_for_summary(
             messages_for_summary, channel_name_str, today, hours, force_charts
         )
         summary_parts = await split_long_message(summary)
 
-        # Send summary efficiently with thread creation
+        # Send summary
         if context.guild_id:
-            # For guild channels: Create thread and put summary content in it
-            thread_name = f"Summary - {channel_name_str} - {today.strftime('%Y-%m-%d')}"
-
-            if initial_message:
-                try:
-                    # Create thread from the initial message (will fetch with guild info if needed)
-                    thread = await thread_manager.create_thread_from_message(
-                        initial_message, thread_name
-                    )
-
-                    if thread:
-                        # Send all summary content in the thread
-                        thread_sender = MessageResponseSender(thread)
-
-                        # If we have charts, send them with the first part
-                        if chart_data and summary_parts:
-                            await thread_sender.send_with_charts(
-                                summary_parts[0], chart_data
-                            )
-                            # Send remaining parts without charts
-                            if len(summary_parts) > 1:
-                                await thread_sender.send_in_parts(summary_parts[1:])
-                        else:
-                            await thread_sender.send_in_parts(summary_parts)
-
-                        # Edit the initial message to just indicate the summary is in the thread
-                        await initial_message.edit(
-                            content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
-                        )
-                    else:
-                        # Fallback: if thread creation failed, send summary in main channel
-                        logger.warning(
-                            "Thread creation failed, sending summary in main channel"
-                        )
-                        await initial_message.edit(
-                            content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"
-                        )
-
-                        # Send with charts if available
-                        if chart_data and summary_parts:
-                            await response_sender.send_with_charts(
-                                summary_parts[0], chart_data
-                            )
-                            if len(summary_parts) > 1:
-                                await response_sender.send_in_parts(summary_parts[1:])
-                        else:
-                            await response_sender.send_in_parts(summary_parts)
-
-                except discord.HTTPException as e:
-                    logger.warning(f"Failed to edit initial message: {e}")
-                    # Fallback: send summary in thread as before
-                    thread = await thread_manager.create_thread(thread_name)
-                    if thread:
-                        thread_sender = MessageResponseSender(thread)
-
-                        # Send with charts if available
-                        if chart_data and summary_parts:
-                            await thread_sender.send_with_charts(
-                                summary_parts[0], chart_data
-                            )
-                            if len(summary_parts) > 1:
-                                await thread_sender.send_in_parts(summary_parts[1:])
-                        else:
-                            await thread_sender.send_in_parts(summary_parts)
-
-                        await response_sender.send(
-                            f"Summary posted in thread: {thread.mention}"
-                        )
-                    else:
-                        # Ultimate fallback: send summary parts directly
-                        if chart_data and summary_parts:
-                            await response_sender.send_with_charts(
-                                summary_parts[0], chart_data
-                            )
-                            if len(summary_parts) > 1:
-                                await response_sender.send_in_parts(summary_parts[1:])
-                        else:
-                            await response_sender.send_in_parts(summary_parts)
-            else:
-                # No initial message, create thread and send summary
-                thread = await thread_manager.create_thread(thread_name)
-                if thread:
-                    thread_sender = MessageResponseSender(thread)
-
-                    # Send with charts if available
-                    if chart_data and summary_parts:
-                        await thread_sender.send_with_charts(
-                            summary_parts[0], chart_data
-                        )
-                        if len(summary_parts) > 1:
-                            await thread_sender.send_in_parts(summary_parts[1:])
-                    else:
-                        await thread_sender.send_in_parts(summary_parts)
-
-                    await response_sender.send(
-                        f"📊 Summary generated - see thread: {thread.mention}"
-                    )
-                else:
-                    # Fallback: send summary parts directly
-                    if chart_data and summary_parts:
-                        await response_sender.send_with_charts(
-                            summary_parts[0], chart_data
-                        )
-                        if len(summary_parts) > 1:
-                            await response_sender.send_in_parts(summary_parts[1:])
-                    else:
-                        await response_sender.send_in_parts(summary_parts)
+            await _handle_guild_summary(
+                context, response_sender, thread_manager, initial_message,
+                summary_parts, chart_data, channel_name_str, hours, today
+            )
         else:
-            # For DMs: send summary parts directly
-            if chart_data and summary_parts:
-                await response_sender.send_with_charts(summary_parts[0], chart_data)
-                if len(summary_parts) > 1:
-                    await response_sender.send_in_parts(summary_parts[1:])
-            else:
-                await response_sender.send_in_parts(summary_parts)
+            # For DMs: Send summary directly in the channel
+            await _send_summary_with_charts(response_sender, summary_parts, chart_data)
 
-            # Store bot responses in database for DMs
-            if context.source_type == "message" and not context.guild_id:
-                await _store_dm_responses(summary_parts, context, bot_user)
+        # Store bot responses in database for DMs
+        if context.source_type == "message" and not context.guild_id:
+            await _store_dm_responses(summary_parts, context, bot_user)
 
-            # Store thread memory if we're in a thread
-            if thread_id and summary:
-                try:
-                    # Create a concise user query for thread memory
-                    command_description = f"Requested {hours}h summary" + (
-                        " with charts" if force_charts else ""
-                    )
+        # Store thread context memory if available
+        thread_context = await _get_thread_context(context)
+        if thread_context and hasattr(context, "thread_id") and context.thread_id:
+            try:
+                command_description = f"Requested {hours}h summary" + (
+                    " with charts" if force_charts else ""
+                )
 
-                    store_thread_exchange(
-                        thread_id=thread_id,
-                        user_id=str(context.user_id),
-                        user_name=context.user_name,
-                        user_message=command_description,
-                        bot_response=(
-                            summary[:500] + "..." if len(summary) > 500 else summary
-                        ),  # Store truncated version
-                        guild_id=str(context.guild_id) if context.guild_id else None,
-                        channel_id=str(context.channel_id),
-                        is_chart_analysis=force_charts,
-                    )
-                    logger.debug(
-                        f"Stored summary thread exchange for thread {thread_id}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to store summary thread exchange: {e}")
+                store_thread_exchange(
+                    thread_id=context.thread_id,
+                    user_id=str(context.user_id),
+                    user_name=context.user_name,
+                    user_message=command_description,
+                    bot_response=(
+                        summary[:500] + "..." if len(summary) > 500 else summary
+                    ),
+                    guild_id=str(context.guild_id) if context.guild_id else None,
+                    channel_id=str(context.channel_id),
+                    is_chart_analysis=force_charts,
+                )
+                logger.debug(f"Stored summary thread exchange for thread {context.thread_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store summary thread exchange: {e}")
 
         # Store summary in database
         try:
-            # Extract unique users from messages for active_users list
             active_users = list(
                 set(
                     msg.get("author_name", "Unknown")
@@ -1033,8 +1032,6 @@ async def handle_summary_command(
 
     except Exception as e:
         logger.error(f"Error in handle_summary_command: {str(e)}", exc_info=True)
-        import config
-
         await response_sender.send(
             config.ERROR_MESSAGES["summary_error"], ephemeral=True
         )

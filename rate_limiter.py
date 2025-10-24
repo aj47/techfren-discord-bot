@@ -29,7 +29,7 @@ def check_rate_limit(user_id):
     Returns:
         tuple: (is_rate_limited, seconds_to_wait, reason)
     """
-    global last_cleanup_time, RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
+    global last_cleanup_time
     current_time = time.time()
 
     # Use lock for thread safety

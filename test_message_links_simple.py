@@ -6,13 +6,12 @@ Simple test script to verify that message link generation works.
 import sys
 import os
 from datetime import datetime, timezone, timedelta
-
-# Add the current directory to the Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from database import store_message, get_channel_messages_for_day, init_database
 from message_utils import generate_discord_message_link
 from logging_config import logger
+
+# Add the current directory to the Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_message_links():

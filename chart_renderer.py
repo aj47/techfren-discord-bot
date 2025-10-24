@@ -274,6 +274,106 @@ class ChartRenderer:
             logger.error(f"Error parsing markdown table: {e}")
             return None
 
+    def _analyze_data_patterns(self, rows: List[List[str]]) -> Dict[str, any]:
+        """Analyze data patterns in table rows."""
+        numeric_count = 0
+        total_rows = len(rows)
+        has_percentages = False
+        has_time_data = False
+
+        for row in rows:
+            if len(row) >= 2:
+                value_str = row[1].strip()
+
+                # Check for percentage indicators
+                if "%" in value_str:
+                    has_percentages = True
+
+                # Check for time patterns
+                if any(pattern in row[0].lower() for pattern in ["time", "hour", "day", "date", ":"]):
+                    has_time_data = True
+
+                try:
+                    clean_value = value_str.replace("%", "").replace(",", "").strip()
+                    float(clean_value)
+                    numeric_count += 1
+                except ValueError:
+                    pass
+
+        return {
+            "numeric_count": numeric_count,
+            "total_rows": total_rows,
+            "has_percentages": has_percentages,
+            "has_time_data": has_time_data
+        }
+
+    def _check_pie_chart_suitability(self, rows: List[List[str]], has_percentages: bool) -> bool:
+        """Check if data is suitable for pie chart."""
+        if not has_percentages:
+            return False
+
+        try:
+            values = [float(row[1].replace("%", "").replace(",", "").strip()) for row in rows]
+            total = sum(values)
+            return 95 <= total <= 105
+        except (ValueError, TypeError, ZeroDivisionError):
+            return False
+
+    def _analyze_multicolumn_data(self, headers: List[str], rows: List[List[str]]) -> Dict[str, any]:
+        """Analyze multi-column data for chart type determination."""
+        import re
+
+        first_col_time = any(pattern in headers[0].lower() for pattern in ["time", "hour", "day", "date", "period"])
+        numeric_cols = []
+
+        for col_idx in range(1, len(headers)):
+            numeric_count = 0
+            for row in rows:
+                if len(row) > col_idx:
+                    try:
+                        value = str(row[col_idx]).replace("%", "").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+                        number_match = re.search(r"(\d+(?:\.\d+)?)", value)
+                        if number_match:
+                            float(number_match.group(1))
+                            numeric_count += 1
+                        else:
+                            float(value)
+                            numeric_count += 1
+                    except (ValueError, AttributeError):
+                        pass
+
+            if numeric_count / len(rows) > 0.3:
+                numeric_cols.append(col_idx)
+
+        return {
+            "first_col_time": first_col_time,
+            "numeric_cols": numeric_cols
+        }
+
+    def _find_any_numeric_column(self, headers: List[str], rows: List[List[str]]) -> bool:
+        """Find any numeric column with aggressive detection."""
+        import re
+
+        for col_idx in range(1, len(headers)):
+            numeric_count = 0
+            for row in rows:
+                if len(row) > col_idx:
+                    try:
+                        value = str(row[col_idx]).replace("%", "").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+                        number_match = re.search(r"(\d+(?:\.\d+)?)", value)
+                        if number_match:
+                            float(number_match.group(1))
+                            numeric_count += 1
+                        else:
+                            float(value)
+                            numeric_count += 1
+                    except (ValueError, AttributeError):
+                        pass
+
+            if numeric_count / len(rows) > 0.2:
+                return True
+        return False
+
     def _infer_chart_type(self, table_data: Dict) -> str:
         """
         Analyze table data to determine the best chart type based on content patterns.
@@ -289,56 +389,16 @@ class ChartRenderer:
 
         # If only 2 columns, analyze the content type
         if len(headers) == 2:
-            # Check if second column is mostly numeric
-            numeric_count = 0
-            total_rows = len(rows)
-            has_percentages = False
-            has_time_data = False
+            patterns = self._analyze_data_patterns(rows)
 
-            # Analyze data patterns
-            for row in rows:
-                if len(row) >= 2:
-                    value_str = row[1].strip()
+            # If more than 30% numeric, choose appropriate chart type
+            if patterns["numeric_count"] / patterns["total_rows"] > 0.3:
+                # Check for pie chart suitability
+                if self._check_pie_chart_suitability(rows, patterns["has_percentages"]):
+                    return "pie"
 
-                    # Check for percentage indicators
-                    if "%" in value_str:
-                        has_percentages = True
-
-                    # Check for time patterns (HH:MM, dates, etc.)
-                    if any(
-                        pattern in row[0].lower()
-                        for pattern in ["time", "hour", "day", "date", ":"]
-                    ):
-                        has_time_data = True
-
-                    try:
-                        # Try to parse as number (removing % signs and commas)
-                        clean_value = (
-                            value_str.replace("%", "").replace(",", "").strip()
-                        )
-                        float(clean_value)
-                        numeric_count += 1
-                    except ValueError:
-                        pass
-
-            # If more than 30% numeric, choose appropriate chart type (lowered threshold)
-            if numeric_count / total_rows > 0.3:
-                # For percentage data or data that sums to ~100, use pie chart
-                if has_percentages:
-                    try:
-                        values = [
-                            float(row[1].replace("%", "").replace(",", "").strip())
-                            for row in rows
-                        ]
-                        total = sum(values)
-                        # If percentages sum to roughly 100%, it's distribution data
-                        if 95 <= total <= 105:
-                            return "pie"
-                    except (ValueError, TypeError, ZeroDivisionError):
-                        pass
-
-                # For time-based data, prefer line chart if it makes sense
-                if has_time_data and len(rows) >= 3:
+                # For time-based data, prefer line chart
+                if patterns["has_time_data"] and len(rows) >= 3:
                     return "line"
 
                 # Default to bar chart for numeric comparisons
@@ -346,95 +406,24 @@ class ChartRenderer:
 
         # If 3+ columns with numeric data, analyze for time series
         if len(headers) >= 3:
-            # Check first column for time indicators
-            first_col_time = any(
-                pattern in headers[0].lower()
-                for pattern in ["time", "hour", "day", "date", "period"]
-            )
-
-            # Check if we have numeric columns with enhanced detection
-            numeric_cols = []
-            for col_idx in range(1, len(headers)):
-                numeric_count = 0
-                for row in rows:
-                    if len(row) > col_idx:
-                        try:
-                            # More aggressive numeric detection
-                            value = (
-                                str(row[col_idx])
-                                .replace("%", "")
-                                .replace(",", "")
-                                .replace("$", "")
-                                .replace("€", "")
-                                .replace("£", "")
-                                .strip()
-                            )
-                            # Try to extract numbers from text like "High (85%)" or "Level 3"
-                            import re
-
-                            number_match = re.search(r"(\d+(?:\.\d+)?)", value)
-                            if number_match:
-                                float(number_match.group(1))
-                                numeric_count += 1
-                            else:
-                                float(value)
-                                numeric_count += 1
-                        except (ValueError, AttributeError):
-                            pass
-
-                # Lowered threshold to 30% for more aggressive detection
-                if numeric_count / len(rows) > 0.3:
-                    numeric_cols.append(col_idx)
+            multi_data = self._analyze_multicolumn_data(headers, rows)
 
             # If we have time data and multiple numeric columns, use line chart
-            if first_col_time and len(numeric_cols) >= 2:
+            if multi_data["first_col_time"] and len(multi_data["numeric_cols"]) >= 2:
                 return "line"
-            elif len(numeric_cols) >= 2:
+            elif len(multi_data["numeric_cols"]) >= 2:
                 return "line"
-            elif len(numeric_cols) == 1:
+            elif len(multi_data["numeric_cols"]) == 1:
                 return "bar"
 
-        # For multi-column tables, try to find any visualizable data with enhanced detection
-        # Look for any numeric columns that could be charted
-        for col_idx in range(1, len(headers)):
-            numeric_count = 0
-            for row in rows:
-                if len(row) > col_idx:
-                    try:
-                        # Enhanced numeric extraction
-                        value = (
-                            str(row[col_idx])
-                            .replace("%", "")
-                            .replace(",", "")
-                            .replace("$", "")
-                            .replace("€", "")
-                            .replace("£", "")
-                            .strip()
-                        )
-                        # Try to extract numbers from text
-                        import re
-
-                        number_match = re.search(r"(\d+(?:\.\d+)?)", value)
-                        if number_match:
-                            float(number_match.group(1))
-                            numeric_count += 1
-                        else:
-                            float(value)
-                            numeric_count += 1
-                    except (ValueError, AttributeError):
-                        pass
-
-            # If we find any column with >20% numeric data, use bar chart (very aggressive)
-            if numeric_count / len(rows) > 0.2:
-                return "bar"
+        # For multi-column tables, try to find any visualizable data
+        if self._find_any_numeric_column(headers, rows):
+            return "bar"
 
         # If no numeric data, but we have categorical data that varies, still try bar chart
         if len(headers) >= 2 and len(rows) > 1:
-            # Check if first column has varied categorical data
             unique_values = set(str(row[0]) for row in rows if len(row) > 0)
-            if (
-                len(unique_values) > 1 and len(unique_values) <= 10
-            ):  # Good for categorical visualization
+            if len(unique_values) > 1 and len(unique_values) <= 10:
                 return "bar"
 
         # Default to table image for complex/text data

@@ -614,7 +614,7 @@ def get_channel_messages_for_hours(
                        scraped_url, scraped_content_summary, scraped_content_key_points,
                        guild_id
                 FROM messages
-                WHERE channel_id = ? 
+                WHERE channel_id = ?
                 AND (
                     datetime(created_at) BETWEEN datetime(?) AND datetime(?)
                     OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
@@ -923,12 +923,12 @@ def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
             # Query for messages with scraped content for this URL
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     scraped_url,
                     scraped_content_summary,
                     scraped_content_key_points,
                     created_at
-                FROM messages 
+                FROM messages
                 WHERE scraped_url = ? AND scraped_content_summary IS NOT NULL
                 ORDER BY created_at DESC
                 LIMIT 1
