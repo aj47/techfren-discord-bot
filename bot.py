@@ -550,19 +550,25 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     # Immediately defer to avoid timeout, then do validation in wrapper
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
-@bot.tree.command(name="analyze-images", description="Analyze images in the current message or reply to a message with images")
-async def analyze_images_slash(interaction: discord.Interaction, analysis_type: str = "general"):
-    """Slash command to analyze images"""
-    await _handle_analyze_images_command(interaction, slash=True, analysis_type=analysis_type)
+@bot.tree.command(name="analyze-images", description="Analyze recent images in the channel")
+async def analyze_images_slash(interaction: discord.Interaction):
+    """Slash command to analyze recent images"""
+    await _handle_analyze_images_command(interaction, slash=True, target_message=None)
 
-async def _handle_analyze_images_command(interaction, *, slash: bool = False, analysis_type: str = "general"):
+@bot.tree.context_menu(name="Analyze images")
+async def analyze_images_context_menu(interaction: discord.Interaction, message: discord.Message):
+    """Context menu command to analyze images in a specific message"""
+    await _handle_analyze_images_command(interaction, slash=True, target_message=message)
+
+async def _handle_analyze_images_command(interaction, *, slash: bool = False, analysis_type: str = "general", target_message: discord.Message = None):
     """
-    Handle image analysis command (both slash and mention).
+    Handle image analysis command (both slash, mention, and context menu).
     
     Args:
         interaction: Discord interaction or message
         slash (bool): Whether this is a slash command
         analysis_type (str): Type of analysis to perform
+        target_message (discord.Message): Specific message to analyze (from context menu)
     """
     try:
         # Defer the response if it's a slash command
@@ -570,14 +576,12 @@ async def _handle_analyze_images_command(interaction, *, slash: bool = False, an
             await interaction.response.defer()
         
         # Get the message to analyze
-        target_message = None
-        
         if slash:
-            # For slash command, check the referenced message (when replying)
-            if interaction.message and interaction.message.reference and interaction.message.reference.message_id:
-                target_message = await interaction.channel.fetch_message(interaction.message.reference.message_id)
-            # If no reply, look for images in recent messages in the channel
+            # Prefer explicit target (e.g., from context menu)
+            if target_message is not None:
+                pass  # Use the provided target_message
             else:
+                # Look for images in recent messages in the channel
                 async for msg in interaction.channel.history(limit=10):
                     if msg.attachments and any(att.content_type and att.content_type.startswith('image/') for att in msg.attachments):
                         target_message = msg
@@ -624,13 +628,13 @@ async def _handle_analyze_images_command(interaction, *, slash: bool = False, an
                 
                 full_response = "\n".join(response_parts)
                 
-                # Send response, splitting if too long
-                from message_utils import split_long_message
+                # Split response into parts if needed
+                parts = await split_long_message(full_response)
                 if slash:
-                    for part in split_long_message(full_response):
+                    for part in parts:
                         await interaction.followup.send(part)
                 else:
-                    for part in split_long_message(full_response):
+                    for part in parts:
                         await interaction.reply(part, mention_author=False)
             else:
                 no_analysis_msg = "No analysis data available for the images."
