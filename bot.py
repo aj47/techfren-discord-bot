@@ -45,10 +45,10 @@ async def process_url(message_id: str, url: str):
         # Check if the URL is from YouTube
         if await is_youtube_url(url):
             logger.info(f"Detected YouTube URL: {url}")
-            
+
             # Use YouTube handler to scrape content
             scraped_result = await scrape_youtube_content(url)
-            
+
             # If YouTube scraping fails, fall back to Firecrawl
             if not scraped_result:
                 logger.warning(f"Failed to scrape YouTube content, falling back to Firecrawl: {url}")
@@ -155,24 +155,24 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
     """
     Handle messages in the links dump channel.
     Delete non-link messages with a warning that auto-deletes after 1 minute.
-    
+
     Args:
         message: The Discord message to check
-        
+
     Returns:
         bool: True if message was handled (deleted), False if message should remain
     """
     try:
         # Import config here to avoid circular imports
         import config
-        
+
         # Check if links dump channel is configured and this is that channel
         if not hasattr(config, 'links_dump_channel_id') or not config.links_dump_channel_id:
             return False
-            
+
         # Check if this is the links dump channel or a thread within it
         is_links_dump_channel = False
-        
+
         if str(message.channel.id) == config.links_dump_channel_id:
             # Direct message in the links dump channel
             is_links_dump_channel = True
@@ -180,18 +180,18 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
             # Message in a thread created from the links dump channel - allow these
             logger.info(f"Message {message.id} is in a thread from links dump channel, allowing")
             return False
-            
+
         if not is_links_dump_channel:
             return False
-            
+
         # Don't handle bot messages or commands
         if message.author.bot:
             return False
-            
+
         # Check for URLs in the message content using the same regex as process_url
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
         urls = re.findall(url_pattern, message.content)
-        
+
 
         # If message contains URLs, allow it
         if urls:
@@ -206,17 +206,17 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
                 f"Message {message.id} is forwarded from another channel, allowing"
             )
             return False
-            
+
         # Message doesn't contain URLs, send warning and schedule deletion
         logger.info(f"Deleting non-link message {message.id} in links dump channel")
-        
+
         warning_msg = await message.channel.send(
             f"{message.author.mention} We only allow sharing of links in this channel. "
             "If you want to comment on a link please put it in a thread, "
             "otherwise type your message in the appropriate channel. "
             "This message will be deleted in 1 minute."
         )
-        
+
         # Schedule deletion of both messages after 1 minute (60 seconds)
         async def delete_messages():
             await asyncio.sleep(60)  # 1 minute
@@ -229,7 +229,7 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
                 logger.warning(f"No permission to delete original message {message.id}")
             except Exception as e:
                 logger.error(f"Error deleting original message {message.id}: {e}")
-                
+
             try:
                 await warning_msg.delete()
                 logger.info(f"Deleted warning message {warning_msg.id} from links dump channel")
@@ -239,12 +239,12 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
                 logger.warning(f"No permission to delete warning message {warning_msg.id}")
             except Exception as e:
                 logger.error(f"Error deleting warning message {warning_msg.id}: {e}")
-        
+
         # Create background task for deletion
         asyncio.create_task(delete_messages())
-        
+
         return True  # Message was handled
-        
+
     except Exception as e:
         logger.error(f"Error handling links dump channel message {message.id}: {e}", exc_info=True)
         return False
@@ -444,6 +444,9 @@ async def _handle_slash_command_wrapper(
         logger.warning(f"Interaction for {command_name} was not deferred by command handler, deferring now")
         try:
             await interaction.response.defer()
+        except discord.errors.NotFound as e:
+            logger.error(f"Interaction for {command_name} not found during safety defer: {e}")
+            return
         except Exception as e:
             logger.error(f"Failed to defer interaction for {command_name}: {e}")
             return
@@ -483,27 +486,45 @@ async def _handle_slash_command_wrapper(
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
-        try:
-            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-            await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
-        except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
-            logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
-        except Exception as unexpected_error:
-            logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
+        # Only try to send followup if interaction is still valid
+        if not interaction.is_expired():
+            try:
+                allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+                await interaction.followup.send(error_message, ephemeral=True, allowed_mentions=allowed_mentions)
+            except (discord.HTTPException, discord.Forbidden, discord.NotFound) as followup_error:
+                logger.warning(f"Failed to send error followup for {command_name}: {followup_error}")
+            except Exception as unexpected_error:
+                logger.error(f"Unexpected error sending followup for {command_name}: {unexpected_error}", exc_info=True)
+        else:
+            logger.warning(f"Interaction for {command_name} has expired, cannot send error followup")
 
 # Slash Commands
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
     # Defer IMMEDIATELY to avoid 3-second timeout
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound as e:
+        logger.error(f"sum-day interaction not found during defer: {e}")
+        return
+    except Exception as e:
+        logger.error(f"Failed to defer sum-day interaction: {e}")
+        return
     await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
     # Defer IMMEDIATELY to avoid 3-second timeout
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound as e:
+        logger.error(f"sum-hr interaction not found during defer: {e}")
+        return
+    except Exception as e:
+        logger.error(f"Failed to defer sum-hr interaction: {e}")
+        return
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
