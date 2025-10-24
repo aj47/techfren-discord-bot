@@ -626,6 +626,7 @@ STRUCTURE:
 FORMATTING:
 - Use natural language, not rigid bullet points
 - Highlight usernames with backticks: `username`
+- Reference channels with # prefix: #channel-name (e.g., #general, #tech-talk)
 - Include Discord message links: [Source](https://discord.com/channels/...)
 - Focus on storytelling rather than data analysis
 
@@ -768,6 +769,12 @@ RESPONSE STRUCTURE:
 3. Key insights from the data
 4. Notable patterns or trends
 
+FORMATTING:
+- Use Discord markdown effectively
+- Highlight usernames with backticks: `username`
+- Reference channels with # prefix: #channel-name (e.g., #general, #tech-talk)
+- Include Discord message links when available
+
 PROHIBITED:
 ✗ Generic headers like "Item", "Value", "Data"
 ✗ Unverified numbers or estimates
@@ -804,6 +811,7 @@ COMMUNITY FOCUS:
 FORMATTING:
 - Use Discord markdown effectively
 - Highlight usernames with backticks: `username`
+- Reference channels with # prefix: #channel-name (e.g., #general, #tech-talk)
 - Include relevant links and references
 - Use code blocks for actual code snippets only
 - Keep responses conversational and engaging
