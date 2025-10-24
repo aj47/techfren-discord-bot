@@ -6,7 +6,7 @@ Detects markdown tables in LLM responses and converts them to chart images using
 import re
 import logging
 from typing import List, Dict, Tuple, Optional
-from quickchart.quickchart import QuickChart
+from quickchart import QuickChart
 
 logger = logging.getLogger(__name__)
 
