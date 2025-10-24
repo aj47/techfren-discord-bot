@@ -102,20 +102,20 @@ async def call_llm_api(query, message_context=None):
     try:
         logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
+        # Check if LLM API key exists
+        if not hasattr(config, 'llm_api_key') or not config.llm_api_key:
+            logger.error("LLM API key not found in config.py or is empty")
+            return "Error: LLM API key is missing. Please contact the bot administrator.", []
 
-# Initialize the OpenAI client with Perplexity base URL
+        # Initialize the OpenAI-compatible client
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key,
             timeout=60.0
         )
         
-        # Get the model from config or use default (Perplexity models)
-        model = getattr(config, 'llm_model', "sonar")
+        # Get the model from config
+        model = config.llm_model
         
         # Prepare the user content with message context if available
         user_content = query
@@ -235,10 +235,11 @@ async def call_llm_api(query, message_context=None):
         # Extract the response
         message = completion.choices[0].message.content
 
-        # Check if Perplexity returned citations
+        # Check if the LLM provider returned citations (optional feature)
+        # Some providers like Perplexity support this, others don't
         citations = None
         if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity")
+            logger.info(f"Found {len(completion.citations)} citations from LLM provider")
             citations = completion.citations
 
         # Apply Discord formatting enhancements and extract charts
@@ -362,20 +363,20 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
+        # Check if LLM API key exists
+        if not hasattr(config, 'llm_api_key') or not config.llm_api_key:
+            logger.error("LLM API key not found in config.py or is empty")
+            return "Error: LLM API key is missing. Please contact the bot administrator.", []
 
-        # Initialize the OpenAI client with Perplexity base URL
+        # Initialize the OpenAI-compatible client
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key,
             timeout=60.0
         )
 
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
+        # Get the model from config
+        model = config.llm_model
 
         # Make the API request with a higher token limit for summaries
         completion = await openai_client.chat.completions.create(
@@ -401,10 +402,11 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         # Extract the response
         summary = completion.choices[0].message.content
 
-        # Check if Perplexity returned citations
+        # Check if the LLM provider returned citations (optional feature)
+        # Some providers like Perplexity support this, others don't
         citations = None
         if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity for summary")
+            logger.info(f"Found {len(completion.citations)} citations from LLM provider for summary")
             citations = completion.citations
 
         # Apply Discord formatting enhancements to the summary and extract charts
@@ -449,20 +451,20 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
         logger.info(f"Summarizing content from URL: {url}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
+        # Check if LLM API key exists
+        if not hasattr(config, 'llm_api_key') or not config.llm_api_key:
+            logger.error("LLM API key not found in config.py or is empty")
             return None
 
-        # Initialize the OpenAI client with Perplexity base URL
+        # Initialize the OpenAI-compatible client
         openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key,
             timeout=60.0
         )
 
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
+        # Get the model from config
+        model = config.llm_model
 
         # Create the prompt for the LLM
         prompt = f"""Please analyze the following content from the URL: {url}
@@ -505,7 +507,7 @@ Format your response exactly as follows:
                     "content": prompt
                 }
             ],
-            max_tokens=200,  # Perplexity limit: 200 output tokens
+            max_tokens=200,  # Limit for content summarization
             temperature=0.3   # Lower temperature for more focused and consistent summaries
         )
 

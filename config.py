@@ -18,16 +18,19 @@ token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
-# Perplexity API Key (required)
-# Environment variable: PERPLEXITY_API_KEY
-perplexity = os.getenv('PERPLEXITY_API_KEY')
-if not perplexity:
-    raise ValueError("PERPLEXITY_API_KEY environment variable is required")
+# LLM API Key (required)
+# Environment variable: LLM_API_KEY
+# Works with any OpenAI-compatible API (OpenRouter, Fireworks, Together AI, Ollama, vLLM, etc.)
+llm_api_key = os.getenv('LLM_API_KEY')
+if not llm_api_key:
+    raise ValueError("LLM_API_KEY environment variable is required")
 
-# LLM Model Configuration (optional)
+# LLM Model Configuration (required)
 # Environment variable: LLM_MODEL
-# Default model is "sonar" for Perplexity
-llm_model = os.getenv('LLM_MODEL', 'sonar')
+# Examples: "gpt-4", "claude-3-5-sonnet", "meta-llama/llama-3-70b", "sonar", etc.
+llm_model = os.getenv('LLM_MODEL')
+if not llm_model:
+    raise ValueError("LLM_MODEL environment variable is required")
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
@@ -58,10 +61,19 @@ reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
-# LLM API Configuration (optional)
-# Environment variable: PERPLEXITY_BASE_URL
-# Base URL for Perplexity API (or compatible API)
-perplexity_base_url = os.getenv('PERPLEXITY_BASE_URL', 'https://api.perplexity.ai')
+# LLM API Configuration (required)
+# Environment variable: LLM_BASE_URL
+# Base URL for OpenAI-compatible API
+# Examples:
+#   - OpenAI: https://api.openai.com/v1
+#   - Perplexity: https://api.perplexity.ai
+#   - OpenRouter: https://openrouter.ai/api/v1
+#   - Fireworks: https://api.fireworks.ai/inference/v1
+#   - Together AI: https://api.together.xyz/v1
+#   - Ollama: http://localhost:11434/v1
+llm_base_url = os.getenv('LLM_BASE_URL')
+if not llm_base_url:
+    raise ValueError("LLM_BASE_URL environment variable is required")
 
 # HTTP Headers Configuration (optional)
 # Environment variables: HTTP_REFERER, X_TITLE
