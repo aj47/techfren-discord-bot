@@ -564,12 +564,17 @@ class ChartRenderer:
         # Determine if values should show percentages
         value_suffix = '%' if has_percentages else ''
 
+        # Create more detailed axis labels and legend descriptions
+        x_axis_label = self._enhance_axis_label(headers[label_col_idx] if len(headers) > label_col_idx else 'Category', 'x')
+        y_axis_label = self._enhance_axis_label(headers[value_col_idx] if len(headers) > value_col_idx else 'Value', 'y', value_suffix)
+        legend_label = self._enhance_legend_label(headers[value_col_idx] if len(headers) > value_col_idx else 'Value', 'bar', value_suffix)
+
         config = {
             'type': 'bar',
             'data': {
                 'labels': labels,
                 'datasets': [{
-                    'label': headers[value_col_idx] if len(headers) > value_col_idx else 'Value',
+                    'label': legend_label,
                     'data': values,
                     'backgroundColor': colors,
                     'borderColor': [color.replace('0.8', '1') for color in colors],
@@ -604,14 +609,22 @@ class ChartRenderer:
                     'x': {
                         'title': {
                             'display': True,
-                            'text': headers[label_col_idx] if len(headers) > label_col_idx else 'Category'
+                            'text': x_axis_label,
+                            'font': {
+                                'size': 14,
+                                'weight': 'bold'
+                            }
                         }
                     },
                     'y': {
                         'beginAtZero': True,
                         'title': {
                             'display': True,
-                            'text': headers[value_col_idx] if len(headers) > value_col_idx else 'Value'
+                            'text': y_axis_label,
+                            'font': {
+                                'size': 14,
+                                'weight': 'bold'
+                            }
                         },
                         'ticks': {
                             'callback': f'(value) => value + "{value_suffix}"'
@@ -641,12 +654,17 @@ class ChartRenderer:
         # Validate and clean numeric data
         values, has_percentages = ChartDataValidator.validate_numeric_data(raw_values)
 
-        # Generate a more descriptive title
+        # Generate title
         title = self._generate_chart_title(headers, 'pie')
 
         # Get appropriate colors for pie chart
         colors = ChartDataValidator.get_color_palette(len(values), 'pie')
 
+        # Determine if values should show percentages
+        value_suffix = '%' if has_percentages else ''
+
+        # Create detailed legend label for pie chart
+        legend_label = self._enhance_legend_label(headers[1] if len(headers) > 1 else 'Value', 'pie', value_suffix)
         # Calculate percentages for display
         total = sum(values)
         percentages = [round((v/total)*100, 1) if total > 0 else 0 for v in values]
@@ -774,7 +792,11 @@ class ChartRenderer:
                         'beginAtZero': True,
                         'title': {
                             'display': True,
-                            'text': 'Value'
+                            'text': self._enhance_axis_label('Value', 'y'),
+                            'font': {
+                                'size': 14,
+                                'weight': 'bold'
+                            }
                         }
                     }
                 },
@@ -789,7 +811,7 @@ class ChartRenderer:
         return qc.get_url()
     def _generate_chart_title(self, headers: List[str], chart_type: str) -> str:
         """
-        Generate a meaningful chart title based on headers and chart type.
+        Generate a meaningful and detailed chart title based on headers and chart type.
 
         Args:
             headers: List of column headers
@@ -799,28 +821,178 @@ class ChartRenderer:
             str: Descriptive chart title
         """
         if not headers:
-            return f"{chart_type.title()} Chart"
+            return f"{chart_type.title()} Chart Analysis"
 
-        # For single header, use it directly
+        # For single header, make it more descriptive
         if len(headers) == 1:
-            return headers[0]
-
-        # For two headers, create a relationship title
-        if len(headers) == 2:
+            header = headers[0]
             if chart_type == 'pie':
-                return f"{headers[1]} Distribution by {headers[0]}"
+                return f"{header} Distribution Analysis"
             elif chart_type == 'bar':
-                return f"{headers[1]} by {headers[0]}"
+                return f"{header} Comparison Chart"
             elif chart_type == 'line':
-                return f"{headers[1]} Trends Over {headers[0]}"
+                return f"{header} Trend Analysis"
             else:
-                return f"{headers[0]} vs {headers[1]}"
+                return f"{header} Analysis"
 
-        # For multiple headers, focus on the relationship
+        # For two headers, create enhanced relationship titles
+        if len(headers) == 2:
+            category_header = headers[0]
+            value_header = headers[1]
+
+            # Make titles more specific based on content
+            if chart_type == 'pie':
+                if 'focus' in value_header.lower():
+                    return f"Focus Level Distribution Across {category_header}"
+                elif 'detail' in value_header.lower():
+                    return f"Detail Level Breakdown by {category_header}"
+                elif '%' in value_header or 'percent' in value_header.lower():
+                    return f"{value_header} Share by {category_header}"
+                else:
+                    return f"{value_header} Distribution by {category_header}"
+
+            elif chart_type == 'bar':
+                if 'focus' in value_header.lower():
+                    return f"Focus Score Comparison: {category_header} Analysis"
+                elif 'detail' in value_header.lower():
+                    return f"Detail Level Analysis by {category_header}"
+                elif 'score' in value_header.lower() or 'rating' in value_header.lower():
+                    return f"{value_header} Ratings Across {category_header}"
+                elif 'count' in value_header.lower() or 'number' in value_header.lower():
+                    return f"{value_header} by {category_header}"
+                elif 'year' in value_header.lower():
+                    return f"{category_header} Timeline: {value_header}"
+                elif 'goal' in value_header.lower():
+                    return f"{category_header} Target Goals: {value_header}"
+                elif 'power' in value_header.lower():
+                    return f"{category_header} Power Analysis: {value_header}"
+                else:
+                    return f"{value_header} Analysis by {category_header}"
+
+            elif chart_type == 'line':
+                if 'time' in category_header.lower() or 'date' in category_header.lower() or 'period' in category_header.lower():
+                    return f"{value_header} Trends Over {category_header}"
+                else:
+                    return f"{value_header} Evolution Across {category_header}"
+            else:
+                return f"{category_header} vs {value_header} Analysis"
+
+        # For multiple headers, create context-aware titles
+        category_header = headers[0]
         if chart_type == 'line':
-            return f"Trends Over {headers[0]}"
+            return f"Multi-Metric Trends Over {category_header}"
         else:
-            return f"Comparison by {headers[0]}"
+            return f"Comprehensive {category_header} Analysis"
+
+    def _enhance_axis_label(self, original_label: str, axis_type: str, suffix: str = '') -> str:
+        """
+        Enhance axis labels to be more descriptive and informative.
+
+        Args:
+            original_label: The original column header
+            axis_type: 'x' or 'y' to indicate axis type
+            suffix: Optional suffix like '%' for the label
+
+        Returns:
+            Enhanced, more descriptive axis label
+        """
+        # Clean up the original label
+        label = original_label.strip()
+
+        # Axis-specific enhancements
+        if axis_type == 'x':
+            # X-axis typically shows categories/items
+            if label.lower() in ['category', 'item', 'name']:
+                return 'Categories'
+            elif 'time' in label.lower() or 'date' in label.lower() or 'period' in label.lower():
+                return f'Time Period ({label})'
+            elif 'user' in label.lower() or 'author' in label.lower():
+                return f'Users ({label})'
+            elif 'technology' in label.lower() or 'tool' in label.lower() or 'framework' in label.lower():
+                return f'Technologies ({label})'
+            elif 'method' in label.lower() or 'approach' in label.lower():
+                return f'Methodologies ({label})'
+            else:
+                return f'{label} (Categories)'
+
+        elif axis_type == 'y':
+            # Y-axis typically shows values/measurements
+            if label.lower() in ['value', 'count', 'number']:
+                return f'Measurement Values{" (" + suffix + ")" if suffix else ""}'
+            elif 'focus' in label.lower():
+                return f'Focus Level (Score){" " + suffix if suffix else ""}'
+            elif 'detail' in label.lower():
+                return f'Detail Level (Quantity){" " + suffix if suffix else ""}'
+            elif 'score' in label.lower() or 'rating' in label.lower():
+                return f'{label} (Rating Scale){" " + suffix if suffix else ""}'
+            elif 'count' in label.lower() or 'number' in label.lower():
+                return f'{label} (Quantity){" " + suffix if suffix else ""}'
+            elif '%' in label or 'percent' in label.lower() or suffix == '%':
+                return f'{label} (Percentage){" " + suffix if suffix else ""}'
+            elif 'year' in label.lower():
+                return f'{label} (Year)'
+            elif 'goal' in label.lower():
+                return f'{label} (Target Value){" " + suffix if suffix else ""}'
+            elif 'power' in label.lower():
+                return f'{label} (Power Units){" " + suffix if suffix else ""}'
+            else:
+                return f'{label} (Value){" " + suffix if suffix else ""}'
+
+        return label
+
+    def _enhance_legend_label(self, original_label: str, chart_type: str, suffix: str = '') -> str:
+        """
+        Enhance legend labels to be more descriptive and informative.
+
+        Args:
+            original_label: The original column header
+            chart_type: Type of chart ('bar', 'pie', 'line')
+            suffix: Optional suffix like '%' for the label
+
+        Returns:
+            Enhanced, more descriptive legend label
+        """
+        label = original_label.strip()
+
+        # Chart type specific enhancements
+        if chart_type == 'pie':
+            if 'focus' in label.lower():
+                return f'Focus Distribution{" (" + suffix + ")" if suffix else ""}'
+            elif 'detail' in label.lower():
+                return f'Detail Breakdown{" (" + suffix + ")" if suffix else ""}'
+            elif '%' in label or 'percent' in label.lower() or suffix == '%':
+                return f'{label} Share{" (" + suffix + ")" if suffix else ""}'
+            else:
+                return f'{label} Distribution{" (" + suffix + ")" if suffix else ""}'
+
+        elif chart_type == 'bar':
+            if 'focus' in label.lower():
+                return f'Focus Score{" (" + suffix + ")" if suffix else ""}'
+            elif 'detail' in label.lower():
+                return f'Detail Level{" (" + suffix + ")" if suffix else ""}'
+            elif 'count' in label.lower() or 'number' in label.lower():
+                return f'{label}{" (" + suffix + ")" if suffix else ""}'
+            elif 'score' in label.lower() or 'rating' in label.lower():
+                return f'{label} Rating{" (" + suffix + ")" if suffix else ""}'
+            elif 'year' in label.lower():
+                return f'{label} (Timeline)'
+            elif 'goal' in label.lower():
+                return f'{label} Target{" (" + suffix + ")" if suffix else ""}'
+            elif 'power' in label.lower():
+                return f'{label} Capacity{" (" + suffix + ")" if suffix else ""}'
+            else:
+                return f'{label} Measurement{" (" + suffix + ")" if suffix else ""}'
+
+        elif chart_type == 'line':
+            if 'focus' in label.lower():
+                return f'Focus Trends{" (" + suffix + ")" if suffix else ""}'
+            elif 'detail' in label.lower():
+                return f'Detail Evolution{" (" + suffix + ")" if suffix else ""}'
+            else:
+                return f'{label} Over Time{" (" + suffix + ")" if suffix else ""}'
+
+        # Fallback
+        return f'{label}{" (" + suffix + ")" if suffix else ""}'
 
 
 # Singleton instance
