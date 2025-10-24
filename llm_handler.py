@@ -365,6 +365,51 @@ def _format_message_for_summary(msg):
         return f"[{time_str}] {author_name}: {content}"
 
 
+def _add_scraped_content_to_message(message_text, msg):
+    """Add scraped content to message if available."""
+    scraped_url = msg.get("scraped_url")
+    scraped_summary = msg.get("scraped_content_summary")
+    scraped_key_points = msg.get("scraped_content_key_points")
+
+    # If there's scraped content, add it to the message
+    if scraped_url and scraped_summary:
+        link_content = (
+            f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
+        )
+        message_text += link_content
+
+        # If there are key points, add them too
+        if scraped_key_points:
+            try:
+                key_points = json.loads(scraped_key_points)
+                if key_points and isinstance(key_points, list):
+                    message_text += "\n\nKey points:"
+                    for point in key_points:
+                        bullet_point = f"\n- {point}"
+                        message_text += bullet_point
+            except json.JSONDecodeError:
+                logger.warning(
+                    f"Failed to parse key points JSON: {scraped_key_points}"
+                )
+
+    return message_text
+
+
+def _truncate_messages_if_needed(messages_text):
+    """Truncate input if it's too long to avoid token limits."""
+    max_input_length = 50000  # Reduced to leave more room for thread context and response
+    if len(messages_text) > max_input_length:
+        original_length = len(messages_text)
+        messages_text = (
+            messages_text[:max_input_length]
+            + "\n\n[Messages truncated due to length...]"
+        )
+        logger.info(
+            f"Truncated conversation input from {original_length} to {len(messages_text)} characters"
+        )
+    return messages_text
+
+
 async def call_llm_for_summary(
     messages, channel_name, date, hours=24, force_charts=False
 ):
@@ -399,31 +444,8 @@ async def call_llm_for_summary(
             # Format the basic message
             message_text = _format_message_for_summary(msg)
 
-            # Check if this message has scraped content from a URL
-            scraped_url = msg.get("scraped_url")
-            scraped_summary = msg.get("scraped_content_summary")
-            scraped_key_points = msg.get("scraped_content_key_points")
-
-            # If there's scraped content, add it to the message
-            if scraped_url and scraped_summary:
-                link_content = (
-                    f"\n\n[Link Content from {scraped_url}]:\n{scraped_summary}"
-                )
-                message_text += link_content
-
-                # If there are key points, add them too
-                if scraped_key_points:
-                    try:
-                        key_points = json.loads(scraped_key_points)
-                        if key_points and isinstance(key_points, list):
-                            message_text += "\n\nKey points:"
-                            for point in key_points:
-                                bullet_point = f"\n- {point}"
-                                message_text += bullet_point
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Failed to parse key points JSON: {scraped_key_points}"
-                        )
+            # Add scraped content if available
+            message_text = _add_scraped_content_to_message(message_text, msg)
 
             formatted_messages_text.append(message_text)
 
@@ -431,19 +453,7 @@ async def call_llm_for_summary(
         messages_text = "\n".join(formatted_messages_text)
 
         # Truncate input if it's too long to avoid token limits
-        # Rough estimate: 1 token ≈ 4 characters, leaving room for prompt and response
-        max_input_length = (
-            50000  # Reduced to leave more room for thread context and response
-        )
-        if len(messages_text) > max_input_length:
-            original_length = len("\n".join(formatted_messages_text))
-            messages_text = (
-                messages_text[:max_input_length]
-                + "\n\n[Messages truncated due to length...]"
-            )
-            logger.info(
-                f"Truncated conversation input from {original_length} to {len(messages_text)} characters"
-            )
+        messages_text = _truncate_messages_if_needed(messages_text)
 
         # Create the prompt for the LLM based on analysis type
         time_period = (

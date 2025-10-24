@@ -19,6 +19,99 @@ def set_discord_client(client_instance):
 
 
 @tasks.loop(hours=24)
+def _validate_discord_client():
+    """Validate that discord client is available."""
+    if not discord_client:
+        logger.error(
+            "Discord client not set in summarization_tasks. Aborting daily summarization."
+        )
+        return False
+    return True
+
+
+def _format_channel_messages(channel_messages, guild_id, channel_id):
+    """Format messages for summarization."""
+    formatted_messages = []
+    for msg in channel_messages:
+        if not msg.get("is_command", False):
+            formatted_messages.append(
+                {
+                    "id": msg.get("id", ""),
+                    "author_name": msg["author_name"],
+                    "content": msg["content"],
+                    "created_at": msg["created_at"],
+                    "is_bot": msg.get("is_bot", False),
+                    "is_command": False,
+                    "guild_id": guild_id,
+                    "channel_id": channel_id,
+                }
+            )
+    return formatted_messages
+
+
+async def _process_channel_summary(channel_data, channel_messages, now):
+    """Process summary for a single channel."""
+    channel_id = channel_data["channel_id"]
+    channel_name = channel_data["channel_name"]
+    guild_id = channel_data["guild_id"]
+    guild_name = channel_data["guild_name"]
+
+    formatted_messages = _format_channel_messages(channel_messages, guild_id, channel_id)
+
+    if not formatted_messages:
+        logger.info(
+            f"No non-command messages found for channel {channel_name}. Skipping summarization."
+        )
+        return 0, 0
+
+    try:
+        summary, chart_data = await call_llm_for_summary(
+            formatted_messages, channel_name, now, hours=24, force_charts=False
+        )
+
+        if not summary or "No messages found" in summary:
+            logger.info(f"No meaningful summary generated for channel {channel_name}")
+            return 0, 0
+
+        # Extract unique users from messages
+        active_users = list(
+            set(
+                msg["author_name"]
+                for msg in formatted_messages
+                if not msg["is_bot"]
+            )
+        )
+
+        # Store the summary in the database
+        database.store_channel_summary(
+            channel_id=channel_id,
+            channel_name=channel_name,
+            date=now,
+            summary_text=summary,
+            message_count=len(formatted_messages),
+            active_users=active_users,
+            guild_id=guild_id,
+            guild_name=guild_name,
+            metadata={"automated": True, "chart_data": chart_data is not None},
+        )
+
+        logger.info(f"Successfully summarized channel {channel_name} ({len(formatted_messages)} messages)")
+
+        # Post to reports channel if configured
+        try:
+            await post_summary_to_reports_channel(
+                channel_id, channel_name, now, summary
+            )
+        except Exception as report_error:
+            logger.warning(f"Failed to post summary to reports channel: {report_error}")
+
+        return 1, len(formatted_messages)
+
+    except Exception as e:
+        logger.error(f"Error summarizing channel {channel_name}: {e}", exc_info=True)
+        return 0, 0
+
+
 async def daily_channel_summarization():
     """
     Task that runs once per day to:
@@ -27,10 +120,7 @@ async def daily_channel_summarization():
     3. Store the summaries in the database
     4. Delete old messages
     """
-    if not discord_client:
-        logger.error(
-            "Discord client not set in summarization_tasks. Aborting daily summarization."
-        )
+    if not _validate_discord_client():
         return
 
     try:
@@ -74,67 +164,12 @@ async def daily_channel_summarization():
             if not channel_messages:
                 continue
 
-            guild_id = channel_data["guild_id"]
-            guild_name = channel_data["guild_name"]
-
-            formatted_messages = []
-            for msg in channel_messages:
-                if not msg.get("is_command", False):
-                    formatted_messages.append(
-                        {
-                            "id": msg.get("id", ""),
-                            "author_name": msg["author_name"],
-                            "content": msg["content"],
-                            "created_at": msg["created_at"],
-                            "is_bot": msg.get("is_bot", False),
-                            "is_command": False,
-                            "guild_id": guild_id,
-                            "channel_id": channel_id,
-                        }
-                    )
-
-            if not formatted_messages:
-                logger.info(
-                    f"No non-command messages found for channel {channel_name}. Skipping summarization."
-                )
-                continue
-
-            active_users = list(set(msg["author_name"] for msg in formatted_messages))
-
-            try:
-                summary_text = await call_llm_for_summary(
-                    formatted_messages, channel_name, yesterday
-                )
-                metadata = {
-                    "start_time": yesterday.isoformat(),
-                    "end_time": now.isoformat(),
-                    "summary_type": "automated_daily",
-                }
-                success = database.store_channel_summary(
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    date=yesterday,
-                    summary_text=summary_text,
-                    message_count=len(formatted_messages),
-                    active_users=active_users,
-                    guild_id=guild_id,
-                    guild_name=guild_name,
-                    metadata=metadata,
-                )
-                if success:
-                    successful_summaries += 1
-                    total_messages_processed += len(formatted_messages)
-                    logger.info(
-                        f"Successfully generated and stored summary for channel {channel_name}"
-                    )
-                    await post_summary_to_reports_channel(
-                        channel_id, channel_name, yesterday, summary_text
-                    )
-            except Exception as e:
-                logger.error(
-                    f"Error generating summary for channel {channel_name}: {str(e)}",
-                    exc_info=True,
-                )
+            # Process channel summary
+            success_count, message_count = await _process_channel_summary(
+                channel_data, channel_messages, now
+            )
+            successful_summaries += success_count
+            total_messages_processed += message_count
 
         if successful_summaries > 0:
             try:

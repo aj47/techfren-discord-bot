@@ -25,6 +25,52 @@ def generate_discord_message_link(
         return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
 
 
+def _calculate_effective_max_length(max_length):
+    """Calculate effective max length accounting for part indicators."""
+    max_part_indicator_length = len("[Part 999/999]\n")
+    return max_length - max_part_indicator_length
+
+
+def _is_list_paragraph(paragraph):
+    """Check if paragraph is a list item."""
+    return paragraph.strip() and (
+        paragraph.strip()[0] in "-*•" or paragraph.strip()[0].isdigit()
+    )
+
+
+def _find_split_point(text, max_length):
+    """Find the best split point in text (prefer sentence, then word)."""
+    split_at = -1
+
+    # Try to split at the last sentence ending
+    for i in range(min(len(text), max_length) - 1, -1, -1):
+        if text[i] == "." and (i + 1 < len(text) and text[i + 1] == " "):
+            split_at = i + 1
+            break
+
+    # If no sentence found, try to split at the last space
+    if split_at == -1:
+        for i in range(min(len(text), max_length) - 1, -1, -1):
+            if text[i] == " ":
+                split_at = i
+                break
+
+    # Force split if no space found
+    if split_at == -1:
+        split_at = max_length
+
+    return split_at
+
+
+def _split_oversized_part(parts, current_part, effective_max_length):
+    """Split a part that's too long into smaller parts."""
+    while len(current_part) > effective_max_length:
+        split_at = _find_split_point(current_part, effective_max_length)
+        parts.append(current_part[:split_at].strip())
+        current_part = current_part[split_at:].strip()
+    return current_part
+
+
 async def split_long_message(message, max_length=1900):
     """
     Split a long message into multiple parts to avoid Discord's 2000 character limit
@@ -38,38 +84,22 @@ async def split_long_message(message, max_length=1900):
     Returns:
         list: List of message parts
     """
-    # First, check if we need to split at all
-    # We need to account for potential part indicators when determining if splitting is needed
-    max_part_indicator_length = len(
-        "[Part 999/999]\n"
-    )  # Generous estimate for part indicator
-
     if len(message) <= max_length:
         return [message]
 
     parts = []
     current_part = ""
-    # Reduce max_length to account for part indicators that will be added later
-    effective_max_length = max_length - max_part_indicator_length
-
-    # Split by paragraphs first (double newlines)
+    effective_max_length = _calculate_effective_max_length(max_length)
     paragraphs = message.split("\n\n")
 
     for paragraph in paragraphs:
-        # Special handling for bullet points and numbered lists
-        # Check if this is a list section (starts with -, *, •, or number)
-        is_list = paragraph.strip() and (
-            paragraph.strip()[0] in "-*•" or paragraph.strip()[0].isdigit()
-        )
+        is_list = _is_list_paragraph(paragraph)
 
         # If adding this paragraph would exceed effective_max_length, start a new part
-        if (
-            len(current_part) + len(paragraph) + 2 > effective_max_length
-        ):  # +2 for potential "\n\n"
+        if len(current_part) + len(paragraph) + 2 > effective_max_length:
             if current_part:
                 # Don't break in the middle of a list if possible
                 if is_list and len(paragraph) < effective_max_length // 2:
-                    # If it's a short list item, try to keep it with the previous content
                     parts.append(current_part.strip())
                     current_part = paragraph
                 else:
@@ -83,40 +113,15 @@ async def split_long_message(message, max_length=1900):
             else:
                 current_part = paragraph
 
-        # Inner loop to handle cases where a single paragraph (or the current_part) is too long
-        while len(current_part) > effective_max_length:
-            # Find a good split point (prefer sentence, then word)
-            split_at = -1
-            # Try to split at the last sentence ending before effective_max_length
-            for i in range(min(len(current_part), effective_max_length) - 1, -1, -1):
-                if current_part[i] == "." and (
-                    i + 1 < len(current_part) and current_part[i + 1] == " "
-                ):
-                    split_at = i + 1  # Include the period, split after space
-                    break
-
-            if split_at == -1:  # If no sentence found, try to split at the last space
-                for i in range(
-                    min(len(current_part), effective_max_length) - 1, -1, -1
-                ):
-                    if current_part[i] == " ":
-                        split_at = i
-                        break
-
-            if split_at == -1:  # If no space found, force split at effective_max_length
-                split_at = effective_max_length
-
-            parts.append(current_part[:split_at].strip())
-            current_part = current_part[split_at:].strip()
+        # Handle cases where a single paragraph is too long
+        current_part = _split_oversized_part(parts, current_part, effective_max_length)
 
     # Add the last part if it's not empty
     if current_part:
         parts.append(current_part.strip())
 
     # Return parts without pagination indicators
-    if (
-        not parts and message
-    ):  # Handle case where original message was <= max_length but split logic ran
+    if not parts and message:
         return [message]
 
     return parts

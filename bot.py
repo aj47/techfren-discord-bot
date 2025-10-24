@@ -576,17 +576,8 @@ async def on_message(message):
             )
 
 
-# Helper function for slash command handling
-async def _handle_slash_command_wrapper(
-    interaction: discord.Interaction,
-    command_name: str,
-    hours: int = 24,
-    error_message: Optional[str] = None,
-    force_charts: bool = False,
-) -> None:
-    """Unified wrapper for slash command handling with error management."""
-    # Note: Interaction should already be deferred by the slash command handler
-    # This is just a safety check in case it wasn't
+async def _ensure_interaction_deferred(interaction: discord.Interaction, command_name: str) -> bool:
+    """Ensure interaction is deferred, return False if failed."""
     if not interaction.response.is_done():
         logger.warning(
             f"Interaction for {command_name} was not deferred by command handler, deferring now"
@@ -597,18 +588,21 @@ async def _handle_slash_command_wrapper(
             logger.error(
                 f"Interaction for {command_name} not found during safety defer: {e}"
             )
-            return
+            return False
         except Exception as e:
             logger.error(f"Failed to defer interaction for {command_name}: {e}")
-            return
+            return False
+    return True
 
-    if error_message is None:
-        error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
 
-    # Validate hours parameter for sum-hr and chart-hr commands
+async def _validate_hours_parameter(interaction: discord.Interaction, command_name: str, hours: int) -> tuple[bool, int, str]:
+    """Validate hours parameter for commands. Returns (is_valid, hours, error_message)."""
+    import config
+
+    if command_name == "chart-day":
+        hours = 24  # Ensure hours is set for chart-day
+
     if command_name in ["sum-hr", "chart-hr"]:
-        import config
-
         if hours < 1 or hours > config.MAX_SUMMARY_HOURS:
             try:
                 allowed_mentions = discord.AllowedMentions(
@@ -619,21 +613,70 @@ async def _handle_slash_command_wrapper(
                     ephemeral=True,
                     allowed_mentions=allowed_mentions,
                 )
-                return
+                return False, hours, ""
             except Exception as e:
                 logger.error(f"Failed to send validation error for {command_name}: {e}")
-                return
+                return False, hours, ""
 
         # Warn for large summaries that may take longer
+        error_message = ""
         if hours > config.LARGE_SUMMARY_THRESHOLD:
             error_message = (
                 config.ERROR_MESSAGES["large_summary_warning"].format(hours=hours)
                 + " and could impact performance."
             )
+        return True, hours, error_message
 
-    # Similar validation for chart-day command
-    if command_name == "chart-day":
-        hours = 24  # Ensure hours is set for chart-day
+    return True, hours, ""
+
+
+async def _send_error_followup(interaction: discord.Interaction, command_name: str, error_message: str):
+    """Send error followup if interaction is still valid."""
+    if not interaction.is_expired():
+        try:
+            allowed_mentions = discord.AllowedMentions(
+                everyone=False, roles=False, users=True
+            )
+            await interaction.followup.send(
+                error_message, ephemeral=True, allowed_mentions=allowed_mentions
+            )
+        except (
+            discord.HTTPException,
+            discord.Forbidden,
+            discord.NotFound,
+        ) as followup_error:
+            logger.warning(
+                f"Failed to send error followup for {command_name}: {followup_error}"
+            )
+        except Exception as unexpected_error:
+            logger.error(
+                f"Unexpected error sending followup for {command_name}: {unexpected_error}",
+                exc_info=True,
+            )
+
+
+# Helper function for slash command handling
+async def _handle_slash_command_wrapper(
+    interaction: discord.Interaction,
+    command_name: str,
+    hours: int = 24,
+    error_message: Optional[str] = None,
+    force_charts: bool = False,
+) -> None:
+    """Unified wrapper for slash command handling with error management."""
+    # Ensure interaction is deferred
+    if not await _ensure_interaction_deferred(interaction, command_name):
+        return
+
+    if error_message is None:
+        error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
+
+    # Validate hours parameter
+    is_valid, hours, validation_error = await _validate_hours_parameter(interaction, command_name, hours)
+    if not is_valid:
+        return
+    if validation_error:
+        error_message = validation_error
 
     try:
         from command_abstraction import (
@@ -660,32 +703,7 @@ async def _handle_slash_command_wrapper(
 
     except Exception as e:
         logger.error(f"Error in {command_name} slash command: {e}", exc_info=True)
-        # Only try to send followup if interaction is still valid
-        if not interaction.is_expired():
-            try:
-                allowed_mentions = discord.AllowedMentions(
-                    everyone=False, roles=False, users=True
-                )
-                await interaction.followup.send(
-                    error_message, ephemeral=True, allowed_mentions=allowed_mentions
-                )
-            except (
-                discord.HTTPException,
-                discord.Forbidden,
-                discord.NotFound,
-            ) as followup_error:
-                logger.warning(
-                    f"Failed to send error followup for {command_name}: {followup_error}"
-                )
-            except Exception as unexpected_error:
-                logger.error(
-                    f"Unexpected error sending followup for {command_name}: {unexpected_error}",
-                    exc_info=True,
-                )
-        else:
-            logger.warning(
-                f"Interaction for {command_name} has expired, cannot send error followup"
-            )
+        await _send_error_followup(interaction, command_name, error_message)
 
 
 # Slash Commands

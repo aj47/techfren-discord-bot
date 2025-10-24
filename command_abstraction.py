@@ -481,6 +481,58 @@ class ThreadManager:
             )
             return None
 
+    async def _handle_missing_guild_info(self, message: discord.Message, name: str) -> Optional[discord.Thread]:
+        """Handle case where message lacks guild info."""
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"Message lacks guild info, fetching message with guild info for thread creation: '{name}'"
+        )
+        try:
+            fetched_message = await self.channel.fetch_message(message.id)
+            return await fetched_message.create_thread(name=name)
+        except (discord.HTTPException, discord.NotFound) as fetch_error:
+            logger.warning(
+                f"Failed to fetch message {message.id} for thread creation: {fetch_error}"
+            )
+            return await self.create_thread(name)
+
+    async def _handle_value_error(self, e: ValueError, message: discord.Message, name: str) -> Optional[discord.Thread]:
+        """Handle ValueError during thread creation."""
+        logger = logging.getLogger(__name__)
+        if "guild info" in str(e):
+            logger.info(
+                f"Message lacks guild info, attempting to fetch with proper guild info: {e}"
+            )
+            return await self._handle_missing_guild_info(message, name)
+        else:
+            logger.error(f"ValueError creating thread from message '{name}': {e}")
+            return None
+
+    async def _handle_http_exception(self, e: discord.HTTPException, name: str) -> Optional[discord.Thread]:
+        """Handle HTTPException during thread creation."""
+        logger = logging.getLogger(__name__)
+        if e.status == 400 and "thread has already been created" in str(e.text).lower():
+            logger.info(
+                f"Message already has a thread, creating standalone thread: '{name}'"
+            )
+            return await self.create_thread(name)
+        elif e.status == 400 and "Cannot execute action on this channel type" in str(e.text):
+            channel_desc = self._get_channel_type_description()
+            logger.info(
+                f"Thread creation not supported in {channel_desc}, this is expected behavior"
+            )
+            return None
+        elif e.status == 400:
+            logger.info(
+                f"Cannot create thread from message '{name}': HTTP {e.status} - {e.text}"
+            )
+            return None
+        else:
+            logger.warning(
+                f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}"
+            )
+            return None
+
     async def create_thread_from_message(
         self, message: discord.Message, name: str
     ) -> Optional[discord.Thread]:
@@ -499,74 +551,13 @@ class ThreadManager:
         try:
             # Check if the message has guild info (required for thread creation)
             if not hasattr(message, "guild") or message.guild is None:
-                # Fetch the message with proper guild info
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"Message lacks guild info, fetching message with guild info for thread creation: '{name}'"
-                )
-                try:
-                    # Fetch the message from the channel to get proper guild info
-                    fetched_message = await self.channel.fetch_message(message.id)
-                    return await fetched_message.create_thread(name=name)
-                except (discord.HTTPException, discord.NotFound) as fetch_error:
-                    logger.warning(
-                        f"Failed to fetch message {message.id} for thread creation: {fetch_error}"
-                    )
-                    # Fallback to channel thread creation
-                    return await self.create_thread(name)
+                return await self._handle_missing_guild_info(message, name)
 
             return await message.create_thread(name=name)
         except ValueError as e:
-            logger = logging.getLogger(__name__)
-            if "guild info" in str(e):
-                logger.info(
-                    f"Message lacks guild info, attempting to fetch with proper guild info: {e}"
-                )
-                try:
-                    # Fetch the message from the channel to get proper guild info
-                    fetched_message = await self.channel.fetch_message(message.id)
-                    return await fetched_message.create_thread(name=name)
-                except (discord.HTTPException, discord.NotFound) as fetch_error:
-                    logger.warning(
-                        f"Failed to fetch message {message.id} for thread creation: {fetch_error}"
-                    )
-                    # Fallback to channel thread creation
-                    return await self.create_thread(name)
-            else:
-                logger.error(f"ValueError creating thread from message '{name}': {e}")
-                return None
+            return await self._handle_value_error(e, message, name)
         except discord.HTTPException as e:
-            logger = logging.getLogger(__name__)
-            # If thread already exists for this message, create a standalone thread in the channel
-            if (
-                e.status == 400
-                and "thread has already been created" in str(e.text).lower()
-            ):
-                logger.info(
-                    f"Message already has a thread, creating standalone thread: '{name}'"
-                )
-                # Create a standalone thread in the channel (not attached to any message)
-                return await self.create_thread(name)
-            elif (
-                e.status == 400
-                and "Cannot execute action on this channel type" in str(e.text)
-            ):
-                channel_desc = self._get_channel_type_description()
-                logger.info(
-                    f"Thread creation not supported in {channel_desc}, this is expected behavior"
-                )
-                return None
-            elif e.status == 400:
-                # Other 400 errors that might be expected (permissions, etc.)
-                logger.info(
-                    f"Cannot create thread from message '{name}': HTTP {e.status} - {e.text}"
-                )
-                return None
-            else:
-                logger.warning(
-                    f"Failed to create thread from message '{name}': HTTP {e.status} - {e.text}"
-                )
-            return None
+            return await self._handle_http_exception(e, name)
         except discord.Forbidden as e:
             logger = logging.getLogger(__name__)
             logger.warning(
