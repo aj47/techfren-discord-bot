@@ -480,6 +480,11 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         )
         logger.info(f"📊 Chart extraction result: {len(chart_data)} chart(s) found")
 
+        # Learn from successful chart requests
+        if len(chart_data) > 0 and ("chart" in query.lower() or "graph" in query.lower()):
+            learn_from_chart_request(query, success=True)
+            logger.info(f"🧠 Learning from successful chart request: '{query[:50]}...'")
+
         # Log a preview of the LLM response for debugging
         if len(chart_data) == 0 and ("chart" in query.lower() or "graph" in query.lower()):
             logger.warning(f"⚠️ Chart requested but no charts extracted. LLM response preview: {message[:200]}{'...' if len(message) > 200 else ''}")
@@ -799,84 +804,173 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
         logger.info("Detected table data in query/content, using chart system")
         return True
 
-    # Keywords that indicate data analysis requests
-    chart_keywords = [
-        "analyze",
-        "chart",
-        "graph",
-        "plot",
-        "visualize",
-        "visualization",
-        "data",
-        "statistics",
-        "stats",
-        "metrics",
-        "count",
-        "frequency",
-        "distribution",
-        "comparison",
-        "compare",
-        "trends",
-        "trend",
-        "activity",
-        "usage",
-        "breakdown",
-        "top",
-        "most",
-        "ranking",
-        "rank",
-        "percentage",
-        "ratio",
-        "numbers",
-        "quantify",
-        "measure",
+    # Get base keywords and enhance with learned ones
+    base_chart_keywords = [
+        # Core chart/visualization keywords
+        "analyze", "analysis", "analyzing", "chart", "charts", "graph", "graphs",
+        "plot", "plots", "plotting", "visualize", "visualization", "visualizing",
+        "diagram", "diagrams", "figure", "figures", "graphic", "graphics",
+
+        # Data and statistics keywords
+        "data", "statistics", "stats", "statistical", "metrics", "measurements",
+        "count", "counts", "counting", "frequency", "frequencies", "distribution",
+        "breakdown", "breakdowns", "summary", "summaries", "overview", "overviews",
+
+        # Comparison and ranking keywords
+        "comparison", "comparisons", "compare", "comparing", "versus", "vs", "against",
+        "ranking", "rankings", "rank", "ranked", "top", "bottom", "highest", "lowest",
+        "best", "worst", "most", "least", "more", "less", "greater", "smaller",
+
+        # Trend and pattern keywords
+        "trends", "trend", "trending", "patterns", "pattern", "changes", "change",
+        "increase", "decrease", "growth", "decline", "rise", "fall", "fluctuation",
+        "fluctuations", "variation", "variations", "progression", "progressions",
+
+        # Activity and usage keywords
+        "activity", "activities", "usage", "usages", "engagement", "interactions",
+        "traffic", "visits", "visitors", "users", "participation", "involvement",
+
+        # Quantification keywords
+        "quantify", "quantification", "measure", "measuring", "calculate", "calculating",
+        "percentage", "percentages", "percent", "ratio", "ratios", "proportion",
+        "proportions", "rate", "rates", "average", "averages", "mean", "median", "mode",
+
+        # Time-based keywords
+        "time", "times", "period", "periods", "duration", "durations", "hour", "hours",
+        "day", "days", "week", "weeks", "month", "months", "year", "years",
+        "daily", "weekly", "monthly", "yearly", "quarterly", "annual",
+
+        # Numerical and quantity keywords
+        "numbers", "number", "amount", "amounts", "quantity", "quantities", "total",
+        "totals", "sum", "sums", "count", "counts", "figure", "figures", "value", "values",
+
+        # Category and grouping keywords
+        "category", "categories", "group", "groups", "type", "types", "kind", "kinds",
+        "classification", "classifications", "segment", "segments", "division", "divisions",
+
+        # Performance keywords
+        "performance", "performances", "score", "scores", "rating", "ratings", "grade",
+        "grades", "result", "results", "outcome", "outcomes", "success", "successes",
+
+        # Chart-specific verbs
+        "create", "creating", "make", "making", "generate", "generating", "build", "building",
+        "draw", "drawing", "render", "rendering", "produce", "producing", "show", "showing",
+        "display", "displaying", "present", "presenting", "illustrate", "illustrating",
+
+        # Chart types (individual words)
+        "pie", "bar", "line", "scatter", "heatmap", "box", "histogram", "area",
+        "bubble", "radar", "polar", "tree", "map", "surface", "candlestick", "funnel",
+
+        # Analysis types
+        "correlation", "correlations", "relationship", "relationships", "association",
+        "associations", "dependency", "dependencies", "impact", "impacts", "effect", "effects",
     ]
 
+    # Combine base keywords with learned keywords
+    chart_keywords = base_chart_keywords + list(_learned_chart_keywords)
+
     # Phrases that strongly indicate chart requests
-    chart_phrases = [
-        "show me the data",
-        "create a chart",
-        "create a graph",
-        "create a pie chart",
-        "create a bar chart",
-        "create a line chart",
-        "create a scatter plot",
-        "create a heatmap",
-        "create a box plot",
-        "create a histogram",
-        "create an area chart",
-        "make a chart",
-        "make a graph",
-        "make a pie chart",
-        "make a bar chart",
-        "make a line chart",
-        "make a scatter plot",
-        "make a heatmap",
-        "make a box plot",
-        "make a histogram",
-        "make an area chart",
-        "generate a chart",
-        "generate a graph",
-        "generate a pie chart",
-        "generate a bar chart",
-        "generate a line chart",
-        "generate a scatter plot",
-        "generate a heatmap",
-        "generate a box plot",
-        "generate a histogram",
-        "generate an area chart",
-        "visualize this",
-        "visualize the",
-        "data analysis",
-        "how much",
-        "how many",
-        "what percentage",
-        "top users",
-        "most active",
-        "breakdown by",
-        "activity by time",
-        "usage statistics",
+    # Get base phrases and enhance with learned ones
+    base_chart_phrases = [
+        # Chart creation phrases (comprehensive)
+        "create a", "make a", "generate a", "build a", "draw a", "render a", "produce a",
+        "show me a", "display a", "present a", "give me a", "i need a", "can you make",
+        "can you create", "can you generate", "can you show", "can you display",
+
+        # Chart type combinations (with create/make/generate)
+        "create a chart", "make a chart", "generate a chart", "build a chart", "draw a chart",
+        "create a graph", "make a graph", "generate a graph", "build a graph", "draw a graph",
+        "create a pie chart", "make a pie chart", "generate a pie chart", "build a pie chart",
+        "create a bar chart", "make a bar chart", "generate a bar chart", "build a bar chart",
+        "create a line chart", "make a line chart", "generate a line chart", "build a line chart",
+        "create a scatter plot", "make a scatter plot", "generate a scatter plot", "build a scatter plot",
+        "create a scatter chart", "make a scatter chart", "generate a scatter chart",
+        "create a heatmap", "make a heatmap", "generate a heatmap", "build a heatmap",
+        "create a heat map", "make a heat map", "generate a heat map", "build a heat map",
+        "create a box plot", "make a box plot", "generate a box plot", "build a box plot",
+        "create a boxplot", "make a boxplot", "generate a boxplot", "build a boxplot",
+        "create a histogram", "make a histogram", "generate a histogram", "build a histogram",
+        "create an area chart", "make an area chart", "generate an area chart", "build an area chart",
+        "create a bubble chart", "make a bubble chart", "generate a bubble chart", "build a bubble chart",
+        "create a radar chart", "make a radar chart", "generate a radar chart", "build a radar chart",
+        "create a pie graph", "make a pie graph", "generate a pie graph", "build a pie graph",
+        "create a bar graph", "make a bar graph", "generate a bar graph", "build a bar graph",
+        "create a line graph", "make a line graph", "generate a line graph", "build a line graph",
+
+        # Data analysis phrases
+        "show me the data", "show me data", "display the data", "present the data",
+        "data analysis", "analyze this data", "analyze the data", "data visualization",
+        "visualize this", "visualize this data", "visualize the data", "visualize these numbers",
+        "turn this into a chart", "turn this into a graph", "chart this data", "graph this data",
+
+        # Question phrases that indicate data requests
+        "how much", "how many", "what percentage", "what percent", "what's the breakdown",
+        "what's the distribution", "what's the trend", "what are the patterns", "what's the correlation",
+        "show me trends", "show patterns", "show breakdown", "show distribution", "show comparison",
+
+        # User activity and ranking phrases
+        "top users", "most active", "most engaged", "highest activity", "lowest activity",
+        "user activity", "user engagement", "user ranking", "user statistics", "user metrics",
+        "activity by user", "engagement by user", "posts by user", "messages by user",
+
+        # Time-based analysis phrases
+        "activity by time", "usage over time", "trends over time", "changes over time",
+        "daily activity", "weekly activity", "monthly activity", "hourly activity",
+        "activity by hour", "activity by day", "activity by week", "activity by month",
+        "breakdown by time", "time analysis", "temporal analysis", "time series",
+
+        # Statistical and measurement phrases
+        "usage statistics", "user statistics", "activity statistics", "engagement statistics",
+        "show statistics", "display stats", "view stats", "check stats", "analyze stats",
+        "measure usage", "measure activity", "measure engagement", "calculate metrics",
+        "quantify activity", "quantify usage", "count occurrences", "frequency analysis",
+
+        # Comparison and ranking phrases
+        "compare this", "comparison between", "versus analysis", "vs comparison",
+        "side by side", "compare and contrast", "ranking analysis", "top performers",
+        "bottom performers", "highest ranked", "lowest ranked", "sort by", "ordered by",
+
+        # Pattern and trend phrases
+        "find patterns", "identify trends", "show trends", "trend analysis", "pattern analysis",
+        "spot patterns", "detect trends", "analyze patterns", "growth trends", "decline trends",
+        "fluctuation analysis", "seasonal patterns", "cyclical patterns", "anomaly detection",
+
+        # Distribution and breakdown phrases
+        "breakdown by", "distribution of", "split by", "categorized by", "grouped by",
+        "segment analysis", "category breakdown", "type distribution", "classification analysis",
+        "proportion analysis", "percentage breakdown", "share of", "portion of",
+
+        # Performance and results phrases
+        "performance analysis", "performance metrics", "results analysis", "outcome analysis",
+        "success metrics", "failure analysis", "effectiveness analysis", "efficiency metrics",
+        "quality metrics", "performance comparison", "results visualization", "outcome visualization",
+
+        # Visualization and presentation phrases
+        "i want to see", "show me visually", "make it visual", "visual representation",
+        "graphical representation", "chart representation", "visual summary", "graphical summary",
+        "present this visually", "display as chart", "display as graph", "show as visualization",
+
+        # Data request phrases
+        "get the data", "fetch the data", "pull the data", "extract data", "data request",
+        "need the numbers", "show me numbers", "what are the numbers", "get statistics",
+        "provide data", "data summary", "data overview", "data breakdown", "data insights",
+
+        # Analysis request phrases
+        "analyze this", "analyze the", "analysis of", "break down this", "examine this",
+        "investigate this", "look into this", "study this", "review this", "assess this",
+
+        # Conversion phrases
+        "turn this into", "convert this to", "transform this into", "change this to",
+        "make this into", "represent this as", "show this as", "display this as",
+
+        # Specific request patterns
+        "chart this", "graph this", "plot this", "visualize this", "diagram this",
+        "chart the data", "graph the data", "plot the data", "visualize the data",
+        "from this image", "from this screenshot", "from this data", "from these numbers",
     ]
+
+    # Combine base phrases with learned phrases
+    chart_phrases = base_chart_phrases + list(_learned_chart_phrases)
 
     combined_text = (query + " " + full_content).lower()
 
@@ -913,6 +1007,73 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     logger.info(f"🎯 Chart system decision: {'USE CHART SYSTEM' if should_use_chart else 'USE REGULAR SYSTEM'} (keywords: {keyword_matches}, phrases: {phrase_matches}, create+chart: {has_create_and_chart})")
 
     return should_use_chart
+
+
+# Dynamic learning system for chart detection
+_learned_chart_keywords = set()
+_learned_chart_phrases = set()
+
+def learn_from_chart_request(query: str, success: bool = True):
+    """
+    Learn from successful chart requests to improve detection over time.
+
+    Args:
+        query: The user's query that resulted in a chart
+        success: Whether the chart creation was successful
+    """
+    if not success or not query:
+        return
+
+    global _learned_chart_keywords, _learned_chart_phrases
+
+    query_lower = query.lower()
+    words = query_lower.split()
+
+    # Learn individual words that might indicate chart requests
+    for word in words:
+        if len(word) > 3 and word.isalpha():  # Only learn meaningful words
+            if word not in chart_keywords and word not in _learned_chart_keywords:
+                _learned_chart_keywords.add(word)
+                logger.info(f"🧠 Learned new chart keyword: '{word}'")
+
+    # Learn 2-word and 3-word phrases
+    for i in range(len(words) - 1):
+        phrase = f"{words[i]} {words[i+1]}"
+        if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
+            _learned_chart_phrases.add(phrase)
+            logger.info(f"🧠 Learned new chart phrase: '{phrase}'")
+
+    for i in range(len(words) - 2):
+        phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+        if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
+            _learned_chart_phrases.add(phrase)
+            logger.info(f"🧠 Learned new chart phrase: '{phrase}'")
+
+def get_enhanced_chart_keywords():
+    """Get chart keywords including learned ones."""
+    return chart_keywords + list(_learned_chart_keywords)
+
+def get_enhanced_chart_phrases():
+    """Get chart phrases including learned ones."""
+    return base_chart_phrases + list(_learned_chart_phrases)
+
+def get_learning_stats():
+    """Get statistics about the learning system."""
+    return {
+        "learned_keywords": len(_learned_chart_keywords),
+        "learned_phrases": len(_learned_chart_phrases),
+        "total_keywords": len(base_chart_keywords) + len(_learned_chart_keywords),
+        "total_phrases": len(base_chart_phrases) + len(_learned_chart_phrases),
+        "learned_keywords_list": list(_learned_chart_keywords),
+        "learned_phrases_list": list(_learned_chart_phrases)
+    }
+
+def reset_learning():
+    """Reset the learning system (for debugging)."""
+    global _learned_chart_keywords, _learned_chart_phrases
+    _learned_chart_keywords.clear()
+    _learned_chart_phrases.clear()
+    logger.info("🧹 Learning system reset")
 
 
 def _get_chart_analysis_system_prompt() -> str:
