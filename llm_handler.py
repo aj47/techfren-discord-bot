@@ -122,6 +122,41 @@ async def call_llm_api(query, message_context=None):
         if message_context:
             context_parts = []
 
+            # Include analysis for the original message when available
+            original_msg = message_context.get('original_message')
+            if original_msg is not None:
+                original_author = getattr(original_msg, 'author', None)
+                original_author_name = str(original_author) if original_author else "Unknown"
+                original_content = getattr(original_msg, 'content', '')
+                original_timestamp = getattr(original_msg, 'created_at', None)
+                original_time_str = (
+                    original_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    if original_timestamp else "Unknown time"
+                )
+
+                image_analysis_text = ""
+                try:
+                    from database import get_message_by_id
+                    original_msg_data = await get_message_by_id(str(original_msg.id))
+                    if original_msg_data and original_msg_data.get('image_analysis'):
+                        import json
+                        image_analysis_data = json.loads(original_msg_data['image_analysis'])
+                        if image_analysis_data:
+                            image_analysis_parts = []
+                            for i, img_data in enumerate(image_analysis_data, 1):
+                                image_analysis_parts.append(
+                                    f"Image {i} ({img_data.get('filename', 'Unknown')}): {img_data.get('analysis', 'No analysis available')}"
+                                )
+                            image_analysis_text = "\n\n**Image Analysis (Original Message):**\n" + "\n".join(image_analysis_parts)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve image analysis for original message: {e}")
+
+                if image_analysis_text:
+                    context_parts.append(
+                        f"**Original Message:**\nAuthor: {original_author_name}\nTime: {original_time_str}\n"
+                        f"Content: {original_content}{image_analysis_text}"
+                    )
+
             # Add referenced message (reply) context
             if message_context.get('referenced_message'):
                 ref_msg = message_context['referenced_message']

@@ -377,6 +377,8 @@ async def on_message(message):
         attachment_types = None
         image_analysis = None
         
+        has_image_attachments = False
+
         if message.attachments:
             attachment_urls_list = []
             attachment_types_list = []
@@ -387,6 +389,7 @@ async def on_message(message):
                 
                 # If it's an image, trigger background analysis after storing the message
                 if attachment.content_type and attachment.content_type.startswith('image/'):
+                    has_image_attachments = True
                     logger.info(f"Detected image attachment: {attachment.filename} ({attachment.content_type})")
             
             attachment_urls = json.dumps(attachment_urls_list)
@@ -420,12 +423,23 @@ async def on_message(message):
         )
 
         # If message has image attachments, analyze them
-        if message.attachments and any(attachment.content_type and attachment.content_type.startswith('image/') for attachment in message.attachments):
-            background_task = asyncio.create_task(
-                analyze_image_attachments_background(str(message.id), message)
-            )
-            _background_tasks.add(background_task)
-            background_task.add_done_callback(lambda t: _background_tasks.discard(t))
+        if has_image_attachments:
+            if is_command and command_type in {"mention", "/bot"}:
+                logger.info(f"Performing immediate image analysis for command message {message.id}")
+                immediate_success = await process_and_update_message_with_image_analysis(str(message.id), message)
+                if not immediate_success:
+                    logger.warning(f"Immediate image analysis failed for message {message.id}; scheduling background retry")
+                    background_task = asyncio.create_task(
+                        analyze_image_attachments_background(str(message.id), message)
+                    )
+                    _background_tasks.add(background_task)
+                    background_task.add_done_callback(lambda t: _background_tasks.discard(t))
+            else:
+                background_task = asyncio.create_task(
+                    analyze_image_attachments_background(str(message.id), message)
+                )
+                _background_tasks.add(background_task)
+                background_task.add_done_callback(lambda t: _background_tasks.discard(t))
 
         if not success:
             # This is usually because the message already exists (common when bot restarts)
