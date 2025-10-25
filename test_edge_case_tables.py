@@ -57,7 +57,7 @@ def test_edge_cases():
         print(f"{'-'*60}")
 
         result = renderer._is_valid_data_table(table)
-        print(f"Validation result: {'✅ PASSED' if result else '❌ FAILED'}")
+        print(f"Validation result: {'PASSED' if result else 'FAILED'}")
 
         if not result:
             print("This case failed - checking if it should be passing...")

@@ -78,7 +78,7 @@ The analysis is complete.""",
         for j, table in enumerate(tables, 1):
             print(f"\nValidation for Table {j}:")
             is_valid = renderer._is_valid_data_table(table)
-            print(f"Result: {'✅ VALID' if is_valid else '❌ INVALID'}")
+            print(f"Result: {'VALID' if is_valid else 'INVALID'}")
             if not is_valid:
                 print("This table failed validation - checking if it should pass...")
 

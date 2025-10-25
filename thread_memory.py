@@ -616,7 +616,7 @@ async def process_thread_memory_command(message, command_parts):
             )
             last_msg = messages[0] if messages else None
             if last_msg:
-                return f"✅ This thread has conversation memory.\nLast exchange: {
+                return f"This thread has conversation memory.\nLast exchange: {
                     last_msg.timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
             else:
                 return "This thread has no conversation memory."

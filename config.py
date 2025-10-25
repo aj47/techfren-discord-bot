@@ -94,7 +94,7 @@ ERROR_MESSAGES = {
     "invalid_hours_format": "Please provide a valid number of hours. Usage: `/sum-hr <number>` (e.g., `/sum-hr 10`)",  # noqa: E501
     "processing_error": "Sorry, an error occurred while processing your request. Please try again later.",  # noqa: E501
     "summary_error": "Sorry, an error occurred while generating the summary. Please try again later.",  # noqa: E501
-    "large_summary_warning": "⚠️ Large summary requested ({hours} hours). This may take longer to process.",  # noqa: E501
+    "large_summary_warning": "Large summary requested ({hours} hours). This may take longer to process.",  # noqa: E501
     "no_query": "Please provide a query after mentioning the bot.",
     "rate_limit_cooldown": "Please wait {wait_time:.1f} seconds before making another request.",  # noqa: E501
     "rate_limit_exceeded": "You've reached the maximum number of requests per minute. Please try again in {wait_time:.1f} seconds.",  # noqa: E501

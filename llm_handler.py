@@ -430,7 +430,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
             message_context.get("linked_messages")
         )
         logger.info(
-            f"🔵 LLM CALL: query='{query[:50]}...' context={has_context} potential_images={has_images_pending}"  # noqa: E501
+            f"LLM CALL: query='{query[:50]}...' context={has_context} potential_images={has_images_pending}"  # noqa: E501
         )
 
         # Validate API key
@@ -1441,7 +1441,7 @@ DISCORD FORMATTING BEST PRACTICES:
 ✗ NO excessive formatting that makes text hard to read
 
 WHEN TO CREATE TABLES:
-⚠️ In regular conversation mode, AVOID creating markdown tables unless:
+In regular conversation mode, AVOID creating markdown tables unless:
   1. User explicitly requests data analysis or comparison
   2. Information is inherently tabular (specifications, comparisons)
   3. Table is the clearest way to present the information

@@ -118,7 +118,7 @@ class DiscordFormatter:
 
         # Add a styled header
         header = (
-            f"📊 **Summary of #{channel_name}** *(past {time_period})*\n{'━' * 30}\n\n"
+            f"**Summary of #{channel_name}** *(past {time_period})*\n{'━' * 30}\n\n"
         )
 
         # Process the summary content
@@ -194,7 +194,7 @@ class DiscordFormatter:
         Returns:
             Formatted error message
         """
-        return f"❌ **Error:** {error_msg}"
+        return f"**Error:** {error_msg}"
 
     @staticmethod
     def format_success_message(success_msg: str) -> str:
@@ -207,7 +207,7 @@ class DiscordFormatter:
         Returns:
             Formatted success message
         """
-        return f"✅ **Success:** {success_msg}"
+        return f"**Success:** {success_msg}"
 
     @staticmethod
     def format_warning_message(warning_msg: str) -> str:
@@ -220,7 +220,7 @@ class DiscordFormatter:
         Returns:
             Formatted warning message
         """
-        return f"⚠️ **Warning:** {warning_msg}"
+        return f"**Warning:** {warning_msg}"
 
     @staticmethod
     def format_info_message(info_msg: str) -> str:
@@ -233,7 +233,7 @@ class DiscordFormatter:
         Returns:
             Formatted info message
         """
-        return f"ℹ️ **Info:** {info_msg}"
+        return f"**Info:** {info_msg}"
 
     @staticmethod
     def format_code_block(code: str, language: str = "") -> str:

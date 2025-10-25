@@ -211,7 +211,7 @@ def format_transcript_unavailable_message(metadata: Dict[str, Any]) -> str:
             markdown += f"**Duration:** {metadata['duration']}\n"
 
         markdown += "\n## Transcript Status\n\n"
-        markdown += "❌ **Transcript not available**\n\n"
+        markdown += "**Transcript not available**\n\n"
         markdown += "This video does not have auto-generated captions or manual transcripts available. "  # noqa: E501
         markdown += "The video may be:\n"
         markdown += "- Too new (transcripts are still being generated)\n"

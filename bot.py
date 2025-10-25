@@ -686,7 +686,7 @@ async def on_message(message):
 
         # Add to processed set and maintain size limit
         logger.info(
-            "✅ Message %s not in cache, processing (channel: %s, cache size: %d)",
+            "Message %s not in cache, processing (channel: %s, cache size: %d)",
             message.id,
             message.channel.id,
             len(_processed_messages)

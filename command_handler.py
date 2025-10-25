@@ -238,7 +238,7 @@ async def handle_bot_command(
     async with _command_lock:
         command_key = (message.id, message.author.id)
         if command_key in _processed_commands:
-            logger.warning("⚠️ DUPLICATE COMMAND: Already processing/processed message %s, skipping", message.id)
+            logger.warning("DUPLICATE COMMAND: Already processing/processed message %s, skipping", message.id)
             return
 
         # Add to processed commands
@@ -253,7 +253,7 @@ async def handle_bot_command(
     if not query:
         return
 
-    logger.info("🟢 Executing mention command - Requested by %s - Message ID: %s", message.author, message.id)
+    logger.info("Executing mention command - Requested by %s - Message ID: %s", message.author, message.id)
 
     if not await _check_bot_command_rate_limit(message, client_user):
         return
@@ -263,7 +263,7 @@ async def handle_bot_command(
 
         # Check if message is already in a thread (Discord auto-created from media)
         if isinstance(message.channel, discord.Thread):
-            logger.info("✅ PATH 1: Message is already in thread '%s', using it for response", message.channel.name)
+            logger.info("PATH 1: Message is already in thread '%s', using it for response", message.channel.name)
             thread = message.channel
             thread_sender = MessageResponseSender(thread)
             processing_msg = await thread_sender.send(
@@ -298,7 +298,7 @@ async def handle_bot_command(
                     existing_thread = await message.fetch_thread()
                     if existing_thread:
                         logger.info(
-                            "✅ PATH 2A: Found Discord auto-thread '%s' after %.1fs "
+                            "PATH 2A: Found Discord auto-thread '%s' after %.1fs "
                             "(attempt %d)",
                             existing_thread.name,
                             total_waited,
@@ -339,7 +339,7 @@ async def handle_bot_command(
 
         if thread:
             # Process command in thread
-            logger.info("✅ PATH 2B: Created bot thread '%s'", thread.name)
+            logger.info("PATH 2B: Created bot thread '%s'", thread.name)
             thread_sender = MessageResponseSender(thread)
             processing_msg = await thread_sender.send(
                 "Processing your request, please wait..."
@@ -360,7 +360,7 @@ async def handle_bot_command(
                 "Thread creation FAILED - No fallback available: %s", type(message.channel).__name__
             )
             error_msg = await message.channel.send(
-                f"❌ **Thread Creation Failed**: Unable to create thread in {type(message.channel).__name__}\n\n"
+                f"**Thread Creation Failed**: Unable to create thread in {type(message.channel).__name__}\n\n"
                 "This command requires thread support. Please check server permissions and try again."
             )
     except Exception as e:

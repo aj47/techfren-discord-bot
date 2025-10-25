@@ -33,7 +33,7 @@ def test_chart_type_detection():
 
     for query, expected in test_cases:
         detected = renderer._detect_requested_chart_type(query)
-        status = "✅" if detected == expected else "❌"
+        status = "PASS" if detected == expected else "FAIL"
         print(f"{status} Query: '{query}'")
         print(f"   Expected: {expected}, Detected: {detected}")
         print()

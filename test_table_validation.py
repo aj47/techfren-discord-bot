@@ -61,7 +61,7 @@ def test_table_validation():
         print(f"{'-'*60}")
 
         result = renderer._is_valid_data_table(table)
-        print(f"Validation result: {'✅ PASSED' if result else '❌ FAILED'}")
+        print(f"Validation result: {'PASSED' if result else 'FAILED'}")
 
 if __name__ == "__main__":
     test_table_validation()

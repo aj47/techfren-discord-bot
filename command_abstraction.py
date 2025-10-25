@@ -626,7 +626,7 @@ class ThreadManager:
             if message_id in ThreadManager._created_threads:
                 thread_id = ThreadManager._created_threads[message_id]
                 logger.warning(
-                    "⚠️ DUPLICATE THREAD CREATION PREVENTED: Message %s already has thread %s",
+                    "DUPLICATE THREAD CREATION PREVENTED: Message %s already has thread %s",
                     message_id,
                     thread_id
                 )
@@ -1111,14 +1111,14 @@ async def _handle_guild_summary(
                 )
 
                 await initial_message.edit(
-                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
+                    content=f"**Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
                 )
             else:
                 logger.warning(
                     "Thread creation failed, sending summary in main channel"
                 )
                 await initial_message.edit(
-                    content=f"📊 **Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
+                    content=f"**Summary of #{channel_name_str} for the past {hours} hour{'s' if hours != 1 else ''}**"  # noqa: E501
                 )
                 await _send_summary_with_charts(
                     response_sender, summary_parts, chart_data

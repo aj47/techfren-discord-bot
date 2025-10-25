@@ -262,23 +262,23 @@ class ChartRenderer:
                                 try:
                                     float(numeric_part)  # Try to parse as float
                                     has_quantifiable_data = True
-                                    logger.info(f"  ✅ Found valid numeric data: {cell} -> {numeric_part}")
+                                    logger.info(f"  Found valid numeric data: {cell} -> {numeric_part}")
                                     break
                                 except ValueError as ve:
-                                    logger.info(f"  ❌ Failed to parse '{numeric_part}' as float: {ve}")
+                                    logger.info(f"  Failed to parse '{numeric_part}' as float: {ve}")
                                     pass
                             else:
-                                logger.info(f"  ❌ Numeric part '{numeric_part}' is invalid (just dots)")
+                                logger.info(f"  Numeric part '{numeric_part}' is invalid (just dots)")
 
                         # Fallback for obvious indicators - this should catch $251, $80, $420
                         elif '%' in cell or '$' in cell:
                             has_quantifiable_data = True
-                            logger.info(f"  ✅ Found quantifiable indicator in: {cell}")
+                            logger.info(f"  Found quantifiable indicator in: {cell}")
                             break
                         else:
                             logger.info(f"  No numeric data found in cell '{cell}'")
                 if has_quantifiable_data:
-                    logger.info(f"  ✅ Row {row_idx + 1} has quantifiable data, stopping search")
+                    logger.info(f"  Row {row_idx + 1} has quantifiable data, stopping search")
                     break
 
             if not has_quantifiable_data:
@@ -416,9 +416,9 @@ class ChartRenderer:
             logger.info(f"Table {i+1} content:\n{table}")
             if self._is_valid_data_table(table):
                 valid_tables.append(table)
-                logger.info(f"✅ Table {i+1} PASSED validation")
+                logger.info(f"Table {i+1} PASSED validation")
             else:
-                logger.info(f"❌ Table {i+1} FAILED validation - filtered out")
+                logger.info(f"Table {i+1} FAILED validation - filtered out")
 
         tables = valid_tables
 
