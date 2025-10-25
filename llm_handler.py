@@ -837,10 +837,34 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
         "show me the data",
         "create a chart",
         "create a graph",
+        "create a pie chart",
+        "create a bar chart",
+        "create a line chart",
+        "create a scatter plot",
+        "create a heatmap",
+        "create a box plot",
+        "create a histogram",
+        "create an area chart",
         "make a chart",
         "make a graph",
+        "make a pie chart",
+        "make a bar chart",
+        "make a line chart",
+        "make a scatter plot",
+        "make a heatmap",
+        "make a box plot",
+        "make a histogram",
+        "make an area chart",
         "generate a chart",
         "generate a graph",
+        "generate a pie chart",
+        "generate a bar chart",
+        "generate a line chart",
+        "generate a scatter plot",
+        "generate a heatmap",
+        "generate a box plot",
+        "generate a histogram",
+        "generate an area chart",
         "visualize this",
         "visualize the",
         "data analysis",
@@ -862,8 +886,33 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     # Check for chart phrases
     phrase_matches = sum(1 for phrase in chart_phrases if phrase in combined_text)
 
-    # Use chart system if multiple indicators or strong phrases
-    return keyword_matches >= 2 or phrase_matches >= 1
+    # Debug logging
+    logger.debug(f"🔍 Chart detection debug:")
+    logger.debug(f"   Query: '{query}'")
+    logger.debug(f"   Combined text: '{combined_text[:100]}...'")
+    logger.debug(f"   Keyword matches: {keyword_matches}")
+    logger.debug(f"   Phrase matches: {phrase_matches}")
+
+    # Log which keywords/phrases were found
+    found_keywords = [kw for kw in chart_keywords if kw in combined_text]
+    found_phrases = [ph for ph in chart_phrases if ph in combined_text]
+    if found_keywords:
+        logger.debug(f"   Found keywords: {found_keywords}")
+    if found_phrases:
+        logger.debug(f"   Found phrases: {found_phrases}")
+
+    # Special case: if query contains "create" and "chart" with any words in between
+    has_create_and_chart = "create" in query.lower() and "chart" in query.lower()
+
+    # Use chart system if multiple indicators, strong phrases, or create+chart combo
+    should_use_chart = keyword_matches >= 2 or phrase_matches >= 1 or has_create_and_chart
+
+    if has_create_and_chart and phrase_matches == 0:
+        logger.info(f"🎯 Special case: 'create' + 'chart' detected, forcing chart mode")
+
+    logger.info(f"🎯 Chart system decision: {'USE CHART SYSTEM' if should_use_chart else 'USE REGULAR SYSTEM'} (keywords: {keyword_matches}, phrases: {phrase_matches}, create+chart: {has_create_and_chart})")
+
+    return should_use_chart
 
 
 def _get_chart_analysis_system_prompt() -> str:
