@@ -4,12 +4,13 @@ Provides command-line tools for querying and managing the database.
 """
 
 import argparse
-import sqlite3
-import os
-import sys
 import json
-from tabulate import tabulate
+import os
+import sqlite3
+import sys
 from typing import Optional
+
+from tabulate import tabulate
 
 # Database constants
 DB_DIRECTORY = "data"
@@ -277,6 +278,7 @@ def view_summary(summary_id: int) -> None:
 
 
 def main():
+    """Main entry point for database utility CLI."""
     parser = argparse.ArgumentParser(description="Discord Bot Database Utility")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 

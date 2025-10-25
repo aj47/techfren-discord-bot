@@ -102,7 +102,7 @@ class ThreadMemoryManager:
                 logger.info("Thread memory database schema initialized successfully")
 
         except sqlite3.Error as e:
-            logger.error(f"Error initializing thread memory schema: {e}")
+            logger.error("Error initializing thread memory schema: %s", e)
             raise
 
     def store_thread_exchange(
@@ -208,7 +208,7 @@ class ThreadMemoryManager:
                 return True
 
         except sqlite3.Error as e:
-            logger.error(f"Error storing thread exchange: {e}")
+            logger.error("Error storing thread exchange: %s", e)
             return False
 
     def get_thread_memory(
@@ -284,7 +284,7 @@ class ThreadMemoryManager:
                 return messages
 
         except sqlite3.Error as e:
-            logger.error(f"Error retrieving thread memory: {e}")
+            logger.error("Error retrieving thread memory: %s", e)
             return []
 
     def format_thread_context(
@@ -393,7 +393,7 @@ class ThreadMemoryManager:
                 }
 
         except sqlite3.Error as e:
-            logger.error(f"Error getting thread summary: {e}")
+            logger.error("Error getting thread summary: %s", e)
             return None
 
     def cleanup_old_threads(self, days_old: int = 30) -> int:
@@ -437,12 +437,12 @@ class ThreadMemoryManager:
                     )
 
                     conn.commit()
-                    logger.info(f"Marked {len(old_threads)} old threads as inactive")
+                    logger.info("Marked %d old threads as inactive", len(old_threads))
 
                 return len(old_threads)
 
         except sqlite3.Error as e:
-            logger.error(f"Error cleaning up old threads: {e}")
+            logger.error("Error cleaning up old threads: %s", e)
             return 0
 
     def search_thread_conversations(
@@ -499,7 +499,7 @@ class ThreadMemoryManager:
                 return results
 
         except sqlite3.Error as e:
-            logger.error(f"Error searching thread conversations: {e}")
+            logger.error("Error searching thread conversations: %s", e)
             return []
 
 
@@ -570,11 +570,11 @@ def clear_thread_memory(thread_id: str) -> bool:
             )
 
             conn.commit()
-            logger.info(f"Cleared thread memory for thread {thread_id}")
+            logger.info("Cleared thread memory for thread %s", thread_id)
             return True
 
     except sqlite3.Error as e:
-        logger.error(f"Error clearing thread memory: {e}")
+        logger.error("Error clearing thread memory: %s", e)
         return False
 
 

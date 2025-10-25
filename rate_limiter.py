@@ -1,3 +1,5 @@
+"""Rate limiting functionality for bot commands."""
+
 import time
 import threading
 from collections import defaultdict

@@ -27,7 +27,7 @@ def migrate_database():
     try:
         # Check if database file exists
         if not os.path.exists(DB_FILE):
-            logger.error(f"Database file not found: {DB_FILE}")
+            logger.error("Database file not found: %s", DB_FILE)
             return False
 
         # Connect to the database
@@ -49,7 +49,7 @@ def migrate_database():
 
             # Execute ALTER TABLE statements
             for column_name, column_type in columns_to_add:
-                logger.info(f"Adding column {column_name} to messages table")
+                logger.info("Adding column %s to messages table", column_name)
                 cursor.execute(
                     f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}"
                 )
@@ -68,7 +68,7 @@ def migrate_database():
 
         return True
     except Exception as e:
-        logger.error(f"Error migrating database: {str(e)}", exc_info=True)
+        logger.error("Error migrating database: %s", str(e), exc_info=True)
         return False
 
 
@@ -140,10 +140,10 @@ def migrate_thread_memory_tables():
             logger.info("Thread memory tables created/verified successfully")
 
     except Exception as e:
-        logger.error(f"Error creating thread memory tables: {str(e)}", exc_info=True)
+        logger.error("Error creating thread memory tables: %s", str(e), exc_info=True)
         raise
 
 
 if __name__ == "__main__":
-    success = migrate_database()
-    sys.exit(0 if success else 1)
+    _result = migrate_database()
+    sys.exit(0 if _result else 1)

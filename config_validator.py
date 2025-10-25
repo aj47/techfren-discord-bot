@@ -10,7 +10,7 @@ def _validate_required_string(
         display_name = attr_name.replace("_", " ").title()
 
     if not hasattr(config_module, attr_name) or not getattr(config_module, attr_name):
-        logger.error(f"{display_name} not found in config.py or is empty")
+        logger.error("%s not found in config.py or is empty", display_name)
         raise ValueError(f"{display_name} is missing or empty in config.py")
 
     value = getattr(config_module, attr_name)
@@ -122,7 +122,9 @@ def _validate_summary_time(config_module):
             if hasattr(config_module, "summary_minute"):
                 config_module.summary_minute = 0
         else:
-            logger.info(f"Custom daily summary time configured: {sh:02d}:{sm:02d} UTC")
+            logger.info(
+                "Custom daily summary time configured: %02d:%02d UTC", sh, sm
+            )
     except (ValueError, TypeError):
         logger.warning(
             f"Invalid summary_hour ('{summary_hour}') or summary_minute ('{summary_minute}') in config. Using default 00:00 UTC."  # noqa: E501

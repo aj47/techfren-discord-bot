@@ -246,8 +246,7 @@ def get_top_n(items: List[Dict[str, Any]], n: int, key: str,
     """
     if reverse:
         return heapq.nlargest(n, items, key=lambda x: x.get(key, 0))
-    else:
-        return heapq.nsmallest(n, items, key=lambda x: x.get(key, 0))
+    return heapq.nsmallest(n, items, key=lambda x: x.get(key, 0))
 
 
 def get_top_n_tuples(items: List[tuple], n: int, reverse: bool = True) -> List[tuple]:
@@ -260,8 +259,7 @@ def get_top_n_tuples(items: List[tuple], n: int, reverse: bool = True) -> List[t
     """
     if reverse:
         return heapq.nlargest(n, items, key=lambda x: x[1])
-    else:
-        return heapq.nsmallest(n, items, key=lambda x: x[1])
+    return heapq.nsmallest(n, items, key=lambda x: x[1])
 
 
 # ============================================================================
@@ -294,10 +292,9 @@ def smart_sort(
 
     if size < 20:
         return insertion_sort(items, key, reverse)
-    elif size < 1000:
+    if size < 1000:
         return quick_sort(items, key, reverse)
-    else:
-        return merge_sort(items, key, reverse)
+    return merge_sort(items, key, reverse)
 
 
 # ============================================================================

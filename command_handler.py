@@ -1,12 +1,19 @@
+"""
+Command handlers for bot commands including mention, sum-day, sum-hr, chart-day, and chart-hr.
+"""
+
+import re
+import asyncio
+from typing import Optional
+
 import discord
+
 import database
 from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
 from message_utils import split_long_message, get_message_context
 from thread_memory import get_thread_context, store_thread_exchange, has_thread_memory
-import re
-from typing import Optional
 
 
 async def _validate_bot_command_input(message, client_user):
@@ -46,9 +53,10 @@ async def _check_bot_command_rate_limit(message, client_user):
 
         await _send_error_response_thread(message, client_user, error_msg)
         logger.info(
-            f"Rate limited user {
-                message.author} ({reason}): wait time {
-                wait_time:.1f}s"
+            "Rate limited user %s (%s): wait time %.1fs",
+            message.author,
+            reason,
+            wait_time
         )
         return False
     return True
@@ -65,20 +73,30 @@ async def _get_bot_command_context(message, bot_client):
         thread_id = str(message.channel.id)
         if has_thread_memory(thread_id):
             thread_context = get_thread_context(thread_id, max_exchanges=4)
-            logger.debug(f"Retrieved thread context for thread {thread_id}")
+            logger.debug("Retrieved thread context for thread %s", thread_id)
 
-    # Get message context (referenced messages and linked messages)
-    if bot_client and (message.reference or "discord.com/channels/" in message.content):
+    # Log attachment info for debugging
+    if message.attachments:
+        logger.info("Message has %d attachment(s): %s", len(message.attachments), [att.filename for att in message.attachments])
+
+    # Get message context (referenced messages, linked messages, and current message)
+    if bot_client and (message.reference or "discord.com/channels/" in message.content or message.attachments):
         try:
             message_context = await get_message_context(message, bot_client)
             logger.debug(
-                f"Retrieved message context: referenced={
-                    message_context['referenced_message'] is not None}, linked_count={
-                    len(
-                        message_context['linked_messages'])}"
+                "Retrieved message context: referenced=%s, linked_count=%d",
+                message_context['referenced_message'] is not None,
+                len(message_context['linked_messages'])
             )
         except Exception as e:
-            logger.warning(f"Failed to get message context: {e}")
+            logger.warning("Failed to get message context: %s", e)
+    elif message.attachments:
+        message_context = {
+            "current_message": message,
+            "referenced_message": None,
+            "linked_messages": [],
+        }
+        logger.info("Created message context for current message with %d attachment(s)", len(message.attachments))
 
     return thread_context, thread_id, message_context
 
@@ -113,9 +131,9 @@ async def _store_thread_memory(
                 ),
                 is_chart_analysis=force_charts or bool(chart_data),
             )
-            logger.debug(f"Stored thread exchange for thread {thread_id}")
+            logger.debug("Stored thread exchange for thread %s", thread_id)
         except Exception as e:
-            logger.warning(f"Failed to store thread exchange: {e}")
+            logger.warning("Failed to store thread exchange: %s", e)
 
 
 async def _send_message_parts(thread_sender, parts, chart_data):
@@ -134,7 +152,7 @@ async def _cleanup_processing_message(processing_msg):
         try:
             await processing_msg.delete()
         except Exception as e:
-            logger.debug(f"Could not delete processing message: {e}")
+            logger.debug("Could not delete processing message: %s", e)
 
 
 async def _handle_send_error(processing_msg):
@@ -145,7 +163,7 @@ async def _handle_send_error(processing_msg):
                 content="Sorry, there was an error processing your request."
             )
         except Exception as edit_e:
-            logger.debug(f"Could not edit processing message: {edit_e}")
+            logger.debug("Could not edit processing message: %s", edit_e)
 
 
 async def _send_bot_response(thread_sender, response, chart_data, processing_msg):
@@ -155,7 +173,7 @@ async def _send_bot_response(thread_sender, response, chart_data, processing_msg
         await _send_message_parts(thread_sender, parts, chart_data)
         await _cleanup_processing_message(processing_msg)
     except Exception as e:
-        logger.error(f"Error sending bot response: {e}")
+        logger.error("Error sending bot response: %s", e)
         await _handle_send_error(processing_msg)
 
 
@@ -177,7 +195,7 @@ async def _process_bot_command_in_thread(
 
         # Get LLM response
         response, chart_data = await call_llm_api(query, message_context, force_charts)
-        logger.debug(f"Raw response length: {len(response)} characters")
+        logger.debug("Raw response length: %d characters", len(response))
 
         # Store thread memory
         await _store_thread_memory(
@@ -188,10 +206,12 @@ async def _process_bot_command_in_thread(
         await _send_bot_response(thread_sender, response, chart_data, processing_msg)
 
         logger.info(
-            f"Command executed successfully: mention - Response length: {len(response)} - Posted in thread"  # noqa: E501
+            "Command executed successfully: mention - Response length: %d - "
+            "Posted in thread",
+            len(response)
         )
     except Exception as e:
-        logger.error(f"Error processing mention command: {str(e)}", exc_info=True)
+        logger.error("Error processing mention command: %s", str(e), exc_info=True)
         import config
 
         error_msg = config.ERROR_MESSAGES["processing_error"]
@@ -203,33 +223,48 @@ async def _process_bot_command_in_thread(
             pass
 
 
+# Track processed commands to prevent duplicate handling at command level
+_processed_commands = set()
+_PROCESSED_COMMANDS_MAX_SIZE = 500
+_command_lock = asyncio.Lock()  # Prevent race conditions
+
 async def handle_bot_command(
     message: discord.Message,
     client_user: discord.ClientUser,
     bot_client: discord.Client = None,
 ) -> None:
     """Handles the mention command with thread-based replies."""
+    # Check for duplicate command processing with async lock to prevent race conditions
+    async with _command_lock:
+        command_key = (message.id, message.author.id)
+        if command_key in _processed_commands:
+            logger.warning("⚠️ DUPLICATE COMMAND: Already processing/processed message %s, skipping", message.id)
+            return
+
+        # Add to processed commands
+        _processed_commands.add(command_key)
+        if len(_processed_commands) > _PROCESSED_COMMANDS_MAX_SIZE:
+            to_remove = list(_processed_commands)[:_PROCESSED_COMMANDS_MAX_SIZE // 2]
+            for key in to_remove:
+                _processed_commands.discard(key)
+
     # Validate input and check rate limits
     query = await _validate_bot_command_input(message, client_user)
     if not query:
         return
 
-    logger.info(f"Executing mention command - Requested by {message.author}")
+    logger.info("🟢 Executing mention command - Requested by %s - Message ID: %s", message.author, message.id)
 
     if not await _check_bot_command_rate_limit(message, client_user):
         return
 
-    # Create thread from the user's message for the bot response
-    thread_name = f"Bot Response - {message.author.display_name}"
-
     try:
         from command_abstraction import ThreadManager, MessageResponseSender
 
-        thread_manager = ThreadManager(message.channel, message.guild)
-        thread = await thread_manager.create_thread_from_message(message, thread_name)
-
-        if thread:
-            # Process command in thread
+        # Check if message is already in a thread (Discord auto-created from media)
+        if isinstance(message.channel, discord.Thread):
+            logger.info("✅ PATH 1: Message is already in thread '%s', using it for response", message.channel.name)
+            thread = message.channel
             thread_sender = MessageResponseSender(thread)
             processing_msg = await thread_sender.send(
                 "Processing your request, please wait..."
@@ -237,24 +272,101 @@ async def handle_bot_command(
             await _process_bot_command_in_thread(
                 thread_sender, processing_msg, message, query, bot_client, thread.id
             )
+            return
+
+        # Log to debug which path we're taking
+        logger.debug("Message channel type: %s, has %d attachment(s)", type(message.channel).__name__, len(message.attachments))
+
+        # If message has attachments, try to use Discord's auto-created thread first
+        if message.attachments:
+            import asyncio
+            logger.info("Message has %d attachment(s), checking for Discord auto-thread", len(message.attachments))
+
+            # Wait for Discord's auto-created thread with exponential backoff
+            attempt = 0
+            wait_time = 0.2  # Start with 200ms
+            max_wait = 2.0   # Cap at 2 seconds between attempts
+            total_waited = 0
+            max_total_wait = 5  # Wait up to 5 seconds for Discord auto-thread
+
+            while total_waited < max_total_wait:
+                attempt += 1
+                await asyncio.sleep(wait_time)
+                total_waited += wait_time
+
+                try:
+                    existing_thread = await message.fetch_thread()
+                    if existing_thread:
+                        logger.info(
+                            "✅ PATH 2A: Found Discord auto-thread '%s' after %.1fs "
+                            "(attempt %d)",
+                            existing_thread.name,
+                            total_waited,
+                            attempt
+                        )
+                        thread_sender = MessageResponseSender(existing_thread)
+                        processing_msg = await thread_sender.send(
+                            "Processing your request, please wait..."
+                        )
+                        await _process_bot_command_in_thread(
+                            thread_sender, processing_msg, message, query, bot_client, existing_thread.id
+                        )
+                        logger.debug("PATH 2A completed successfully, returning from handle_bot_command")
+                        return
+                except discord.NotFound:
+                    logger.debug(
+                        "Discord thread not found yet after %.1fs (attempt %d), "
+                        "waiting %.1fs...",
+                        total_waited,
+                        attempt,
+                        wait_time
+                    )
+                    # Exponential backoff: increase wait time for next attempt
+                    wait_time = min(wait_time * 1.5, max_wait)
+                    continue
+                except Exception as e:
+                    logger.warning("Error checking for auto-created thread: %s", e)
+                    break
+
+            # If no Discord auto-thread found, create our own bot thread
+            logger.info("No Discord auto-thread found after %.1fs, creating bot thread for attachment message", total_waited)
+
+        # Create bot thread (for messages with or without attachments)
+        logger.info("Creating bot thread")
+        thread_name = f"Bot Response - {message.author.display_name}"
+        thread_manager = ThreadManager(message.channel, message.guild)
+        thread = await thread_manager.create_thread_from_message(message, thread_name)
+
+        if thread:
+            # Process command in thread
+            logger.info("✅ PATH 2B: Created bot thread '%s'", thread.name)
+            thread_sender = MessageResponseSender(thread)
+            processing_msg = await thread_sender.send(
+                "Processing your request, please wait..."
+            )
+            await _process_bot_command_in_thread(
+                thread_sender, processing_msg, message, query, bot_client, thread.id
+            )
+            logger.debug("PATH 2B completed successfully, returning from handle_bot_command")
+            return
+
+        # Fallback to channel response
+        if isinstance(message.channel, discord.DMChannel):
+            logger.debug(
+                "Thread creation not supported in DMs, using channel response"
+            )
         else:
-            # Fallback to channel response
-            if isinstance(message.channel, discord.DMChannel):
-                logger.debug(
-                    "Thread creation not supported in DMs, using channel response"
-                )
-            else:
-                logger.info(
-                    f"Thread creation failed in {
-                        type(
-                            message.channel).__name__}, falling back to channel response"  # noqa: E501
-                )
-            await _handle_bot_command_fallback(message, client_user, query, bot_client)
+            logger.info(
+                "Thread creation failed in %s, falling back to channel response",
+                type(message.channel).__name__
+            )
+        await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
     except Exception as e:
         logger.error(
-            f"Error in thread-based bot command handling: {str(e)}", exc_info=True
+            "Error in thread-based bot command handling: %s", str(e), exc_info=True
         )
+        logger.info("Calling fallback handler due to exception in main handler")
         await _handle_bot_command_fallback(message, client_user, query, bot_client)
 
 
@@ -291,7 +403,7 @@ async def _send_error_response_thread(
                 bot_response, client_user, message.guild, message.channel, error_msg
             )
     except Exception as e:
-        logger.error(f"Error sending error response in thread: {str(e)}", exc_info=True)
+        logger.error("Error sending error response in thread: %s", str(e), exc_info=True)
         # Ultimate fallback to channel response
         allowed_mentions = discord.AllowedMentions(
             everyone=False, roles=False, users=True
@@ -306,19 +418,23 @@ async def _send_error_response_thread(
 
 async def _get_fallback_message_context(message, bot_client):
     """Get message context for fallback handler."""
-    if bot_client and (message.reference or "discord.com/channels/" in message.content):
+    if bot_client and (message.reference or "discord.com/channels/" in message.content or message.attachments):
         try:
             message_context = await get_message_context(message, bot_client)
             logger.debug(
-                f"Retrieved message context in fallback: referenced={
-                    message_context['referenced_message'] is not None}, "
-                f"linked_count={
-                    len(
-                        message_context['linked_messages'])}"
+                "Retrieved message context in fallback: referenced=%s, linked_count=%d",
+                message_context['referenced_message'] is not None,
+                len(message_context['linked_messages'])
             )
             return message_context
         except Exception as e:
-            logger.warning(f"Failed to get message context in fallback: {e}")
+            logger.warning("Failed to get message context in fallback: %s", e)
+    elif message.attachments:
+        return {
+            "current_message": message,
+            "referenced_message": None,
+            "linked_messages": [],
+        }
     return None
 
 
@@ -326,7 +442,7 @@ async def _send_fallback_response_with_charts(
     message, client_user, response, chart_data, processing_msg
 ):
     """Send fallback response with charts."""
-    logger.info(f"Sending fallback response with {len(chart_data)} chart(s)")
+    logger.info("Sending fallback response with %d chart(s)", len(chart_data))
     from command_abstraction import MessageResponseSender
 
     channel_sender = MessageResponseSender(message.channel)
@@ -337,9 +453,10 @@ async def _send_fallback_response_with_charts(
         )
     await processing_msg.delete()
     logger.info(
-        f"Command executed successfully (fallback): mention - Response length: {
-            len(response)} - With {
-            len(chart_data)} chart(s)"
+        "Command executed successfully (fallback): mention - Response length: %d - "
+        "With %d chart(s)",
+        len(response),
+        len(chart_data)
     )
 
 
@@ -363,9 +480,10 @@ async def _send_fallback_response_text(message, client_user, response, processin
 
     await processing_msg.delete()
     logger.info(
-        f"Command executed successfully (fallback): mention - Response length: {
-            len(response)} - Split into {
-            len(message_parts)} parts"
+        "Command executed successfully (fallback): mention - Response length: %d - "
+        "Split into %d parts",
+        len(response),
+        len(message_parts)
     )
 
 
@@ -394,6 +512,7 @@ async def _handle_bot_command_fallback(
     bot_client: discord.Client = None,
 ) -> None:
     """Fallback handler for bot commands when thread creation fails."""
+    logger.info("🔄 FALLBACK: Responding in channel %s (no thread available)", message.channel.id)
     processing_msg = await message.channel.send(
         "Processing your request, please wait..."
     )
@@ -413,8 +532,8 @@ async def _handle_bot_command_fallback(
             )
     except Exception as e:
         logger.error(
-            f"Error processing mention command (fallback): {
-                str(e)}",
+            "Error processing mention command (fallback): %s",
+            str(e),
             exc_info=True,
         )
         await _handle_fallback_error(message, client_user, processing_msg)
@@ -487,7 +606,7 @@ async def _handle_message_command_wrapper(
         )
 
     except Exception as e:
-        logger.error(f"Error in handle_{command_name}_command: {str(e)}", exc_info=True)
+        logger.error("Error in handle_%s_command: %s", command_name, str(e), exc_info=True)
         import config
 
         error_msg = config.ERROR_MESSAGES["summary_error"]
@@ -592,7 +711,7 @@ async def store_bot_response_db(
             channel.name if hasattr(channel, "name") else f"DM with {channel.recipient}"
         )
 
-        success = database.store_message(
+        success = await database.store_message(
             message_id=str(bot_msg_obj.id),
             author_id=str(client_user.id),
             author_name=str(client_user),
@@ -607,9 +726,9 @@ async def store_bot_response_db(
             command_type=None,
         )
         if not success:
-            logger.warning(f"Failed to store bot response {bot_msg_obj.id} in database")
+            logger.warning("Failed to store bot response %s in database", bot_msg_obj.id)
     except Exception as e:
-        logger.error(f"Error storing bot response in database: {str(e)}", exc_info=True)
+        logger.error("Error storing bot response in database: %s", str(e), exc_info=True)
 
 
 def _should_force_charts(query: str) -> bool:

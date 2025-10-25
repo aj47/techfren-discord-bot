@@ -1,3 +1,5 @@
+"""Logging configuration for the bot."""
+
 import logging
 import os
 from datetime import datetime

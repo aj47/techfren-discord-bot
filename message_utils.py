@@ -169,9 +169,9 @@ async def fetch_referenced_message(
             return await channel.fetch_message(message.reference.message_id)
 
     except (discord.HTTPException, discord.NotFound) as e:
-        logger.warning(f"Failed to fetch referenced message: {e}")
+        logger.warning("Failed to fetch referenced message: %s", e)
     except Exception as e:
-        logger.error(f"Unexpected error fetching referenced message: {e}")
+        logger.error("Unexpected error fetching referenced message: %s", e)
 
     return None
 
@@ -196,7 +196,7 @@ async def fetch_message_from_link(
     match = re.match(pattern, link)
 
     if not match:
-        logger.warning(f"Invalid Discord message link format: {link}")
+        logger.warning("Invalid Discord message link format: %s", link)
         return None
 
     guild_id_str, channel_id_str, message_id_str = match.groups()
@@ -213,21 +213,21 @@ async def fetch_message_from_link(
             guild_id = int(guild_id_str)
             guild = bot.get_guild(guild_id)
             if not guild:
-                logger.warning(f"Bot is not in guild {guild_id}")
+                logger.warning("Bot is not in guild %s", guild_id)
                 return None
             channel = guild.get_channel(channel_id)
 
         if not channel:
-            logger.warning(f"Could not find channel {channel_id}")
+            logger.warning("Could not find channel %s", channel_id)
             return None
 
         # Fetch the message
         return await channel.fetch_message(message_id)
 
     except (ValueError, discord.HTTPException, discord.NotFound) as e:
-        logger.warning(f"Failed to fetch message from link {link}: {e}")
+        logger.warning("Failed to fetch message from link %s: %s", link, e)
     except Exception as e:
-        logger.error(f"Unexpected error fetching message from link {link}: {e}")
+        logger.error("Unexpected error fetching message from link %s: %s", link, e)
 
     return None
 
@@ -261,6 +261,7 @@ async def get_message_context(
     """
     context = {
         "original_message": message,
+        "current_message": message,
         "referenced_message": None,
         "linked_messages": [],
     }

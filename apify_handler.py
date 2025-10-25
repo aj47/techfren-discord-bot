@@ -27,7 +27,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         Optional[Dict[str, Any]]: The tweet data or None if scraping failed
     """
     try:
-        logger.info(f"Fetching tweet from URL: {url}")
+        logger.info("Fetching tweet from URL: %s", url)
 
         # Check if Apify API token exists
         if not hasattr(config, "apify_api_token") or not config.apify_api_token:
@@ -40,7 +40,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         # Extract tweet ID from URL
         tweet_id = extract_tweet_id(url)
         if not tweet_id:
-            logger.error(f"Could not extract tweet ID from URL: {url}")
+            logger.error("Could not extract tweet ID from URL: %s", url)
             return None
 
         # Ensure URL is properly formatted
@@ -49,7 +49,7 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         else:
             formatted_url = url
 
-        logger.info(f"Using formatted URL: {formatted_url}")
+        logger.info("Using formatted URL: %s", formatted_url)
 
         # Prepare the input for the Twitter Scraper actor
         input_data = {
@@ -71,19 +71,19 @@ async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
         )
 
         if not dataset_items:
-            logger.warning(f"No tweet data found for URL: {url}")
+            logger.warning("No tweet data found for URL: %s", url)
             return None
 
         # Get the first (and should be only) item
         tweet_data = dataset_items[0]
 
         # Log success
-        logger.info(f"Successfully fetched tweet from URL: {url}")
+        logger.info("Successfully fetched tweet from URL: %s", url)
 
         return tweet_data
 
     except Exception as e:
-        logger.error(f"Error fetching tweet from URL {url}: {str(e)}", exc_info=True)
+        logger.error("Error fetching tweet from URL %s: %s", url, str(e), exc_info=True)
         return None
 
 
@@ -98,7 +98,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         Optional[List[Dict[str, Any]]]: List of reply data or None if scraping failed
     """
     try:
-        logger.info(f"Fetching tweet replies from URL: {url}")
+        logger.info("Fetching tweet replies from URL: %s", url)
 
         # Check if Apify API token exists
         if not hasattr(config, "apify_api_token") or not config.apify_api_token:
@@ -114,7 +114,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         else:
             formatted_url = url
 
-        logger.info(f"Using formatted URL for replies: {formatted_url}")
+        logger.info("Using formatted URL for replies: %s", formatted_url)
 
         # Prepare the input for the Twitter Replies Scraper actor
         input_data = {"postUrls": [formatted_url], "resultsLimit": 30}
@@ -131,7 +131,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         )
 
         if not dataset_items:
-            logger.warning(f"No reply data found for URL: {url}")
+            logger.warning("No reply data found for URL: %s", url)
             return []
 
         # Log success
@@ -167,7 +167,7 @@ def extract_tweet_id(url: str) -> Optional[str]:
             return match.group(1)
 
         # Log the URL and pattern when no match is found
-        logger.debug(f"No tweet ID found in URL: {url} using pattern: {pattern}")
+        logger.debug("No tweet ID found in URL: %s using pattern: %s", url, pattern)
 
         return None
     except Exception as e:
@@ -270,12 +270,12 @@ async def scrape_twitter_content(url: str) -> Optional[Dict[str, Any]]:
             content or None if scraping failed
     """
     try:
-        logger.info(f"Scraping Twitter/X.com URL: {url}")
+        logger.info("Scraping Twitter/X.com URL: %s", url)
 
         # Fetch the original tweet
         tweet_data = await fetch_tweet(url)
         if not tweet_data:
-            logger.warning(f"Failed to fetch tweet from URL: {url}")
+            logger.warning("Failed to fetch tweet from URL: %s", url)
             return None
 
         # Extract the tweet text
@@ -319,7 +319,7 @@ async def scrape_twitter_content(url: str) -> Optional[Dict[str, Any]]:
         return {"markdown": markdown_content, "raw_data": scraped_content}
 
     except Exception as e:
-        logger.error(f"Error scraping Twitter/X.com URL {url}: {str(e)}", exc_info=True)
+        logger.error("Error scraping Twitter/X.com URL %s: %s", url, str(e), exc_info=True)
         return None
 
 

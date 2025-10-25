@@ -7,7 +7,10 @@ apify-client
 pytest-asyncio
 python-dotenv
 youtube-transcript-api
-quickchart-io
+seaborn
+matplotlib
+pandas
 aiohttp
+aiosqlite
 
 # Python 3.9+ required for asyncio.to_thread functionality

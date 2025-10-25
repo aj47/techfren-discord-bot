@@ -26,7 +26,7 @@ async def scrape_url_content(url: str) -> Optional[str]:
         Optional[str]: The scraped content as markdown, or None if scraping failed
     """
     try:
-        logger.info(f"Scraping URL: {url}")
+        logger.info("Scraping URL: %s", url)
 
         # Check if Firecrawl API key exists
         if not hasattr(config, "firecrawl_api_key") or not config.firecrawl_api_key:
@@ -58,7 +58,7 @@ async def scrape_url_content(url: str) -> Optional[str]:
         content_preview = markdown_content[:100] + (
             "..." if len(markdown_content) > 100 else ""
         )
-        logger.info(f"Successfully scraped URL: {url} - Content: {content_preview}")
+        logger.info("Successfully scraped URL: %s - Content: %s", url, content_preview)
 
         return markdown_content
 
@@ -77,5 +77,5 @@ async def scrape_url_content(url: str) -> Optional[str]:
             except Exception:
                 pass
 
-        logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
+        logger.error("Error scraping URL %s: %s", url, error_message, exc_info=True)
         return None

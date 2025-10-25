@@ -30,7 +30,7 @@ class DiscordFormatter:
         Returns:
             Tuple of (formatted_string, chart_data_list)
             - formatted_string: Content with Discord markdown
-            - chart_data_list: List of chart data dicts with 'url', 'type', 'placeholder' keys  # noqa: E501
+            - chart_data_list: List of chart data dicts with 'file', 'type', 'placeholder' keys  # noqa: E501
         """
         formatted = content
         chart_data_list = []
@@ -40,9 +40,9 @@ class DiscordFormatter:
         try:
             formatted, chart_data_list = extract_tables_for_rendering(formatted)
             if chart_data_list:
-                logger.info(f"Extracted {len(chart_data_list)} chart(s) from response")
+                logger.info("Extracted %d chart(s) from response", len(chart_data_list))
         except Exception as e:
-            logger.error(f"Error extracting charts: {e}", exc_info=True)
+            logger.error("Error extracting charts: %s", e, exc_info=True)
             # Continue with normal processing if chart extraction fails
 
         # Convert any remaining markdown tables to ASCII tables
@@ -529,7 +529,7 @@ class DiscordFormatter:
                 else:
                     return table_text
             except Exception as e:
-                logger.warning(f"Failed to convert markdown table to ASCII: {e}")
+                logger.warning("Failed to convert markdown table to ASCII: %s", e)
                 return table_text
 
         # Replace all markdown tables with ASCII tables

@@ -61,3 +61,8 @@ test_final_integration.py
 
 #Ignore vscode AI rules
 .github\copilot-instructions.md
+
+# Font archive files (fonts are in fonts/ directory now)
+KH-Interference-TRIAL/
+KH-Interference-TRIAL.zip
+*.zip:Zone.Identifier

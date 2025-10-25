@@ -36,7 +36,7 @@ def extract_video_id(url: str) -> Optional[str]:
             if match:
                 return match.group(1)
 
-        logger.debug(f"No video ID found in URL: {url}")
+        logger.debug("No video ID found in URL: %s", url)
         return None
 
     except Exception as e:
@@ -57,7 +57,7 @@ async def get_video_transcript(video_id: str) -> Optional[str]:
         Optional[str]: The transcript text or None if unavailable
     """
     try:
-        logger.info(f"Getting transcript for video ID: {video_id}")
+        logger.info("Getting transcript for video ID: %s", video_id)
 
         # Use asyncio.to_thread to run the blocking call in a thread
         transcript_list = await asyncio.to_thread(
@@ -70,11 +70,11 @@ async def get_video_transcript(video_id: str) -> Optional[str]:
         # Each entry in transcript_list is a dict with 'text', 'start', 'duration' keys
         transcript_text = " ".join([entry["text"] for entry in transcript_list])
 
-        logger.info(f"Successfully retrieved transcript for video ID: {video_id}")
+        logger.info("Successfully retrieved transcript for video ID: %s", video_id)
         return transcript_text
 
     except Exception as e:
-        logger.warning(f"Could not get transcript for video ID {video_id}: {str(e)}")
+        logger.warning("Could not get transcript for video ID %s: %s", video_id, str(e))
         return None
 
 
@@ -109,18 +109,18 @@ async def scrape_youtube_content(url: str) -> Optional[Dict[str, Any]]:
         Optional[Dict[str, Any]]: A dictionary containing the scraped content or None if scraping failed  # noqa: E501
     """
     try:
-        logger.info(f"Scraping YouTube URL: {url}")
+        logger.info("Scraping YouTube URL: %s", url)
 
         # Extract video ID from URL
         video_id = extract_video_id(url)
         if not video_id:
-            logger.error(f"Could not extract video ID from URL: {url}")
+            logger.error("Could not extract video ID from URL: %s", url)
             return None
 
         # Get video transcript
         transcript = await get_video_transcript(video_id)
         if not transcript:
-            logger.warning(f"Could not get transcript for video: {url}")
+            logger.warning("Could not get transcript for video: %s", url)
             # Return a structured error response instead of None
             metadata = await get_video_metadata(video_id)
             error_markdown = format_transcript_unavailable_message(metadata)
@@ -149,7 +149,7 @@ async def scrape_youtube_content(url: str) -> Optional[Dict[str, Any]]:
         return {"markdown": markdown_content, "raw_data": scraped_content}
 
     except Exception as e:
-        logger.error(f"Error scraping YouTube URL {url}: {str(e)}", exc_info=True)
+        logger.error("Error scraping YouTube URL %s: %s", url, str(e), exc_info=True)
         return None
 
 

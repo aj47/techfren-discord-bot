@@ -69,7 +69,7 @@ async def _process_channel_summary(channel_data, channel_messages, now):
         )
 
         if not summary or "No messages found" in summary:
-            logger.info(f"No meaningful summary generated for channel {channel_name}")
+            logger.info("No meaningful summary generated for channel %s", channel_name)
             return 0, 0
 
         # Extract unique users from messages and sort them by activity
@@ -94,7 +94,7 @@ async def _process_channel_summary(channel_data, channel_messages, now):
         active_users = [user["name"] for user in sorted_users]
 
         # Store the summary in the database
-        database.store_channel_summary(
+        await database.store_channel_summary(
             channel_id=channel_id,
             channel_name=channel_name,
             date=now,
@@ -116,12 +116,12 @@ async def _process_channel_summary(channel_data, channel_messages, now):
                 channel_id, channel_name, now, summary
             )
         except Exception as report_error:
-            logger.warning(f"Failed to post summary to reports channel: {report_error}")
+            logger.warning("Failed to post summary to reports channel: %s", report_error)
 
         return 1, len(formatted_messages)
 
     except Exception as e:
-        logger.error(f"Error summarizing channel {channel_name}: {e}", exc_info=True)
+        logger.error("Error summarizing channel %s: %s", channel_name, e, exc_info=True)
         return 0, 0
 
 
@@ -129,14 +129,14 @@ async def _get_active_channels_data():
     """Get active channels and their time range."""
     now = datetime.now(timezone.utc)
     yesterday = now - timedelta(hours=24)
-    active_channels = database.get_active_channels(hours=24)
+    active_channels = await database.get_active_channels(hours=24)
 
     if not active_channels:
         logger.info(
             "No active channels found in the past 24 hours. Skipping summarization.")
         return None, None, None
 
-    logger.info(f"Found {len(active_channels)} active channels to summarize")
+    logger.info("Found %d active channels to summarize", len(active_channels))
     return active_channels, yesterday, now
 
 
@@ -172,10 +172,10 @@ async def _cleanup_old_messages(now, successful_summaries):
     if successful_summaries > 0:
         try:
             cutoff_time = now - timedelta(hours=24)
-            deleted_count = database.delete_messages_older_than(cutoff_time)
-            logger.info(f"Deleted {deleted_count} messages older than {cutoff_time}")
+            deleted_count = await database.delete_messages_older_than(cutoff_time)
+            logger.info("Deleted %s messages older than %s", deleted_count, cutoff_time)
         except Exception as e:
-            logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
+            logger.error("Error deleting old messages: %s", str(e), exc_info=True)
 
 
 @tasks.loop(hours=24)
@@ -199,7 +199,7 @@ async def daily_channel_summarization():
             return
 
         # Get messages for time range
-        messages_by_channel = database.get_messages_for_time_range(yesterday, now)
+        messages_by_channel = await database.get_messages_for_time_range(yesterday, now)
 
         # Process all channels
         successful_summaries, total_messages_processed = await _process_all_channels(
@@ -246,7 +246,7 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
                 allowed_mentions=discord.AllowedMentions.none(),
                 suppress_embeds=True,
             )
-        logger.info(f"Posted summary for channel {channel_name} to reports channel")
+        logger.info("Posted summary for channel %s to reports channel", channel_name)
     except Exception as e:
         logger.error(
             f"Error posting summary to reports channel: {str(e)}", exc_info=True
@@ -294,5 +294,5 @@ async def before_daily_summarization():
         )
         await asyncio.sleep(seconds_to_wait)
     except Exception as e:
-        logger.error(f"Error in before_daily_summarization: {str(e)}", exc_info=True)
+        logger.error("Error in before_daily_summarization: %s", str(e), exc_info=True)
         await asyncio.sleep(60)

@@ -7,9 +7,11 @@ and interaction-based commands without relying on mocking Discord objects.
 
 from dataclasses import dataclass
 from typing import Optional, Union, Protocol, List, Dict
+import asyncio
 import discord
 import logging
 import aiohttp
+import aiohttp.client_exceptions
 import io
 from thread_memory import get_thread_context, store_thread_exchange, has_thread_memory
 
@@ -35,17 +37,17 @@ class ResponseSender(Protocol):
         self, content: str, ephemeral: bool = False
     ) -> Optional[discord.Message]:
         """Send a response message."""
-        ...
+        pass
 
     async def send_in_parts(self, parts: list[str], ephemeral: bool = False) -> None:
         """Send multiple message parts."""
-        ...
+        pass
 
     async def send_with_charts(
         self, content: str, chart_data: List[Dict], ephemeral: bool = False
     ) -> Optional[discord.Message]:
         """Send a message with chart attachments."""
-        ...
+        pass
 
 
 class MessageResponseSender:
@@ -96,10 +98,46 @@ class MessageResponseSender:
                 part, allowed_mentions=allowed_mentions, suppress_embeds=True
             )
 
+    async def _send_with_retry(self, content: str, files: List[discord.File], allowed_mentions, max_retries: int = 3):
+        """Send message with retry logic for SSL errors."""
+        for attempt in range(max_retries):
+            try:
+                return await self.channel.send(
+                    content,
+                    files=files,
+                    allowed_mentions=allowed_mentions,
+                    suppress_embeds=True,
+                )
+            except (aiohttp.client_exceptions.ClientOSError, aiohttp.client_exceptions.ClientError) as e:
+                if "SSL" in str(e) or "ssl" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                        self.logger.warning(
+                            "SSL error sending message with charts (attempt %d/%d): %s. Retrying in %ds...",
+                            attempt + 1,
+                            max_retries,
+                            e,
+                            wait_time
+                        )
+                        await asyncio.sleep(wait_time)
+                        # Recreate file objects since they may have been consumed
+                        files = [discord.File(io.BytesIO(f.fp.getvalue()), filename=f.filename) for f in files]
+                    else:
+                        self.logger.error(
+                            "SSL error persists after %d attempts: %s",
+                            max_retries,
+                            e,
+                            exc_info=True
+                        )
+                        raise
+                else:
+                    # Not an SSL error, re-raise immediately
+                    raise
+
     async def send_with_charts(
         self, content: str, chart_data: List[Dict], ephemeral: bool = False
     ) -> Optional[discord.Message]:
-        """Send a message with chart image attachments."""
+        """Send a message with chart image attachments with SSL error retry logic."""
         allowed_mentions = discord.AllowedMentions(
             everyone=False, roles=False, users=True
         )
@@ -116,12 +154,11 @@ class MessageResponseSender:
 
                     parts = await split_long_message(content, max_length=1900)
 
-                    # Send first part with charts
-                    first_response = await self.channel.send(
+                    # Send first part with charts (with retry logic)
+                    first_response = await self._send_with_retry(
                         parts[0],
-                        files=files,
-                        allowed_mentions=allowed_mentions,
-                        suppress_embeds=True,
+                        files,
+                        allowed_mentions
                     )
 
                     # Send remaining parts without charts
@@ -134,12 +171,11 @@ class MessageResponseSender:
 
                     return first_response
                 else:
-                    # Content is short enough, send with charts
-                    return await self.channel.send(
+                    # Content is short enough, send with charts (with retry logic)
+                    return await self._send_with_retry(
                         content,
-                        files=files,
-                        allowed_mentions=allowed_mentions,
-                        suppress_embeds=True,
+                        files,
+                        allowed_mentions
                     )
             else:
                 # Fallback to regular send if no files downloaded successfully
@@ -149,69 +185,51 @@ class MessageResponseSender:
                 return await self.send(content, ephemeral)
 
         except discord.HTTPException as e:
-            if "Must be 2000 or fewer in length" in str(e):
-                self.logger.warning(
-                    "Message too long for charts, falling back to split send"
-                )
-                # Split the message and send without charts
-                await self.send_in_parts([content], ephemeral)
-                return None
-            else:
-                self.logger.error(
-                    f"Discord HTTP error sending message with charts: {e}",
-                    exc_info=True,
-                )
-                return await self.send(content, ephemeral)
+            self.logger.error(
+                "Discord HTTP error sending message with charts: %s",
+                e,
+                exc_info=True,
+            )
+            raise  # Re-raise to propagate error (no fallback)
+        except (aiohttp.client_exceptions.ClientOSError, aiohttp.client_exceptions.ClientError) as e:
+            self.logger.error(
+                "Network/SSL error sending message with charts after retries: %s",
+                e,
+                exc_info=True
+            )
+            raise  # Re-raise to propagate error (no fallback)
         except Exception as e:
-            self.logger.error(f"Error sending message with charts: {e}", exc_info=True)
-            # Fallback to regular send without charts
-            return await self.send(content, ephemeral)
+            self.logger.error("Error sending message with charts: %s", e, exc_info=True)
+            raise  # Re-raise to propagate error (no fallback)
 
     async def _download_chart_files(self, chart_data: List[Dict]) -> List[discord.File]:
-        """Download chart images from URLs and create Discord File objects."""
+        """Create Discord File objects from chart file data."""
         files = []
 
-        async with aiohttp.ClientSession() as session:
-            for idx, chart in enumerate(chart_data):
-                try:
-                    chart_url = chart.get("url")
-                    chart_type = chart.get("type", "chart")
+        for idx, chart in enumerate(chart_data):
+            try:
+                chart_file = chart.get("file")
+                chart_type = chart.get("type", "chart")
 
-                    if not chart_url:
-                        self.logger.warning(f"Chart {idx + 1} has no URL, skipping")
-                        continue
-
-                    # Download the image
-                    async with session.get(
-                        chart_url, timeout=aiohttp.ClientTimeout(total=10)
-                    ) as response:
-                        if response.status == 200:
-                            image_data = await response.read()
-
-                            # Create a file object from the image data
-                            image_file = io.BytesIO(image_data)
-                            filename = f"{chart_type}_{idx + 1}.png"
-
-                            # Create Discord file object
-                            discord_file = discord.File(image_file, filename=filename)
-                            files.append(discord_file)
-
-                            self.logger.info(
-                                f"Downloaded chart {idx + 1}: {chart_type}"
-                            )
-                        else:
-                            self.logger.warning(
-                                f"Failed to download chart {
-                                    idx +
-                                    1}: HTTP {
-                                    response.status}"
-                            )
-
-                except Exception as e:
-                    self.logger.error(
-                        f"Error downloading chart {idx + 1}: {e}", exc_info=True
-                    )
+                if not chart_file:
+                    self.logger.warning("Chart %s has no file data, skipping", idx + 1)
                     continue
+
+                # Create a new BytesIO object to avoid seek issues
+                image_file = io.BytesIO(chart_file.getvalue())
+                filename = f"{chart_type}_{idx + 1}.png"
+
+                # Create Discord file object
+                discord_file = discord.File(image_file, filename=filename)
+                files.append(discord_file)
+
+                self.logger.info("Prepared chart %s: %s", idx + 1, chart_type)
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error preparing chart {idx + 1}: {e}", exc_info=True
+                )
+                continue
 
         return files
 
@@ -279,10 +297,48 @@ class InteractionResponseSender:
                 suppress_embeds=True,
             )
 
+    async def _send_with_retry(self, content: str, files: List[discord.File], allowed_mentions, ephemeral: bool, max_retries: int = 3):
+        """Send interaction followup with retry logic for SSL errors."""
+        for attempt in range(max_retries):
+            try:
+                return await self.interaction.followup.send(
+                    content,
+                    files=files,
+                    ephemeral=ephemeral,
+                    allowed_mentions=allowed_mentions,
+                    suppress_embeds=True,
+                    wait=True,
+                )
+            except (aiohttp.client_exceptions.ClientOSError, aiohttp.client_exceptions.ClientError) as e:
+                if "SSL" in str(e) or "ssl" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                        self.logger.warning(
+                            "SSL error sending interaction with charts (attempt %d/%d): %s. Retrying in %ds...",
+                            attempt + 1,
+                            max_retries,
+                            e,
+                            wait_time
+                        )
+                        await asyncio.sleep(wait_time)
+                        # Recreate file objects since they may have been consumed
+                        files = [discord.File(io.BytesIO(f.fp.getvalue()), filename=f.filename) for f in files]
+                    else:
+                        self.logger.error(
+                            "SSL error persists after %d attempts: %s",
+                            max_retries,
+                            e,
+                            exc_info=True
+                        )
+                        raise
+                else:
+                    # Not an SSL error, re-raise immediately
+                    raise
+
     async def send_with_charts(
         self, content: str, chart_data: List[Dict], ephemeral: bool = False
     ) -> Optional[discord.Message]:
-        """Send a message with chart image attachments."""
+        """Send a message with chart image attachments with SSL error retry logic."""
         allowed_mentions = discord.AllowedMentions(
             everyone=False, roles=False, users=True
         )
@@ -299,14 +355,12 @@ class InteractionResponseSender:
 
                     parts = await split_long_message(content, max_length=1900)
 
-                    # Send first part with charts
-                    first_message = await self.interaction.followup.send(
+                    # Send first part with charts (with retry logic)
+                    first_message = await self._send_with_retry(
                         parts[0],
-                        files=files,
-                        ephemeral=ephemeral,
-                        allowed_mentions=allowed_mentions,
-                        suppress_embeds=True,
-                        wait=True,
+                        files,
+                        allowed_mentions,
+                        ephemeral
                     )
 
                     # Send remaining parts without charts
@@ -320,14 +374,12 @@ class InteractionResponseSender:
 
                     return first_message if not ephemeral else None
                 else:
-                    # Content is short enough, send with charts
-                    message = await self.interaction.followup.send(
+                    # Content is short enough, send with charts (with retry logic)
+                    message = await self._send_with_retry(
                         content,
-                        files=files,
-                        ephemeral=ephemeral,
-                        allowed_mentions=allowed_mentions,
-                        suppress_embeds=True,
-                        wait=True,
+                        files,
+                        allowed_mentions,
+                        ephemeral
                     )
                     return message if not ephemeral else None
             else:
@@ -338,77 +390,64 @@ class InteractionResponseSender:
                 return await self.send(content, ephemeral)
 
         except discord.HTTPException as e:
-            if "Must be 2000 or fewer in length" in str(e):
-                self.logger.warning(
-                    "Interaction message too long for charts, falling back to split send"  # noqa: E501
-                )
-                # Split the message and send without charts
-                await self.send_in_parts([content], ephemeral)
-                return None
-            else:
-                self.logger.error(
-                    f"Discord HTTP error sending interaction with charts: {e}",
-                    exc_info=True,
-                )
-                return await self.send(content, ephemeral)
+            self.logger.error(
+                "Discord HTTP error sending interaction with charts: %s",
+                e,
+                exc_info=True,
+            )
+            raise  # Re-raise to propagate error (no fallback)
+        except (aiohttp.client_exceptions.ClientOSError, aiohttp.client_exceptions.ClientError) as e:
+            self.logger.error(
+                "Network/SSL error sending interaction with charts after retries: %s",
+                e,
+                exc_info=True
+            )
+            raise  # Re-raise to propagate error (no fallback)
         except Exception as e:
             self.logger.error(
-                f"Error sending interaction response with charts: {e}", exc_info=True
+                "Error sending interaction response with charts: %s", exc_info=True
             )
-            # Fallback to regular send without charts
-            return await self.send(content, ephemeral)
+            raise  # Re-raise to propagate error (no fallback)
 
     async def _download_chart_files(self, chart_data: List[Dict]) -> List[discord.File]:
-        """Download chart images from URLs and create Discord File objects."""
+        """Create Discord File objects from chart file data."""
         files = []
 
-        async with aiohttp.ClientSession() as session:
-            for idx, chart in enumerate(chart_data):
-                try:
-                    chart_url = chart.get("url")
-                    chart_type = chart.get("type", "chart")
+        for idx, chart in enumerate(chart_data):
+            try:
+                chart_file = chart.get("file")
+                chart_type = chart.get("type", "chart")
 
-                    if not chart_url:
-                        self.logger.warning(f"Chart {idx + 1} has no URL, skipping")
-                        continue
-
-                    # Download the image
-                    async with session.get(
-                        chart_url, timeout=aiohttp.ClientTimeout(total=10)
-                    ) as response:
-                        if response.status == 200:
-                            image_data = await response.read()
-
-                            # Create a file object from the image data
-                            image_file = io.BytesIO(image_data)
-                            filename = f"{chart_type}_{idx + 1}.png"
-
-                            # Create Discord file object
-                            discord_file = discord.File(image_file, filename=filename)
-                            files.append(discord_file)
-
-                            self.logger.info(
-                                f"Downloaded chart {idx + 1}: {chart_type}"
-                            )
-                        else:
-                            self.logger.warning(
-                                f"Failed to download chart {
-                                    idx +
-                                    1}: HTTP {
-                                    response.status}"
-                            )
-
-                except Exception as e:
-                    self.logger.error(
-                        f"Error downloading chart {idx + 1}: {e}", exc_info=True
-                    )
+                if not chart_file:
+                    self.logger.warning("Chart %s has no file data, skipping", idx + 1)
                     continue
+
+                # Create a new BytesIO object to avoid seek issues
+                image_file = io.BytesIO(chart_file.getvalue())
+                filename = f"{chart_type}_{idx + 1}.png"
+
+                # Create Discord file object
+                discord_file = discord.File(image_file, filename=filename)
+                files.append(discord_file)
+
+                self.logger.info("Prepared chart %s: %s", idx + 1, chart_type)
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error preparing chart {idx + 1}: {e}", exc_info=True
+                )
+                continue
 
         return files
 
 
 class ThreadManager:
     """Handles thread creation for both message and interaction contexts."""
+
+    # Class-level lock and cache to prevent duplicate thread creation across all instances
+    _thread_creation_lock = asyncio.Lock()
+    _created_threads = {}  # message_id -> thread_id mapping
+    _MAX_CACHE_SIZE = 500
 
     def __init__(self, channel, guild: Optional[discord.Guild] = None):
         self.channel = channel
@@ -459,7 +498,7 @@ class ThreadManager:
             logger = logging.getLogger(__name__)
             channel_desc = self._get_channel_type_description()
             if isinstance(self.channel, discord.DMChannel):
-                logger.debug(f"Thread creation not supported in {channel_desc}s")
+                logger.debug("Thread creation not supported in %ss", channel_desc)
             else:
                 logger.info(
                     f"Thread creation not supported in {channel_desc}, skipping thread creation"  # noqa: E501
@@ -470,15 +509,15 @@ class ThreadManager:
             return await self.channel.create_thread(
                 name=name, type=discord.ChannelType.public_thread
             )
+        except discord.Forbidden as e:
+            logger = logging.getLogger(__name__)
+            logger.warning("Insufficient permissions to create thread '%s': %s", name, e)
+            return None
         except discord.HTTPException as e:
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"Failed to create thread '{name}': HTTP {e.status} - {e.text}"
             )
-            return None
-        except discord.Forbidden as e:
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Insufficient permissions to create thread '{name}': {e}")
             return None
         except Exception as e:
             logger = logging.getLogger(__name__)
@@ -516,19 +555,34 @@ class ThreadManager:
             )
             return await self._handle_missing_guild_info(message, name)
         else:
-            logger.error(f"ValueError creating thread from message '{name}': {e}")
+            logger.error("ValueError creating thread from message '%s': %s", name, e)
             return None
 
     async def _handle_http_exception(
-        self, e: discord.HTTPException, name: str
+        self, e: discord.HTTPException, name: str, message: Optional[discord.Message] = None
     ) -> Optional[discord.Thread]:
         """Handle HTTPException during thread creation."""
         logger = logging.getLogger(__name__)
         if e.status == 400 and "thread has already been created" in str(e.text).lower():
             logger.info(
-                f"Message already has a thread, creating standalone thread: '{name}'"
+                "Message already has a thread, attempting to fetch it "
+                "instead of creating new one"
             )
-            return await self.create_thread(name)
+            # If we have the message, try to fetch its existing thread
+            if message:
+                try:
+                    existing_thread = await message.fetch_thread()
+                    if existing_thread:
+                        logger.info("Successfully fetched existing thread: '%s'", existing_thread.name)
+                        return existing_thread
+                except discord.NotFound:
+                    logger.warning("Could not find existing thread despite error message")
+                except Exception as fetch_error:
+                    logger.warning("Error fetching existing thread: %s", fetch_error)
+
+            # Fallback: return None to avoid creating duplicate standalone threads
+            logger.warning("Cannot create or fetch thread, returning None")
+            return None
         elif e.status == 400 and "Cannot execute action on this channel type" in str(
             e.text
         ):
@@ -551,41 +605,114 @@ class ThreadManager:
     async def create_thread_from_message(
         self, message: discord.Message, name: str
     ) -> Optional[discord.Thread]:
-        """Create a thread from an existing message."""
+        """Create a thread from an existing message with duplicate prevention."""
+        logger = logging.getLogger(__name__)
+
         if not self._can_create_threads():
-            logger = logging.getLogger(__name__)
             channel_desc = self._get_channel_type_description()
             if isinstance(self.channel, discord.DMChannel):
-                logger.debug(f"Thread creation not supported in {channel_desc}s")
+                logger.debug("Thread creation not supported in %ss", channel_desc)
             else:
                 logger.info(
                     f"Thread creation not supported in {channel_desc}, falling back to channel response"  # noqa: E501
                 )
             return None
 
-        try:
-            # Check if the message has guild info (required for thread creation)
-            if not hasattr(message, "guild") or message.guild is None:
-                return await self._handle_missing_guild_info(message, name)
+        # Use class-level lock to prevent duplicate thread creation across all instances
+        async with ThreadManager._thread_creation_lock:
+            message_id = str(message.id)
 
-            return await message.create_thread(name=name)
-        except ValueError as e:
-            return await self._handle_value_error(e, message, name)
-        except discord.HTTPException as e:
-            return await self._handle_http_exception(e, name)
-        except discord.Forbidden as e:
-            logger = logging.getLogger(__name__)
-            logger.warning(
-                f"Insufficient permissions to create thread from message '{name}': {e}"
-            )
-            return None
-        except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(
-                f"Unexpected error creating thread from message '{name}': {str(e)}",
-                exc_info=True,
-            )
-            return None
+            # Check if we already created a thread for this message
+            if message_id in ThreadManager._created_threads:
+                thread_id = ThreadManager._created_threads[message_id]
+                logger.warning(
+                    "⚠️ DUPLICATE THREAD CREATION PREVENTED: Message %s already has thread %s",
+                    message_id,
+                    thread_id
+                )
+                # Try to fetch the existing thread
+                try:
+                    thread = await message.guild.fetch_channel(int(thread_id))
+                    if isinstance(thread, discord.Thread):
+                        logger.info("Successfully retrieved existing thread %s for message %s", thread_id, message_id)
+                        return thread
+                except Exception as e:
+                    logger.warning("Could not fetch cached thread %s: %s", thread_id, e)
+                    # Remove stale entry
+                    del ThreadManager._created_threads[message_id]
+
+            try:
+                # Check if the message has guild info (required for thread creation)
+                if not hasattr(message, "guild") or message.guild is None:
+                    return await self._handle_missing_guild_info(message, name)
+
+                # Check if this message already has a thread (cache check)
+                if hasattr(message, 'thread') and message.thread is not None:
+                    logger.info("Message %s already has thread '%s' (from cache), reusing it", message.id, message.thread.name)
+                    # Cache this thread
+                    ThreadManager._created_threads[message_id] = str(message.thread.id)
+                    return message.thread
+
+                # Try to fetch thread from API (handles case where Discord auto-created one)
+                try:
+                    existing_thread = await message.fetch_thread()
+                    if existing_thread:
+                        logger.info("Message %s already has thread '%s' (from API), reusing it", message.id, existing_thread.name)
+                        # Cache this thread
+                        ThreadManager._created_threads[message_id] = str(existing_thread.id)
+                        return existing_thread
+                except discord.NotFound:
+                    # No thread exists, we can create one
+                    pass
+                except Exception as fetch_error:
+                    logger.debug("Could not fetch existing thread for message %s: %s", message.id, fetch_error)
+
+                logger.debug("Creating new thread '%s' from message %s", name, message.id)
+                try:
+                    thread = await message.create_thread(name=name)
+                    logger.info("Successfully created thread '%s' (ID: %s) from message %s", name, thread.id, message.id)
+
+                    # Cache the newly created thread
+                    ThreadManager._created_threads[message_id] = str(thread.id)
+
+                    # Maintain cache size limit
+                    if len(ThreadManager._created_threads) > ThreadManager._MAX_CACHE_SIZE:
+                        # Remove oldest half of entries
+                        items_to_remove = list(ThreadManager._created_threads.keys())[:ThreadManager._MAX_CACHE_SIZE // 2]
+                        for key in items_to_remove:
+                            del ThreadManager._created_threads[key]
+                        logger.debug("Cleaned thread cache, removed %d old entries", len(items_to_remove))
+
+                    return thread
+                except discord.HTTPException as create_error:
+                    # If thread creation fails, it might be because Discord just created one
+                    if "already has a thread" in str(create_error).lower():
+                        logger.info("Thread creation failed - message %s already has a thread, fetching it", message.id)
+                        try:
+                            existing_thread = await message.fetch_thread()
+                            # Cache this thread
+                            ThreadManager._created_threads[message_id] = str(existing_thread.id)
+                            return existing_thread
+                        except Exception:
+                            pass
+                    raise  # Re-raise if it's a different error
+            except ValueError as e:
+                return await self._handle_value_error(e, message, name)
+            except discord.Forbidden as e:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Insufficient permissions to create thread from message '{name}': {e}"
+                )
+                return None
+            except discord.HTTPException as e:
+                return await self._handle_http_exception(e, name, message)
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.error(
+                    f"Unexpected error creating thread from message '{name}': {str(e)}",
+                    exc_info=True,
+                )
+                return None
 
 
 def create_context_from_message(message: discord.Message) -> CommandContext:
@@ -718,13 +845,13 @@ async def _store_dm_responses(
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.error(f"Invalid parameters for storing DM response: {str(e)}")
+        logger.error("Invalid parameters for storing DM response: %s", str(e))
         raise
     except Exception as e:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.error(f"Database error storing DM response: {str(e)}", exc_info=True)
+        logger.error("Database error storing DM response: %s", str(e), exc_info=True)
 
 
 async def _validate_summary_inputs(
@@ -737,7 +864,7 @@ async def _validate_summary_inputs(
     logger = logging.getLogger(__name__)
 
     if not isinstance(hours, int) or hours < 1:
-        logger.warning(f"Invalid hours parameter: {hours} (must be positive integer)")
+        logger.warning("Invalid hours parameter: %s (must be positive integer)", hours)
         await response_sender.send(
             "Invalid hours parameter. Must be a positive number.", ephemeral=True
         )
@@ -853,7 +980,7 @@ async def _store_summary_data(
                     context.thread_id}"
             )
         except Exception as e:
-            logger.warning(f"Failed to store summary thread exchange: {e}")
+            logger.warning("Failed to store summary thread exchange: %s", e)
 
     # Store summary in database
     try:
@@ -886,7 +1013,7 @@ async def _store_summary_data(
             },
         )
     except Exception as e:
-        logger.error(f"Failed to store summary in database: {str(e)}")
+        logger.error("Failed to store summary in database: %s", str(e))
 
 
 async def _get_thread_context(context: CommandContext) -> str:
@@ -998,7 +1125,7 @@ async def _handle_guild_summary(
                 )
 
         except discord.HTTPException as e:
-            logger.warning(f"Failed to edit initial message: {e}")
+            logger.warning("Failed to edit initial message: %s", e)
             thread = await thread_manager.create_thread(thread_name)
             if thread:
                 thread_sender = MessageResponseSender(thread)
@@ -1130,7 +1257,7 @@ async def handle_summary_command(
         )
 
     except Exception as e:
-        logger.error(f"Error in handle_summary_command: {str(e)}", exc_info=True)
+        logger.error("Error in handle_summary_command: %s", str(e), exc_info=True)
         await response_sender.send(
             config.ERROR_MESSAGES["summary_error"], ephemeral=True
         )

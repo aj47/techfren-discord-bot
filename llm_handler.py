@@ -2,12 +2,75 @@ from openai import AsyncOpenAI
 from logging_config import logger
 import config  # Assuming config.py is in the same directory or accessible
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union
 import asyncio
 import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
+import aiohttp
+import base64
+
+
+class ImageContent:
+    """Builder pattern for image content in LLM requests."""
+
+    def __init__(self):
+        self._images: List[Dict[str, Any]] = []
+
+    def add_image_url(self, url: str, detail: str = "auto") -> "ImageContent":
+        """Add an image from a URL."""
+        self._images.append({"type": "image_url", "image_url": {"url": url, "detail": detail}})
+        return self
+
+    def add_image_base64(self, base64_data: str, media_type: str = "image/jpeg", detail: str = "auto") -> "ImageContent":
+        """Add an image from base64 data."""
+        data_url = f"data:{media_type};base64,{base64_data}"
+        self._images.append({"type": "image_url", "image_url": {"url": data_url, "detail": detail}})
+        return self
+
+    def build(self) -> List[Dict[str, Any]]:
+        """Build the image content list."""
+        return self._images
+
+    def has_images(self) -> bool:
+        """Check if any images have been added."""
+        return len(self._images) > 0
+
+
+async def download_image_as_base64(url: str) -> Optional[tuple[str, str]]:
+    """
+    Download an image and convert to base64.
+
+    Args:
+        url: The image URL to download
+
+    Returns:
+        Optional[tuple[str, str]]: (base64_data, media_type) or None if failed
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status != 200:
+                    logger.warning("Failed to download image from %s: HTTP %s", url, response.status)
+                    return None
+
+                content_type = response.headers.get("Content-Type", "image/jpeg")
+                if not content_type.startswith("image/"):
+                    logger.warning("URL %s is not an image (Content-Type: %s)", url, content_type)
+                    return None
+
+                image_data = await response.read()
+                base64_data = base64.b64encode(image_data).decode("utf-8")
+                logger.info("Successfully downloaded and encoded image from %s", url)
+                return base64_data, content_type
+
+    except asyncio.TimeoutError:
+        logger.warning("Timeout downloading image from %s", url)
+        return None
+    except Exception as e:
+        logger.error("Error downloading image from %s: %s", url, e)
+        return None
 
 
 def extract_urls_from_text(text: str) -> list[str]:
@@ -43,16 +106,16 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
 
         # Check if the URL is from YouTube
         if await is_youtube_url(url):
-            logger.info(f"Scraping YouTube URL on-demand: {url}")
+            logger.info("Scraping YouTube URL on-demand: %s", url)
             scraped_result = await scrape_youtube_content(url)
             if not scraped_result:
-                logger.warning(f"Failed to scrape YouTube content: {url}")
+                logger.warning("Failed to scrape YouTube content: %s", url)
                 return None
             markdown_content = scraped_result.get("markdown", "")
 
         # Check if the URL is from Twitter/X.com
         elif await is_twitter_url(url):
-            logger.info(f"Scraping Twitter/X.com URL on-demand: {url}")
+            logger.info("Scraping Twitter/X.com URL on-demand: %s", url)
             if hasattr(config, "apify_api_token") and config.apify_api_token:
                 scraped_result = await scrape_twitter_content(url)
                 if not scraped_result:
@@ -73,18 +136,18 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
 
         else:
             # For other URLs, use Firecrawl
-            logger.info(f"Scraping URL with Firecrawl on-demand: {url}")
+            logger.info("Scraping URL with Firecrawl on-demand: %s", url)
             scraped_result = await scrape_url_content(url)
             markdown_content = scraped_result if isinstance(scraped_result, str) else ""
 
         if not markdown_content:
-            logger.warning(f"No content scraped for URL: {url}")
+            logger.warning("No content scraped for URL: %s", url)
             return None
 
         # Summarize the scraped content
         summarized_data = await summarize_scraped_content(markdown_content, url)
         if not summarized_data:
-            logger.warning(f"Failed to summarize scraped content for URL: {url}")
+            logger.warning("Failed to summarize scraped content for URL: %s", url)
             return None
 
         return {
@@ -93,7 +156,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         }
 
     except Exception as e:
-        logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
+        logger.error("Error scraping URL on-demand %s: %s", url, str(e), exc_info=True)
         return None
 
 
@@ -167,9 +230,9 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
     scraped_content_parts = []
     for url in all_urls:
         try:
-            scraped_content = await asyncio.to_thread(get_scraped_content_by_url, url)
+            scraped_content = await get_scraped_content_by_url(url)
             if scraped_content:
-                logger.info(f"Found scraped content for URL: {url}")
+                logger.info("Found scraped content for URL: %s", url)
                 content_section = f"**Scraped Content for {url}:**\n"
                 content_section += f"Summary: {scraped_content['summary']}\n"
                 if scraped_content["key_points"]:
@@ -184,7 +247,7 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
                 )
                 scraped_content = await scrape_url_on_demand(url)
                 if scraped_content:
-                    logger.info(f"Successfully scraped content for URL: {url}")
+                    logger.info("Successfully scraped content for URL: %s", url)
                     content_section = f"**Scraped Content for {url}:**\n"
                     content_section += f"Summary: {scraped_content['summary']}\n"
                     if scraped_content["key_points"]:
@@ -193,9 +256,9 @@ async def _get_scraped_content_for_urls(urls_in_query, context_urls):
                                 scraped_content['key_points'])}\n"
                     scraped_content_parts.append(content_section)
                 else:
-                    logger.warning(f"Failed to scrape content for URL: {url}")
+                    logger.warning("Failed to scrape content for URL: %s", url)
         except Exception as e:
-            logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
+            logger.warning("Error retrieving scraped content for URL %s: %s", url, e)
 
     if scraped_content_parts:
         scraped_content_text = "\n\n".join(scraped_content_parts)
@@ -254,8 +317,18 @@ def _select_system_prompt(force_charts, query, user_content):
         return _get_regular_system_prompt()
 
 
-async def _make_llm_request(openai_client, model, system_prompt, user_content):
-    """Make the API request to LLM."""
+async def _make_llm_request(openai_client, model, system_prompt, user_content, image_content: Optional[ImageContent] = None):
+    """Make the API request to LLM with optional image support."""
+    user_message_content: Union[str, List[Dict[str, Any]]]
+
+    if image_content and image_content.has_images():
+        user_message_content = [
+            {"type": "text", "text": user_content}
+        ] + image_content.build()
+        logger.info("Making LLM request with %d image(s)", len(image_content.build()))
+    else:
+        user_message_content = user_content
+
     return await openai_client.chat.completions.create(
         extra_headers={
             "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
@@ -264,7 +337,7 @@ async def _make_llm_request(openai_client, model, system_prompt, user_content):
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": user_message_content},
         ],
         max_tokens=1000,
         temperature=0.7,
@@ -274,8 +347,66 @@ async def _make_llm_request(openai_client, model, system_prompt, user_content):
 def _extract_citations(completion):
     """Extract citations from completion if available."""
     if hasattr(completion, "citations") and completion.citations:
-        logger.info(f"Found {len(completion.citations)} citations from LLM provider")
+        logger.info("Found %d citations from LLM provider", len(completion.citations))
         return completion.citations
+    return None
+
+
+async def _process_images_from_context(message_context) -> Optional[ImageContent]:
+    """Extract and process images from message context."""
+    if not message_context:
+        logger.debug("No message context provided for image processing")
+        return None
+
+    logger.debug("Processing images from context. Keys: %s", list(message_context.keys()))
+
+    image_content = ImageContent()
+    total_images_found = 0
+
+    if message_context.get("referenced_message"):
+        ref_msg = message_context["referenced_message"]
+        if hasattr(ref_msg, "attachments"):
+            for attachment in ref_msg.attachments:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    result = await download_image_as_base64(attachment.url)
+                    if result:
+                        base64_data, media_type = result
+                        image_content.add_image_base64(base64_data, media_type)
+                        total_images_found += 1
+                        logger.info("Added image from referenced message: %s", attachment.filename)
+
+    if message_context.get("linked_messages"):
+        for linked_msg in message_context["linked_messages"]:
+            if hasattr(linked_msg, "attachments"):
+                for attachment in linked_msg.attachments:
+                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                        result = await download_image_as_base64(attachment.url)
+                        if result:
+                            base64_data, media_type = result
+                            image_content.add_image_base64(base64_data, media_type)
+                            total_images_found += 1
+                            logger.info("Added image from linked message: %s", attachment.filename)
+
+    if message_context.get("current_message"):
+        current_msg = message_context["current_message"]
+        logger.debug("Checking current_message for attachments. Has attachments attr: %s", hasattr(current_msg, 'attachments'))
+        if hasattr(current_msg, "attachments"):
+            logger.debug("Current message has %d attachment(s)", len(current_msg.attachments))
+            for attachment in current_msg.attachments:
+                logger.debug("Processing attachment: %s, content_type: %s", attachment.filename, attachment.content_type)
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    result = await download_image_as_base64(attachment.url)
+                    if result:
+                        base64_data, media_type = result
+                        image_content.add_image_base64(base64_data, media_type)
+                        total_images_found += 1
+                        logger.info("Added image from current message: %s", attachment.filename)
+                else:
+                    logger.debug("Skipping non-image attachment: %s", attachment.filename)
+
+    if image_content.has_images():
+        logger.info("Processed %s image(s) from message context for LLM", total_images_found)
+        return image_content
     return None
 
 
@@ -292,8 +423,14 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         str: The LLM's response or an error message
     """
     try:
+        has_context = message_context is not None
+        has_images_pending = message_context and (
+            message_context.get("current_message") or
+            message_context.get("referenced_message") or
+            message_context.get("linked_messages")
+        )
         logger.info(
-            f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}"  # noqa: E501
+            f"🔵 LLM CALL: query='{query[:50]}...' context={has_context} potential_images={has_images_pending}"  # noqa: E501
         )
 
         # Validate API key
@@ -314,12 +451,15 @@ async def call_llm_api(query, message_context=None, force_charts=False):
             query, user_content, message_context
         )
 
+        # Process images from context
+        image_content = await _process_images_from_context(message_context)
+
         # Select system prompt
         system_prompt = _select_system_prompt(force_charts, query, user_content)
 
         # Make API request
         completion = await _make_llm_request(
-            openai_client, config.llm_model, system_prompt, user_content
+            openai_client, config.llm_model, system_prompt, user_content, image_content
         )
 
         # Extract response and citations
@@ -335,7 +475,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
             f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}"  # noqa: E501
         )
         if chart_data:
-            logger.info(f"Extracted {len(chart_data)} chart(s) from LLM response")
+            logger.info("Extracted %d chart(s) from LLM response", len(chart_data))
 
         return formatted_message, chart_data
 
@@ -343,7 +483,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         logger.error("LLM API request timed out")
         return "Sorry, the request timed out. Please try again later.", []
     except Exception as e:
-        logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
+        logger.error("Error calling LLM API: %s", str(e), exc_info=True)
         return (
             "Sorry, I encountered an error while processing your request. Please try again later.",  # noqa: E501
             [],
@@ -411,7 +551,7 @@ def _add_scraped_content_to_message(message_text, msg):
                         bullet_point = f"\n- {point}"
                         message_text += bullet_point
             except json.JSONDecodeError:
-                logger.warning(f"Failed to parse key points JSON: {scraped_key_points}")
+                logger.warning("Failed to parse key points JSON: %s", scraped_key_points)
 
     return message_text
 
@@ -589,7 +729,7 @@ Keep it natural and engaging - this is for community members to understand what 
             f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}"  # noqa: E501
         )
         if chart_data:
-            logger.info(f"Extracted {len(chart_data)} chart(s) from summary")
+            logger.info("Extracted %d chart(s) from summary", len(chart_data))
 
         return formatted_summary, chart_data
 
@@ -597,7 +737,7 @@ Keep it natural and engaging - this is for community members to understand what 
         logger.error("LLM API request timed out during summary generation")
         return "Sorry, the summary request timed out. Please try again later.", []
     except Exception as e:
-        logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
+        logger.error("Error calling LLM API for summary: %s", str(e), exc_info=True)
         return (
             "Sorry, I encountered an error while generating the summary. Please try again later.",  # noqa: E501
             [],
@@ -646,25 +786,38 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     Returns:
         bool: True if chart system should be used
     """
+    # Check if user provided tabular data (strong indicator)
+    has_table_data = bool(re.search(r'\|.+\|.*\n\|[-:\s|]+\|', query + full_content))
+    if has_table_data:
+        logger.info("Detected table data in query/content, using chart system")
+        return True
+
     # Keywords that indicate data analysis requests
     chart_keywords = [
         "analyze",
         "chart",
         "graph",
+        "plot",
+        "visualize",
+        "visualization",
         "data",
         "statistics",
+        "stats",
         "metrics",
         "count",
         "frequency",
         "distribution",
         "comparison",
+        "compare",
         "trends",
+        "trend",
         "activity",
         "usage",
         "breakdown",
         "top",
         "most",
         "ranking",
+        "rank",
         "percentage",
         "ratio",
         "numbers",
@@ -676,7 +829,13 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     chart_phrases = [
         "show me the data",
         "create a chart",
-        "visualize",
+        "create a graph",
+        "make a chart",
+        "make a graph",
+        "generate a chart",
+        "generate a graph",
+        "visualize this",
+        "visualize the",
         "data analysis",
         "how much",
         "how many",
@@ -702,13 +861,22 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
 
 def _get_chart_analysis_system_prompt() -> str:
     """Get the chart analysis system prompt focused on data visualization."""
-    return """You are a data analysis assistant for the techfren community Discord server. Your specialty is creating accurate charts and visualizations.  # noqa: E501
+    return """You are a data analysis assistant for the techfren community Discord server. Your specialty is creating accurate charts and visualizations from conversation data.
 
 ═══════════════════════════════════════════════════════════
-CHART ANALYSIS SYSTEM - DATA VISUALIZATION FOCUS
+CHART ANALYSIS SYSTEM - DATA VISUALIZATION MODE
 ═══════════════════════════════════════════════════════════
 
-CORE MISSION: Transform conversation data into accurate, meaningful visualizations.
+CORE MISSION: Transform data into accurate, meaningful visualizations using properly formatted markdown tables.
+
+YOUR JOB IS TO CREATE CHARTS, NOT EXPLAIN HOW:
+When users provide data (in any format - table, list, text), you must:
+1. Parse and understand the data
+2. Create a properly formatted markdown table
+3. The system will automatically render it as a visual chart
+4. Add brief analysis below the table
+
+DO NOT explain how to make charts - YOU make the chart by creating the table!
 
 THREAD MEMORY AWARENESS:
 If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:  # noqa: E501
@@ -718,18 +886,39 @@ If you see "Thread Conversation History" in the context, this is our previous co
 - Continue the conversation flow logically
 
 MANDATORY TABLE CREATION:
-You MUST create AT LEAST ONE data table for every analysis request.
+You MUST create AT LEAST ONE properly formatted markdown table for EVERY request, including:
+- Requests to analyze conversation data
+- When users provide data to visualize (in ANY format)
+- When users ask for charts or graphs
+- When users show you data and ask "create a graph"
 
-TABLE FORMAT RULES (CHARACTER-BY-CHARACTER):
-✓ Line 1 (Header): | Header1 | Header2 |
-✓ Line 2 (Separator): | --- | --- |
-✓ Line 3+ (Data): | value1 | value2 |
+EXAMPLE - User provides data:
+User: "| Month | Savings | | Jan | $250 | | Feb | $80 |"
+You MUST respond with: "Here's your savings visualization:
+
+| Month    | Savings |
+| -------- | ------- |
+| January  | $250    |
+| February | $80     |
+| March    | $420    |
+
+Your savings show a strong recovery in March after a dip in February."
+
+MARKDOWN TABLE FORMAT (STRICT):
+```
+| Header 1 | Header 2 | Header 3 |
+| --- | --- | --- |
+| Value 1 | Value 2 | Value 3 |
+| Value 4 | Value 5 | Value 6 |
+```
 
 CRITICAL FORMAT REQUIREMENTS:
-✓ ALWAYS start/end rows with pipes: | data |
-✓ Separator MUST be: | --- | --- | (spaces around dashes)
-✓ Same number of columns in every row
-✓ One space after opening | and before closing |
+✓ ALWAYS start AND end every row with pipe: | data |
+✓ Header separator MUST be: | --- | (exactly 3 dashes, spaces around them)
+✓ Same number of columns in EVERY row (header, separator, all data rows)
+✓ One space after opening | and one space before closing |
+✓ NO code blocks around tables (no ```table or ```markdown)
+✓ Tables render directly into visual charts automatically
 
 DATA ACCURACY LAWS:
 1. COUNT PRECISELY: Actually count occurrences, don't estimate
@@ -737,63 +926,89 @@ DATA ACCURACY LAWS:
 3. CONSISTENT UNITS: All values in same column use same units
 4. MEANINGFUL HEADERS: Use descriptive names with units
 
-HEADER REQUIREMENTS:
-✓ "Username | Message Count" NOT "User | Count"
-✓ "Technology | Mentions" NOT "Item | Value"
-✓ "Time Period | Activity" NOT "Time | Data"
-✓ Include units: "Usage (%)", "Messages (Count)", "Time (Hours)"
+HEADER REQUIREMENTS (Be Descriptive):
+✓ GOOD: "Username | Message Count" 
+✗ BAD: "User | Count"
+✓ GOOD: "Technology | Mentions"
+✗ BAD: "Item | Value"
+✓ GOOD: "Time Period | Activity Level"
+✗ BAD: "Time | Data"
+✓ Always include units where applicable: "Usage (%)", "Messages", "Duration (Hours)"
 
-VALUE FORMATTING:
-✓ Percentages: "85%" not "0.85"
-✓ Large numbers: "1,234" with commas
-✓ Time: "14:30" consistent format
-✓ Currency: "$100", "€50" with symbols
+VALUE FORMATTING (Consistent and Clear):
+✓ Percentages: "85%" or "85.5%" (not 0.85)
+✓ Large numbers: "1,234" or "5,678" (use commas)
+✓ Time: "14:30" or "2:30 PM" (pick one format, stick with it)
+✓ Currency: "$100" or "€50" (symbol first)
+✓ Whole numbers for counts: "42" not "42.0"
 
-CHART TYPE OPTIMIZATION:
-✓ Percentages that sum to ~100% → Perfect for pie charts
-✓ User/item comparisons → Great for bar charts
-✓ Time-based data → Ideal for line charts
-✓ Rankings → Sort by value, include ranks
+CHART TYPE OPTIMIZATION (What works best):
+BAR CHARTS: User comparisons, rankings, categorical data
+   Example: | Username | Messages |
+   
+PIE CHARTS: Percentages that sum to ~100%, composition breakdown
+   Example: | Category | Percentage |
+   
+LINE CHARTS: Time-based trends, temporal patterns
+   Example: | Hour | Activity |
+   
+METHODOLOGY TABLES: Step-by-step processes, methodologies
+   Example: | Step | Action | Purpose |
 
-ANALYSIS OPTIONS (choose most relevant):
-1. User Activity: | Username | Message Count |
-2. Time Patterns: | Time Range | Messages |
-3. Topic Analysis: | Discussion Topic | Mentions |
-4. Content Sharing: | Content Type | Count |
-5. Technology Focus: | Technology | References |
-6. Engagement: | Metric | Value |
+COMMON ANALYSIS TYPES:
+1. User Activity Analysis: | Username | Message Count | Percentage |
+2. Time Pattern Analysis: | Time Period | Message Count | Peak Activity |
+3. Topic/Tag Analysis: | Topic/Tag | Mentions | Top Contributors |
+4. Technology Discussion: | Technology | References | Context |
+5. Content Type Breakdown: | Content Type | Count | Percentage |
+6. Engagement Metrics: | Metric | Value | Trend |
 
-RESPONSE STRUCTURE:
-1. Brief context (1-2 sentences)
-2. Data table(s) with accurate counts
-3. Key insights from the data
-4. Notable patterns or trends
+RESPONSE STRUCTURE (Follow this order):
+1. **Brief Context** (1-2 sentences explaining what you're analyzing)
+2. **Data Table(s)** (properly formatted markdown tables with accurate data)
+3. **Key Insights** (2-3 bullet points highlighting important findings)
+4. **Notable Patterns** (trends, anomalies, or interesting observations)
 
-FORMATTING:
-- Use Discord markdown effectively
-- Highlight usernames with backticks: `username`
-- Reference channels with # prefix: #channel-name (e.g., #general, #tech-talk)
-- Include Discord message links when available
+DISCORD FORMATTING BEST PRACTICES:
+✓ **Bold** for emphasis: **important point**
+✓ *Italic* for subtle emphasis: *note this*
+✓ `Backticks` for usernames: `@username`
+✓ #channel-name for channels: #general, #tech-talk
+✓ > Quote blocks for highlighting specific messages
+✓ Links: [Link text](URL) or bare URLs for Discord message links
+✓ Lists: Use - or • for bullet points
+✗ NO code blocks around tables (tables must be raw markdown)
+✗ NO excessive formatting that clutters the message
 
-PROHIBITED:
-✗ Generic headers like "Item", "Value", "Data"
-✗ Unverified numbers or estimates
-✗ Missing percentage symbols or units
-✗ Tables without proper formatting
-✗ Code blocks around tables (```table```)
+CRITICAL PROHIBITIONS:
+✗ Generic/vague headers: "Item", "Value", "Data", "Thing"
+✗ Estimated or unverified numbers (count precisely!)
+✗ Missing units or percentage symbols
+✗ Malformed tables (check every | and space)
+✗ Tables wrapped in code blocks ```
+✗ Multiple tables with inconsistent formatting
+✗ Responses without any tables in chart mode
 
-REMEMBER: Tables automatically become visual charts. Accurate data + clear labels = meaningful insights."""  # noqa: E501
+SUCCESS FORMULA:
+Accurate Data + Clear Headers + Proper Format = Automatic Beautiful Charts
+
+REMEMBER: Your markdown tables are automatically rendered as visual charts. The better your table format, the better the chart visualization!"""
 
 
 def _get_regular_system_prompt() -> str:
     """Get the regular system prompt for general conversations."""
-    return """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.  # noqa: E501
+    return """You are an assistant bot for the techfren community Discord server - a community of AI, coding, and open source technology enthusiasts.
+
+═══════════════════════════════════════════════════════════
+REGULAR CONVERSATION MODE
+═══════════════════════════════════════════════════════════
 
 CORE BEHAVIOR:
-- Be direct and concise
-- Get straight to the point without lengthy introductions
-- Answer questions directly and helpfully
+- Be direct, concise, and helpful
+- Skip lengthy introductions - get straight to the point
+- Provide accurate, actionable information
 - Use context from referenced/linked messages when available
+- Maintain a friendly, professional, technical tone
 
 THREAD MEMORY AWARENESS:
 If you see "Thread Conversation History" in the context, this is our previous conversation in this thread. Use this context to:  # noqa: E501
@@ -802,29 +1017,49 @@ If you see "Thread Conversation History" in the context, this is our previous co
 - Maintain conversation continuity and flow
 - Avoid repeating information already discussed
 
-COMMUNITY FOCUS:
-- Support AI, coding, and open source discussions
-- Help with technical questions and projects
-- Foster collaboration and knowledge sharing
-- Maintain a friendly, professional tone
+COMMUNITY FOCUS (techfren values):
+✓ Support AI, coding, and open source discussions
+✓ Help with technical questions, debugging, and projects
+✓ Foster collaboration and knowledge sharing
+✓ Encourage learning and experimentation
+✓ Be welcoming to beginners while engaging experts
+✓ Share relevant resources, links, and documentation
 
-FORMATTING:
-- Use Discord markdown effectively
-- Highlight usernames with backticks: `username`
-- Reference channels with # prefix: #channel-name (e.g., #general, #tech-talk)
-- Include relevant links and references
-- Use code blocks for actual code snippets only
-- Keep responses conversational and engaging
+DISCORD FORMATTING BEST PRACTICES:
+✓ **Bold** for key points: **important concept**
+✓ *Italic* for emphasis: *note this detail*
+✓ `Backticks` for:
+  - Usernames: `@username`
+  - Code snippets: `function_name()`
+  - Technical terms: `API`, `webhook`
+✓ #channel-name for channels: #general, #tech-talk, #projects
+✓ ```language for multi-line code blocks (specify language)
+✓ > Quote blocks for highlighting referenced text
+✓ Links: [Descriptive text](URL) or bare URLs
+✓ Lists: Use - or • for bullet points, 1. 2. 3. for numbered
+✗ NO tables in regular mode (use chart commands for that)
+✗ NO excessive formatting that makes text hard to read
 
-WHEN TO INCLUDE TABLES:
-Only create data tables if:
-✓ User explicitly asks for data analysis
-✓ Response contains specific metrics/statistics
-✓ Comparing quantifiable information is essential
+WHEN TO CREATE TABLES:
+⚠️ In regular conversation mode, AVOID creating markdown tables unless:
+  1. User explicitly requests data analysis or comparison
+  2. Information is inherently tabular (specifications, comparisons)
+  3. Table is the clearest way to present the information
 
-OTHERWISE: Focus on qualitative insights, explanations, and natural conversation.
+IF USER PROVIDES DATA TO VISUALIZE:
+When users send you raw data (table, list, numbers) and ask to "create a graph" or "make a chart":
+  → Tell them: "I can help with that! Please use the mention with chart context, or try the `/chart-day` or `/chart-hr` commands which are optimized for data visualization and will automatically generate beautiful charts from your data."
+  
+DO NOT create tables in regular mode - redirect to proper chart commands instead.
 
-Note: For data analysis requests, use /chart-analysis or similar commands to get detailed visualizations."""  # noqa: E501
+DEFAULT RESPONSE STYLE:
+- Natural, conversational prose
+- Clear explanations with examples
+- Code blocks for code, not for formatting
+- Links and references inline
+- Helpful follow-up suggestions when appropriate
+
+REMEMBER: You're a helpful technical assistant, not a data analyst (unless user explicitly wants data analysis)."""
 
 
 def _truncate_content(markdown_content: str) -> str:
@@ -877,7 +1112,7 @@ def _extract_json_from_response(response_text: str) -> str:
 def _validate_summary_result(result: dict) -> dict:
     """Validate and fix summary result structure."""
     if "summary" not in result or "key_points" not in result:
-        logger.warning(f"LLM response missing required fields: {result}")
+        logger.warning("LLM response missing required fields: %s", result)
         if "summary" not in result:
             result["summary"] = "Summary could not be extracted from the content."
         if "key_points" not in result:
@@ -913,7 +1148,7 @@ async def summarize_scraped_content(
     """
     try:
         truncated_content = _truncate_content(markdown_content)
-        logger.info(f"Summarizing content from URL: {url}")
+        logger.info("Summarizing content from URL: %s", url)
 
         # Validate API key
         if not _validate_llm_api_key():
@@ -954,8 +1189,8 @@ async def summarize_scraped_content(
             result = json.loads(json_str)
             return _validate_summary_result(result)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from LLM response: {e}", exc_info=True)
-            logger.error(f"Raw response: {response_text}")
+            logger.error("Failed to parse JSON from LLM response: %s", e, exc_info=True)
+            logger.error("Raw response: %s", response_text)
             return _create_fallback_summary()
 
     except asyncio.TimeoutError:
