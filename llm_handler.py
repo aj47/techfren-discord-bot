@@ -1319,6 +1319,9 @@ CRITICAL FORMAT REQUIREMENTS:
 ✓ One space after opening | and one space before closing |
 ✓ NO code blocks around tables (no ```table or ```markdown)
 ✓ Tables render directly into visual charts automatically
+✓ MEANINGFUL HEADERS: Use descriptive names like "User Name" NOT "Item"
+✓ DATA VALUES: Include numbers, percentages, or quantifiable data in cells
+✓ CONSISTENT DATA: Each column should contain the same type of information
 
 DATA ACCURACY LAWS:
 1. COUNT PRECISELY: Actually count occurrences, don't estimate
@@ -1381,13 +1384,16 @@ DISCORD FORMATTING BEST PRACTICES:
 ✗ NO excessive formatting that clutters the message
 
 CRITICAL PROHIBITIONS:
-✗ Generic/vague headers: "Item", "Value", "Data", "Thing"
+✗ Generic/vague headers: "Item", "Value", "Data", "Thing", "Name", "Description"
+✗ Tables with only text and no numbers/percentages/quantifiable data
 ✗ Estimated or unverified numbers (count precisely!)
 ✗ Missing units or percentage symbols
 ✗ Malformed tables (check every | and space)
 ✗ Tables wrapped in code blocks ```
 ✗ Multiple tables with inconsistent formatting
+✗ Tables where all values are identical or repetitive
 ✗ Responses without any tables in chart mode
+✗ Tables formatted as lists or bullet points with pipes
 
 SUCCESS FORMULA:
 Accurate Data + Clear Headers + Proper Format = Automatic Beautiful Charts

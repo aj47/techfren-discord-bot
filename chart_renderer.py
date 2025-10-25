@@ -151,7 +151,7 @@ class ChartRenderer:
     """Handles detection and rendering of tables/charts from LLM responses."""
 
     TABLE_PATTERN = re.compile(
-        r"(\|.+\|[\r\n]+\|[\s\-:|]+\|[\r\n]+(?:\|.+\|[\r\n]*)+)", re.MULTILINE
+        r"(\|[^|\n]+\|[\r\n]+\|[\s\-:|]+\|[\r\n]+(?:\|[^|\n]+\|[\r\n]*)+)", re.MULTILINE
     )
 
     # Custom color scheme (0x96f theme)
@@ -203,6 +203,74 @@ class ChartRenderer:
             'font.family': 'monospace',  # Use monospace font
             'font.monospace': ['KH Interference TRIAL', 'IBM Plex Mono', 'DejaVu Sans Mono', 'Courier New', 'monospace'],
         })
+
+    def _is_valid_data_table(self, table_text: str) -> bool:
+        """
+        Check if a table contains valid data for charting.
+
+        Args:
+            table_text: The markdown table text
+
+        Returns:
+            bool: True if this is a valid data table
+        """
+        lines = table_text.strip().split('\n')
+        if len(lines) < 3:  # Need at least header, separator, and one data row
+            return False
+
+        # Parse the table to check its structure
+        try:
+            data = self._parse_markdown_table(table_text)
+            if not data or not data.get('headers') or not data.get('rows'):
+                return False
+
+            headers = data['headers']
+            rows = data['rows']
+
+            # Rule 1: Must have meaningful headers (not generic placeholders)
+            generic_headers = {'item', 'value', 'data', 'thing', 'stuff', 'info', 'detail', 'name', 'description'}
+            header_lower = [h.lower().strip() for h in headers if h and h.strip()]
+
+            # If all headers are too generic, it's probably not a data table
+            if all(h in generic_headers or len(h) < 3 for h in header_lower):
+                return False
+
+            # Rule 2: Must have at least one column with quantifiable data
+            has_quantifiable_data = False
+            for row in rows:
+                for i, cell in enumerate(row):
+                    if cell and i < len(headers):
+                        # Check if cell contains numbers, percentages, or quantifiable data
+                        cell_clean = cell.replace('%', '').replace(',', '').replace('$', '').strip()
+                        if cell_clean.replace('.', '').isdigit():
+                            has_quantifiable_data = True
+                            break
+                        elif '%' in cell or '$' in cell or any(c.isdigit() for c in cell):
+                            has_quantifiable_data = True
+                            break
+                if has_quantifiable_data:
+                    break
+
+            if not has_quantifiable_data:
+                return False
+
+            # Rule 3: Must have consistent column counts
+            expected_cols = len(headers)
+            for row in rows:
+                if len(row) != expected_cols:
+                    return False
+
+            # Rule 4: Not all cells should be identical (avoid repetitive non-data tables)
+            if len(rows) > 1:
+                first_row_values = [cell.strip() for cell in rows[0] if cell]
+                if all(len(set([row[i].strip() for row in rows if len(row) > i])) <= 1 for i in range(len(first_row_values))):
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.debug("Table validation error: %s", e)
+            return False
 
     def _detect_requested_chart_type(self, user_query: str) -> Optional[str]:
         """
@@ -257,7 +325,21 @@ class ChartRenderer:
                 logger.warning(f"No markdown tables found in response despite chart request. Response preview: {content[:200]}{'...' if len(content) > 200 else ''}")
             return content, []
 
-        logger.info("Found %d markdown table(s) in response", len(tables))
+        # Filter tables to only include valid data tables
+        valid_tables = []
+        for table in tables:
+            if self._is_valid_data_table(table):
+                valid_tables.append(table)
+            else:
+                logger.debug("Filtered out non-data table: %s", table[:100])
+
+        tables = valid_tables
+
+        if not tables:
+            logger.info("No valid data tables found after filtering")
+            return content, []
+
+        logger.info("Found %d valid data table(s) in response", len(tables))
 
         # Check if user explicitly requested a chart type
         requested_type = self._detect_requested_chart_type(user_query)
