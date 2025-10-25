@@ -22,7 +22,6 @@ var/
 
 # Virtual Environment
 .venv/
-venv/
 ENV/
 
 # Environment files with sensitive data
