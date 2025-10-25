@@ -363,6 +363,9 @@ async def handle_bot_command(
                 f"❌ **Thread Creation Failed**: Unable to create thread in {type(message.channel).__name__}\n\n"
                 "This command requires thread support. Please check server permissions and try again."
             )
+    except Exception as e:
+        logger.error("Error in handle_bot_command: %s", str(e), exc_info=True)
+        # No fallback - just log the error
 
 
 async def _send_error_response_thread(

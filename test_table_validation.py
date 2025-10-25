@@ -14,25 +14,54 @@ import logging
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 
 def test_table_validation():
-    """Test the table validation with a sample table."""
+    """Test the table validation with various sample tables."""
 
     renderer = ChartRenderer()
 
-    # Sample table similar to the one that failed
-    sample_table = """| Month    | Savings ($) | Percentage (%) |
+    # Test cases that should pass
+    test_tables = [
+        # Original sample table
+        """| Month    | Savings ($) | Percentage (%) |
 | -------- | ----------- | -------------- |
 | January  | $250        | 50.0           |
 | February | $100        | 20.0           |
-| March    | $150        | 30.0           |"""
+| March    | $150        | 30.0           |""",
 
-    print("Testing table validation with sample data:")
-    print("=" * 50)
-    print("Sample table:")
-    print(sample_table)
-    print("=" * 50)
+        # Table with different currency formats
+        """| Product | Price | Quantity |
+| ------- | ----- | -------- |
+| Apple   | $1.50 | 10       |
+| Banana  | $0.80 | 15       |
+| Orange  | $2.00 | 8        |""",
 
-    result = renderer._is_valid_data_table(sample_table)
-    print(f"\nValidation result: {'PASSED' if result else 'FAILED'}")
+        # Table with percentages and numbers
+        """| Category | Sales | Growth |
+| -------- | ----- | ------ |
+| Q1       | 1000  | 15%    |
+| Q2       | 1200  | 20%    |
+| Q3       | 1150  | 12%    |""",
+
+        # Table that should fail (generic headers)
+        """| Item | Value | Data |
+| ---- | ----- | ---- |
+| A    | 1     | x    |
+| B    | 2     | y    |""",
+
+        # Table that should fail (no numeric data)
+        """| Name | Description | Status |
+| ---- | ----------- | ------ |
+| Test | Some text  | Active |"""
+    ]
+
+    for i, table in enumerate(test_tables, 1):
+        print(f"\n{'='*60}")
+        print(f"TEST CASE {i}:")
+        print(f"{'='*60}")
+        print(table)
+        print(f"{'-'*60}")
+
+        result = renderer._is_valid_data_table(table)
+        print(f"Validation result: {'✅ PASSED' if result else '❌ FAILED'}")
 
 if __name__ == "__main__":
     test_table_validation()
