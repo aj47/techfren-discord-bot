@@ -1306,14 +1306,15 @@ class ChartRenderer:
 _chart_renderer = ChartRenderer()
 
 
-def extract_tables_for_rendering(content: str) -> Tuple[str, List[Dict]]:
+def extract_tables_for_rendering(content: str, user_query: str = "") -> Tuple[str, List[Dict]]:
     """
     Convenience function to extract and render tables from content.
 
     Args:
         content: LLM response text
+        user_query: The user's original query (to detect explicit chart type requests)
 
     Returns:
         Tuple of (cleaned_content, chart_data_list)
     """
-    return _chart_renderer.extract_tables_for_rendering(content)
+    return _chart_renderer.extract_tables_for_rendering(content, user_query)
