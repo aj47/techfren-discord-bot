@@ -811,7 +811,7 @@ class ChartRenderer:
             [headers[label_col_idx], headers[value_col_idx]], "bar"
         )
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(12, 8))
         fig.patch.set_facecolor(self.COLORS['background'])
         ax.set_facecolor(self.COLORS['background'])
 
@@ -858,8 +858,15 @@ class ChartRenderer:
 
             bars.append(FakeBar(x_pos - bar_width/2, bar_width, value))
 
-        # Set title with custom color
-        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        # Set title with better positioning
+        ax.set_title(
+            title,
+            fontsize=20,
+            fontweight='bold',
+            color=self.COLORS['foreground'],
+            pad=25,
+            y=1.02
+        )
 
         # Remove y-axis
         ax.set_yticks([])
@@ -891,7 +898,7 @@ class ChartRenderer:
         ax.set_xlim(-0.5, len(labels) - 0.5)  # Center bars on tick marks
         ax.set_ylim(0, max(values) * 1.1)  # Add padding at the top
 
-        plt.tight_layout()
+        plt.tight_layout(pad=1.5)
 
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
@@ -912,7 +919,8 @@ class ChartRenderer:
 
         title = self._generate_chart_title(headers, "pie")
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        # Use a larger figure with better aspect ratio for pie charts
+        fig, ax = plt.subplots(figsize=(12, 10))
         fig.patch.set_facecolor(self.COLORS['background'])
         ax.set_facecolor(self.COLORS['background'])
 
@@ -922,24 +930,37 @@ class ChartRenderer:
             colors = colors * (len(values) // len(self.CHART_PALETTE) + 1)
             colors = colors[:len(values)]
 
+        # Create pie chart with better layout parameters
         wedges, texts, autotexts = ax.pie(
             values,
             labels=labels,
             autopct='%1.1f%%',
             startangle=90,
             colors=colors,
-            textprops={'color': self.COLORS['foreground'], 'fontsize': 24}
+            textprops={'color': self.COLORS['foreground'], 'fontsize': 14},
+            pctdistance=0.85,  # Position percentage labels closer to center
+            labeldistance=1.1,  # Position labels further from center
+            radius=0.7  # Make pie slightly smaller to leave room for labels
         )
 
         # Style percentage labels
         for autotext in autotexts:
             autotext.set_color(self.COLORS['background'])
             autotext.set_fontweight('bold')
-            autotext.set_fontsize(26)
+            autotext.set_fontsize(12)
 
-        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        # Set title with better positioning
+        ax.set_title(
+            title,
+            fontsize=20,
+            fontweight='bold',
+            color=self.COLORS['foreground'],
+            pad=30,  # Increased padding
+            y=1.02  # Position title slightly higher
+        )
 
-        plt.tight_layout()
+        # Use tight_layout with padding to prevent label cutoffs
+        plt.tight_layout(pad=2.0)
 
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
@@ -971,7 +992,7 @@ class ChartRenderer:
 
         title = self._generate_chart_title(headers, "line")
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(12, 8))
         fig.patch.set_facecolor(self.COLORS['background'])
         ax.set_facecolor(self.COLORS['background'])
 
