@@ -646,8 +646,11 @@ async def _handle_analyze_images_command(interaction, *, slash: bool = False, ta
                     for part in parts:
                         await interaction.followup.send(part)
                 else:
-                    for part in parts:
-                        await interaction.reply(part, mention_author=False)
+                    for idx, part in enumerate(parts):
+                        if idx == 0:
+                            await interaction.reply(part, mention_author=False)
+                        else:
+                            await interaction.channel.send(part)
             else:
                 no_analysis_msg = "No analysis data available for the images."
                 if slash:
