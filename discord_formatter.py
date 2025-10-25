@@ -39,14 +39,14 @@ class DiscordFormatter:
         # Extract tables for chart rendering BEFORE converting to ASCII
         # This allows us to render nice chart images instead of messy ASCII tables
         try:
-            logger.debug(f"🔍 Starting chart extraction with user_query: '{user_query[:50]}{'...' if len(user_query) > 50 else ''}'")
+            logger.debug(f"Starting chart extraction with user_query: '{user_query[:50]}{'...' if len(user_query) > 50 else ''}'")
             formatted, chart_data_list = extract_tables_for_rendering(formatted, user_query)
             if chart_data_list:
-                logger.info("📊 Extracted %d chart(s) from response", len(chart_data_list))
+                logger.info("Extracted %d chart(s) from response", len(chart_data_list))
                 for i, chart in enumerate(chart_data_list):
                     logger.debug(f"   Chart {i+1}: type={chart.get('type')}, placeholder='{chart.get('placeholder')[:30]}...'")
             else:
-                logger.debug("📊 No charts found in response")
+                logger.debug("No charts found in response")
         except Exception as e:
             logger.error("Error extracting charts: %s", e, exc_info=True)
             # Continue with normal processing if chart extraction fails

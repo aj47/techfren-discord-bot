@@ -619,20 +619,20 @@ async def process_thread_memory_command(message, command_parts):
                 return f"✅ This thread has conversation memory.\nLast exchange: {
                     last_msg.timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
             else:
-                return "❌ This thread has no conversation memory."
+                return "This thread has no conversation memory."
         else:
-            return "❌ This thread has no conversation memory."
+            return "This thread has no conversation memory."
 
     elif action == "clear":
         if clear_thread_memory(thread_id):
-            return "🧹 Thread conversation memory cleared successfully."
+            return "Thread conversation memory cleared successfully."
         else:
-            return "❌ Failed to clear thread memory."
+            return "Failed to clear thread memory."
 
     elif action == "stats":
         stats = get_thread_stats(thread_id)
         if stats:
-            return f"""📊 **Thread Statistics**
+            return f"""**Thread Statistics**
 **Creator:** {stats['creator']}
 **Total Exchanges:** {stats['total_exchanges']}
 **Chart Analyses:** {stats['chart_analyses']}
@@ -640,7 +640,7 @@ async def process_thread_memory_command(message, command_parts):
 **Last Activity:** {stats['last_activity'][:16] if stats['last_activity'] else 'Unknown'}  # noqa: E501
 **Status:** {'Active' if stats['is_active'] else 'Inactive'}"""
         else:
-            return "❌ No statistics available for this thread."
+            return "No statistics available for this thread."
 
     else:
         return f"Unknown action: {action}. Available: status, clear, stats"

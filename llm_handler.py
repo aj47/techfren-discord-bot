@@ -459,7 +459,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
 
         # Log which system is being used
         is_chart_mode = system_prompt == _get_chart_analysis_system_prompt()
-        logger.info(f"🔧 System mode selected: {'CHART ANALYSIS' if is_chart_mode else 'REGULAR CONVERSATION'}")
+        logger.info(f"System mode selected: {'CHART ANALYSIS' if is_chart_mode else 'REGULAR CONVERSATION'}")
 
         # Make API request
         completion = await _make_llm_request(
@@ -478,16 +478,16 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         logger.info(
             f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}"  # noqa: E501
         )
-        logger.info(f"📊 Chart extraction result: {len(chart_data)} chart(s) found")
+        logger.info(f"Chart extraction result: {len(chart_data)} chart(s) found")
 
         # Learn from successful chart requests
         if len(chart_data) > 0 and ("chart" in query.lower() or "graph" in query.lower()):
             learn_from_chart_request(query, success=True)
-            logger.info(f"🧠 Learning from successful chart request: '{query[:50]}...'")
+            logger.info(f"Learning from successful chart request: '{query[:50]}...'")
 
         # Log a preview of the LLM response for debugging
         if len(chart_data) == 0 and ("chart" in query.lower() or "graph" in query.lower()):
-            logger.warning(f"⚠️ Chart requested but no charts extracted. LLM response preview: {message[:200]}{'...' if len(message) > 200 else ''}")
+            logger.warning(f"Chart requested but no charts extracted. LLM response preview: {message[:200]}{'...' if len(message) > 200 else ''}")
 
         return formatted_message, chart_data
 
@@ -981,7 +981,7 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     phrase_matches = sum(1 for phrase in chart_phrases if phrase in combined_text)
 
     # Debug logging
-    logger.debug(f"🔍 Chart detection debug:")
+    logger.debug(f"Chart detection debug:")
     logger.debug(f"   Query: '{query}'")
     logger.debug(f"   Combined text: '{combined_text[:100]}...'")
     logger.debug(f"   Keyword matches: {keyword_matches}")
@@ -1002,9 +1002,9 @@ def _should_use_chart_system(query: str, full_content: str) -> bool:
     should_use_chart = keyword_matches >= 2 or phrase_matches >= 1 or has_create_and_chart
 
     if has_create_and_chart and phrase_matches == 0:
-        logger.info(f"🎯 Special case: 'create' + 'chart' detected, forcing chart mode")
+        logger.info(f"Special case: 'create' + 'chart' detected, forcing chart mode")
 
-    logger.info(f"🎯 Chart system decision: {'USE CHART SYSTEM' if should_use_chart else 'USE REGULAR SYSTEM'} (keywords: {keyword_matches}, phrases: {phrase_matches}, create+chart: {has_create_and_chart})")
+    logger.info(f"Chart system decision: {'USE CHART SYSTEM' if should_use_chart else 'USE REGULAR SYSTEM'} (keywords: {keyword_matches}, phrases: {phrase_matches}, create+chart: {has_create_and_chart})")
 
     return should_use_chart
 
@@ -1034,20 +1034,20 @@ def learn_from_chart_request(query: str, success: bool = True):
         if len(word) > 3 and word.isalpha():  # Only learn meaningful words
             if word not in chart_keywords and word not in _learned_chart_keywords:
                 _learned_chart_keywords.add(word)
-                logger.info(f"🧠 Learned new chart keyword: '{word}'")
+                logger.info(f"Learned new chart keyword: '{word}'")
 
     # Learn 2-word and 3-word phrases
     for i in range(len(words) - 1):
         phrase = f"{words[i]} {words[i+1]}"
         if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
             _learned_chart_phrases.add(phrase)
-            logger.info(f"🧠 Learned new chart phrase: '{phrase}'")
+            logger.info(f"Learned new chart phrase: '{phrase}'")
 
     for i in range(len(words) - 2):
         phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
         if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
             _learned_chart_phrases.add(phrase)
-            logger.info(f"🧠 Learned new chart phrase: '{phrase}'")
+            logger.info(f"Learned new chart phrase: '{phrase}'")
 
 def get_enhanced_chart_keywords():
     """Get chart keywords including learned ones."""
@@ -1073,7 +1073,7 @@ def reset_learning():
     global _learned_chart_keywords, _learned_chart_phrases
     _learned_chart_keywords.clear()
     _learned_chart_phrases.clear()
-    logger.info("🧹 Learning system reset")
+    logger.info("Learning system reset")
 
 
 def _get_chart_analysis_system_prompt() -> str:

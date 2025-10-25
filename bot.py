@@ -676,7 +676,7 @@ async def on_message(message):
         message_key = message.id  # Only use message ID, not (message.id, channel.id)
         if message_key in _processed_messages:
             logger.warning(
-                "⚠️ DUPLICATE DETECTED: Skipping duplicate processing of "
+                "DUPLICATE DETECTED: Skipping duplicate processing of "
                 "message %s (channel: %s, type: %s)",
                 message.id,
                 message.channel.id,
