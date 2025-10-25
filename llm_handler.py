@@ -1029,41 +1029,211 @@ def learn_from_chart_request(query: str, success: bool = True):
     query_lower = query.lower()
     words = query_lower.split()
 
+    # Get base keywords to check against (not the local ones)
+    # Define base keywords here for the learning system to use
+    base_chart_keywords_for_learning = [
+        "analyze", "analysis", "analyzing", "chart", "charts", "graph", "graphs",
+        "plot", "plots", "plotting", "visualize", "visualization", "visualizing",
+        "diagram", "diagrams", "figure", "figures", "graphic", "graphics",
+        "data", "statistics", "stats", "statistical", "metrics", "measurements",
+        "count", "counts", "counting", "frequency", "frequencies", "distribution",
+        "breakdown", "breakdowns", "summary", "summaries", "overview", "overviews",
+        "comparison", "comparisons", "compare", "comparing", "versus", "vs", "against",
+        "ranking", "rankings", "rank", "ranked", "top", "bottom", "highest", "lowest",
+        "best", "worst", "most", "least", "more", "less", "greater", "smaller",
+        "trends", "trend", "trending", "patterns", "pattern", "changes", "change",
+        "increase", "decrease", "growth", "decline", "rise", "fall", "fluctuation",
+        "fluctuations", "variation", "variations", "progression", "progressions",
+        "activity", "activities", "usage", "usages", "engagement", "interactions",
+        "traffic", "visits", "visitors", "users", "participation", "involvement",
+        "quantify", "quantification", "measure", "measuring", "calculate", "calculating",
+        "percentage", "percentages", "percent", "ratio", "ratios", "proportion",
+        "proportions", "rate", "rates", "average", "averages", "mean", "median", "mode",
+        "time", "times", "period", "periods", "duration", "durations", "hour", "hours",
+        "day", "days", "week", "weeks", "month", "months", "year", "years",
+        "daily", "weekly", "monthly", "yearly", "quarterly", "annual",
+        "numbers", "number", "amount", "amounts", "quantity", "quantities", "total",
+        "totals", "sum", "sums", "count", "counts", "figure", "figures", "value", "values",
+        "category", "categories", "group", "groups", "type", "types", "kind", "kinds",
+        "classification", "classifications", "segment", "segments", "division", "divisions",
+        "performance", "performances", "score", "scores", "rating", "ratings", "grade",
+        "grades", "result", "results", "outcome", "outcomes", "success", "successes",
+        "create", "creating", "make", "making", "generate", "generating", "build", "building",
+        "draw", "drawing", "render", "rendering", "produce", "producing", "show", "showing",
+        "display", "displaying", "present", "presenting", "illustrate", "illustrating",
+        "pie", "bar", "line", "scatter", "heatmap", "box", "histogram", "area",
+        "bubble", "radar", "polar", "tree", "map", "surface", "candlestick", "funnel",
+        "correlation", "correlations", "relationship", "relationships", "association",
+        "associations", "dependency", "dependencies", "impact", "impacts", "effect", "effects",
+    ]
+
+    base_chart_phrases_for_learning = [
+        "show me the data", "show me data", "display the data", "present the data",
+        "data analysis", "analyze this data", "analyze the data", "data visualization",
+        "visualize this", "visualize this data", "visualize the data", "visualize these numbers",
+        "turn this into a chart", "turn this into a graph", "chart this data", "graph this data",
+        "how much", "how many", "what percentage", "what percent", "what's the breakdown",
+        "what's the distribution", "what's the trend", "what are the patterns", "what's the correlation",
+        "show me trends", "show patterns", "show breakdown", "show distribution", "show comparison",
+        "top users", "most active", "most engaged", "highest activity", "lowest activity",
+        "user activity", "user engagement", "user ranking", "user statistics", "user metrics",
+        "activity by user", "engagement by user", "posts by user", "messages by user",
+        "activity by time", "usage over time", "trends over time", "changes over time",
+        "daily activity", "weekly activity", "monthly activity", "hourly activity",
+        "activity by hour", "activity by day", "activity by week", "activity by month",
+        "breakdown by time", "time analysis", "temporal analysis", "time series",
+        "usage statistics", "user statistics", "activity statistics", "engagement statistics",
+        "show statistics", "display stats", "view stats", "check stats", "analyze stats",
+        "measure usage", "measure activity", "measure engagement", "calculate metrics",
+        "quantify activity", "quantify usage", "count occurrences", "frequency analysis",
+        "compare this", "comparison between", "versus analysis", "vs comparison",
+        "side by side", "compare and contrast", "ranking analysis", "top performers",
+        "bottom performers", "highest ranked", "lowest ranked", "sort by", "ordered by",
+        "find patterns", "identify trends", "show trends", "trend analysis", "pattern analysis",
+        "spot patterns", "detect trends", "analyze patterns", "growth trends", "decline trends",
+        "fluctuation analysis", "seasonal patterns", "cyclical patterns", "anomaly detection",
+        "breakdown by", "distribution of", "split by", "categorized by", "grouped by",
+        "segment analysis", "category breakdown", "type distribution", "classification analysis",
+        "proportion analysis", "percentage breakdown", "share of", "portion of",
+        "performance analysis", "performance metrics", "results analysis", "outcome analysis",
+        "success metrics", "failure analysis", "effectiveness analysis", "efficiency metrics",
+        "quality metrics", "performance comparison", "results visualization", "outcome visualization",
+        "i want to see", "show me visually", "make it visual", "visual representation",
+        "graphical representation", "chart representation", "visual summary", "graphical summary",
+        "present this visually", "display as chart", "display as graph", "show as visualization",
+        "get the data", "fetch the data", "pull the data", "extract data", "data request",
+        "need the numbers", "show me numbers", "what are the numbers", "get statistics",
+        "provide data", "data summary", "data overview", "data breakdown", "data insights",
+        "analyze this", "analyze the", "analysis of", "break down this", "examine this",
+        "investigate this", "look into this", "study this", "review this", "assess this",
+        "turn this into", "convert this to", "transform this into", "change this to",
+        "make this into", "represent this as", "show this as", "display this as",
+        "chart this", "graph this", "plot this", "visualize this", "diagram this",
+        "chart the data", "graph the data", "plot the data", "visualize the data",
+        "from this image", "from this screenshot", "from this data", "from these numbers",
+    ]
+
     # Learn individual words that might indicate chart requests
     for word in words:
         if len(word) > 3 and word.isalpha():  # Only learn meaningful words
-            if word not in chart_keywords and word not in _learned_chart_keywords:
+            if word not in base_chart_keywords_for_learning and word not in _learned_chart_keywords:
                 _learned_chart_keywords.add(word)
                 logger.info(f"Learned new chart keyword: '{word}'")
 
     # Learn 2-word and 3-word phrases
     for i in range(len(words) - 1):
         phrase = f"{words[i]} {words[i+1]}"
-        if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
+        if phrase not in base_chart_phrases_for_learning and phrase not in _learned_chart_phrases:
             _learned_chart_phrases.add(phrase)
             logger.info(f"Learned new chart phrase: '{phrase}'")
 
     for i in range(len(words) - 2):
         phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
-        if phrase not in chart_phrases and phrase not in _learned_chart_phrases:
+        if phrase not in base_chart_phrases_for_learning and phrase not in _learned_chart_phrases:
             _learned_chart_phrases.add(phrase)
             logger.info(f"Learned new chart phrase: '{phrase}'")
 
 def get_enhanced_chart_keywords():
     """Get chart keywords including learned ones."""
-    return chart_keywords + list(_learned_chart_keywords)
+    # Define the base keywords here to avoid scope issues
+    base_chart_keywords = [
+        "analyze", "analysis", "analyzing", "chart", "charts", "graph", "graphs",
+        "plot", "plots", "plotting", "visualize", "visualization", "visualizing",
+        "diagram", "diagrams", "figure", "figures", "graphic", "graphics",
+        "data", "statistics", "stats", "statistical", "metrics", "measurements",
+        "count", "counts", "counting", "frequency", "frequencies", "distribution",
+        "breakdown", "breakdowns", "summary", "summaries", "overview", "overviews",
+        "comparison", "comparisons", "compare", "comparing", "versus", "vs", "against",
+        "ranking", "rankings", "rank", "ranked", "top", "bottom", "highest", "lowest",
+        "best", "worst", "most", "least", "more", "less", "greater", "smaller",
+        "trends", "trend", "trending", "patterns", "pattern", "changes", "change",
+        "increase", "decrease", "growth", "decline", "rise", "fall", "fluctuation",
+        "fluctuations", "variation", "variations", "progression", "progressions",
+        "activity", "activities", "usage", "usages", "engagement", "interactions",
+        "traffic", "visits", "visitors", "users", "participation", "involvement",
+        "quantify", "quantification", "measure", "measuring", "calculate", "calculating",
+        "percentage", "percentages", "percent", "ratio", "ratios", "proportion",
+        "proportions", "rate", "rates", "average", "averages", "mean", "median", "mode",
+        "time", "times", "period", "periods", "duration", "durations", "hour", "hours",
+        "day", "days", "week", "weeks", "month", "months", "year", "years",
+        "daily", "weekly", "monthly", "yearly", "quarterly", "annual",
+        "numbers", "number", "amount", "amounts", "quantity", "quantities", "total",
+        "totals", "sum", "sums", "count", "counts", "figure", "figures", "value", "values",
+        "category", "categories", "group", "groups", "type", "types", "kind", "kinds",
+        "classification", "classifications", "segment", "segments", "division", "divisions",
+        "performance", "performances", "score", "scores", "rating", "ratings", "grade",
+        "grades", "result", "results", "outcome", "outcomes", "success", "successes",
+        "create", "creating", "make", "making", "generate", "generating", "build", "building",
+        "draw", "drawing", "render", "rendering", "produce", "producing", "show", "showing",
+        "display", "displaying", "present", "presenting", "illustrate", "illustrating",
+        "pie", "bar", "line", "scatter", "heatmap", "box", "histogram", "area",
+        "bubble", "radar", "polar", "tree", "map", "surface", "candlestick", "funnel",
+        "correlation", "correlations", "relationship", "relationships", "association",
+        "associations", "dependency", "dependencies", "impact", "impacts", "effect", "effects",
+    ]
+    return base_chart_keywords + list(_learned_chart_keywords)
 
 def get_enhanced_chart_phrases():
     """Get chart phrases including learned ones."""
+    # Define the base phrases here to avoid scope issues
+    base_chart_phrases = [
+        "show me the data", "show me data", "display the data", "present the data",
+        "data analysis", "analyze this data", "analyze the data", "data visualization",
+        "visualize this", "visualize this data", "visualize the data", "visualize these numbers",
+        "turn this into a chart", "turn this into a graph", "chart this data", "graph this data",
+        "how much", "how many", "what percentage", "what percent", "what's the breakdown",
+        "what's the distribution", "what's the trend", "what are the patterns", "what's the correlation",
+        "show me trends", "show patterns", "show breakdown", "show distribution", "show comparison",
+        "top users", "most active", "most engaged", "highest activity", "lowest activity",
+        "user activity", "user engagement", "user ranking", "user statistics", "user metrics",
+        "activity by user", "engagement by user", "posts by user", "messages by user",
+        "activity by time", "usage over time", "trends over time", "changes over time",
+        "daily activity", "weekly activity", "monthly activity", "hourly activity",
+        "activity by hour", "activity by day", "activity by week", "activity by month",
+        "breakdown by time", "time analysis", "temporal analysis", "time series",
+        "usage statistics", "user statistics", "activity statistics", "engagement statistics",
+        "show statistics", "display stats", "view stats", "check stats", "analyze stats",
+        "measure usage", "measure activity", "measure engagement", "calculate metrics",
+        "quantify activity", "quantify usage", "count occurrences", "frequency analysis",
+        "compare this", "comparison between", "versus analysis", "vs comparison",
+        "side by side", "compare and contrast", "ranking analysis", "top performers",
+        "bottom performers", "highest ranked", "lowest ranked", "sort by", "ordered by",
+        "find patterns", "identify trends", "show trends", "trend analysis", "pattern analysis",
+        "spot patterns", "detect trends", "analyze patterns", "growth trends", "decline trends",
+        "fluctuation analysis", "seasonal patterns", "cyclical patterns", "anomaly detection",
+        "breakdown by", "distribution of", "split by", "categorized by", "grouped by",
+        "segment analysis", "category breakdown", "type distribution", "classification analysis",
+        "proportion analysis", "percentage breakdown", "share of", "portion of",
+        "performance analysis", "performance metrics", "results analysis", "outcome analysis",
+        "success metrics", "failure analysis", "effectiveness analysis", "efficiency metrics",
+        "quality metrics", "performance comparison", "results visualization", "outcome visualization",
+        "i want to see", "show me visually", "make it visual", "visual representation",
+        "graphical representation", "chart representation", "visual summary", "graphical summary",
+        "present this visually", "display as chart", "display as graph", "show as visualization",
+        "get the data", "fetch the data", "pull the data", "extract data", "data request",
+        "need the numbers", "show me numbers", "what are the numbers", "get statistics",
+        "provide data", "data summary", "data overview", "data breakdown", "data insights",
+        "analyze this", "analyze the", "analysis of", "break down this", "examine this",
+        "investigate this", "look into this", "study this", "review this", "assess this",
+        "turn this into", "convert this to", "transform this into", "change this to",
+        "make this into", "represent this as", "show this as", "display this as",
+        "chart this", "graph this", "plot this", "visualize this", "diagram this",
+        "chart the data", "graph the data", "plot the data", "visualize the data",
+        "from this image", "from this screenshot", "from this data", "from these numbers",
+    ]
     return base_chart_phrases + list(_learned_chart_phrases)
 
 def get_learning_stats():
     """Get statistics about the learning system."""
+    # Define base counts to avoid scope issues
+    base_keyword_count = 85  # Count of base keywords
+    base_phrase_count = 96   # Count of base phrases
+
     return {
         "learned_keywords": len(_learned_chart_keywords),
         "learned_phrases": len(_learned_chart_phrases),
-        "total_keywords": len(base_chart_keywords) + len(_learned_chart_keywords),
-        "total_phrases": len(base_chart_phrases) + len(_learned_chart_phrases),
+        "total_keywords": base_keyword_count + len(_learned_chart_keywords),
+        "total_phrases": base_phrase_count + len(_learned_chart_phrases),
         "learned_keywords_list": list(_learned_chart_keywords),
         "learned_phrases_list": list(_learned_chart_phrases)
     }
