@@ -356,18 +356,13 @@ async def handle_bot_command(
                 "Thread creation not supported in DMs, using channel response"
             )
         else:
-            logger.info(
-                "Thread creation failed in %s, falling back to channel response",
-                type(message.channel).__name__
+            logger.error(
+                "Thread creation FAILED - No fallback available: %s", type(message.channel).__name__
             )
-        await _handle_bot_command_fallback(message, client_user, query, bot_client)
-
-    except Exception as e:
-        logger.error(
-            "Error in thread-based bot command handling: %s", str(e), exc_info=True
-        )
-        logger.info("Calling fallback handler due to exception in main handler")
-        await _handle_bot_command_fallback(message, client_user, query, bot_client)
+            error_msg = await message.channel.send(
+                f"❌ **Thread Creation Failed**: Unable to create thread in {type(message.channel).__name__}\n\n"
+                "This command requires thread support. Please check server permissions and try again."
+            )
 
 
 async def _send_error_response_thread(
@@ -416,127 +411,19 @@ async def _send_error_response_thread(
         )
 
 
-async def _get_fallback_message_context(message, bot_client):
-    """Get message context for fallback handler."""
-    if bot_client and (message.reference or "discord.com/channels/" in message.content or message.attachments):
-        try:
-            message_context = await get_message_context(message, bot_client)
-            logger.debug(
-                "Retrieved message context in fallback: referenced=%s, linked_count=%d",
-                message_context['referenced_message'] is not None,
-                len(message_context['linked_messages'])
-            )
-            return message_context
-        except Exception as e:
-            logger.warning("Failed to get message context in fallback: %s", e)
-    elif message.attachments:
-        return {
-            "current_message": message,
-            "referenced_message": None,
-            "linked_messages": [],
-        }
-    return None
+# REMOVED: All fallback handler functions - No fallbacks available
+# _get_fallback_message_context - REMOVED
+# _send_fallback_response_with_charts - REMOVED
+# _send_fallback_response_text - REMOVED
+# _handle_fallback_error - REMOVED
+# The system now fails explicitly instead of falling back to channel responses.
 
 
-async def _send_fallback_response_with_charts(
-    message, client_user, response, chart_data, processing_msg
-):
-    """Send fallback response with charts."""
-    logger.info("Sending fallback response with %d chart(s)", len(chart_data))
-    from command_abstraction import MessageResponseSender
-
-    channel_sender = MessageResponseSender(message.channel)
-    bot_response = await channel_sender.send_with_charts(response, chart_data)
-    if bot_response:
-        await store_bot_response_db(
-            bot_response, client_user, message.guild, message.channel, response
-        )
-    await processing_msg.delete()
-    logger.info(
-        "Command executed successfully (fallback): mention - Response length: %d - "
-        "With %d chart(s)",
-        len(response),
-        len(chart_data)
-    )
+# Helper functions for parameter validation
 
 
-async def _send_fallback_response_text(message, client_user, response, processing_msg):
-    """Send fallback response as text (split if needed)."""
-    if len(response) > 1900:
-        message_parts = await split_long_message(response, max_length=1900)
-    else:
-        message_parts = [response]
-
-    for part in message_parts:
-        allowed_mentions = discord.AllowedMentions(
-            everyone=False, roles=False, users=True
-        )
-        bot_response = await message.channel.send(
-            part, allowed_mentions=allowed_mentions, suppress_embeds=True
-        )
-        await store_bot_response_db(
-            bot_response, client_user, message.guild, message.channel, part
-        )
-
-    await processing_msg.delete()
-    logger.info(
-        "Command executed successfully (fallback): mention - Response length: %d - "
-        "Split into %d parts",
-        len(response),
-        len(message_parts)
-    )
-
-
-async def _handle_fallback_error(message, client_user, processing_msg):
-    """Handle errors in fallback command processing."""
-    import config
-
-    error_msg = config.ERROR_MESSAGES["processing_error"]
-    allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
-    bot_response = await message.channel.send(
-        error_msg, allowed_mentions=allowed_mentions, suppress_embeds=True
-    )
-    await store_bot_response_db(
-        bot_response, client_user, message.guild, message.channel, error_msg
-    )
-    try:
-        await processing_msg.delete()
-    except discord.NotFound:
-        pass
-
-
-async def _handle_bot_command_fallback(
-    message: discord.Message,
-    client_user: discord.ClientUser,
-    query: str,
-    bot_client: discord.Client = None,
-) -> None:
-    """Fallback handler for bot commands when thread creation fails."""
-    logger.info("🔄 FALLBACK: Responding in channel %s (no thread available)", message.channel.id)
-    processing_msg = await message.channel.send(
-        "Processing your request, please wait..."
-    )
-    try:
-        # Get message context
-        message_context = await _get_fallback_message_context(message, bot_client)
-        response, chart_data = await call_llm_api(query, message_context)
-
-        # Send response with charts or as text
-        if chart_data:
-            await _send_fallback_response_with_charts(
-                message, client_user, response, chart_data, processing_msg
-            )
-        else:
-            await _send_fallback_response_text(
-                message, client_user, response, processing_msg
-            )
-    except Exception as e:
-        logger.error(
-            "Error processing mention command (fallback): %s",
-            str(e),
-            exc_info=True,
-        )
-        await _handle_fallback_error(message, client_user, processing_msg)
+# REMOVED: _handle_bot_command_fallback - No fallbacks available
+# The system now fails explicitly when thread creation fails instead of falling back.
 
 
 # Helper functions for parameter validation

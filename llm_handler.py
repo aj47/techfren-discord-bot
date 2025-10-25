@@ -492,14 +492,11 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         return formatted_message, chart_data
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out")
-        return "Sorry, the request timed out. Please try again later.", []
+        logger.error("LLM API request TIMED OUT - No fallback available")
+        raise TimeoutError("LLM API request timed out. Please try again later.")
     except Exception as e:
-        logger.error("Error calling LLM API: %s", str(e), exc_info=True)
-        return (
-            "Sorry, I encountered an error while processing your request. Please try again later.",  # noqa: E501
-            [],
-        )
+        logger.error("LLM API FAILED - No fallback available: %s", str(e), exc_info=True)
+        raise RuntimeError(f"LLM API call failed: {e}")
 
 
 def _filter_messages_for_summary(messages):
@@ -746,14 +743,11 @@ Keep it natural and engaging - this is for community members to understand what 
         return formatted_summary, chart_data
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during summary generation")
-        return "Sorry, the summary request timed out. Please try again later.", []
+        logger.error("LLM API summary request TIMED OUT - No fallback available")
+        raise TimeoutError("Summary generation timed out. Please try again later.")
     except Exception as e:
-        logger.error("Error calling LLM API for summary: %s", str(e), exc_info=True)
-        return (
-            "Sorry, I encountered an error while generating the summary. Please try again later.",  # noqa: E501
-            [],
-        )
+        logger.error("LLM Summary API FAILED - No fallback available: %s", str(e), exc_info=True)
+        raise RuntimeError(f"Summary generation failed: {e}")
 
 
 def _get_regular_summary_system_prompt() -> str:
@@ -1528,14 +1522,8 @@ def _validate_summary_result(result: dict) -> dict:
     return result
 
 
-def _create_fallback_summary() -> dict:
-    """Create fallback summary when parsing fails."""
-    return {
-        "summary": "Failed to generate a proper summary from the content.",
-        "key_points": [
-            "The content could not be properly summarized due to a processing error."
-        ],
-    }
+# REMOVED: _create_fallback_summary - No fallbacks available
+# The system now fails explicitly instead of returning generic fallback summaries.
 
 
 async def summarize_scraped_content(
@@ -1595,15 +1583,13 @@ async def summarize_scraped_content(
             result = json.loads(json_str)
             return _validate_summary_result(result)
         except json.JSONDecodeError as e:
-            logger.error("Failed to parse JSON from LLM response: %s", e, exc_info=True)
+            logger.error("LLM response FAILED - Invalid JSON format: %s", e, exc_info=True)
             logger.error("Raw response: %s", response_text)
-            return _create_fallback_summary()
+            raise ValueError(f"Failed to parse LLM response as JSON: {e}")
 
     except asyncio.TimeoutError:
-        logger.error(
-            f"LLM API request timed out while summarizing content from URL {url}"
-        )
-        return None
+        logger.error(f"LLM API URL summary request TIMED OUT: {url}")
+        raise TimeoutError(f"Content summarization timed out for URL: {url}")
     except Exception as e:
         logger.error(
             f"Error summarizing content from URL {url}: {

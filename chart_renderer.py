@@ -304,6 +304,47 @@ class ChartRenderer:
             logger.debug("Table validation error: %s", e)
             return False
 
+    def _identify_chart_failure_reason(self, table_data: Dict, chart_type: str) -> str:
+        """
+        Identify the specific reason why chart generation failed.
+
+        Returns user-friendly error message.
+        """
+        headers = table_data.get("headers", [])
+        rows = table_data.get("rows", [])
+
+        # Check for common failure patterns
+        if not rows:
+            return "No data rows found in table"
+
+        if not headers:
+            return "No column headers found in table"
+
+        if len(headers) < 2:
+            return f"{chart_type.title()} charts require at least 2 columns (category and value)"
+
+        # Check if there's numeric data
+        has_numeric = any(
+            any(c.isdigit() for c in str(cell))
+            for row in rows
+            for cell in row
+        )
+        if not has_numeric:
+            return f"{chart_type.title()} charts require numeric data"
+
+        # Chart-specific failures
+        if chart_type == "pie" and len(rows) > 8:
+            return "Pie charts work best with 8 or fewer categories"
+
+        if chart_type == "scatter" and len(headers) < 2:
+            return "Scatter plots require at least 2 numeric columns"
+
+        if chart_type in ["line", "area"] and len(rows) < 2:
+            return f"{chart_type.title()} charts require multiple data points"
+
+        # Generic failure
+        return f"Unable to generate {chart_type} chart - data may be incompatible"
+
     def _detect_requested_chart_type(self, user_query: str) -> Optional[str]:
         """
         Detect if user explicitly requested a specific chart type in their query.
@@ -414,7 +455,13 @@ class ChartRenderer:
 
                     logger.info("Generated %s chart for table %s", chart_type, idx + 1)
                 else:
-                    logger.warning("Failed to generate chart for table %s", idx + 1)
+                    # Add explicit error message when chart generation fails
+                    error_type = self._identify_chart_failure_reason(table_data, chart_type)
+                    error_placeholder = f"[Chart {idx + 1} FAILED: {error_type}]"
+                    cleaned_content = cleaned_content.replace(
+                        table_text, error_placeholder, 1
+                    )
+                    logger.error("Chart generation FAILED for table %s: %s", idx + 1, error_type)
 
             except Exception as e:
                 logger.error("Error processing table %s: %s", idx + 1, e, exc_info=True)
