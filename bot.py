@@ -385,7 +385,7 @@ async def on_message(message):
                 attachment_urls_list.append(attachment.url)
                 attachment_types_list.append(attachment.content_type)
                 
-                # If it's an image, we can perform image analysis here later
+                # If it's an image, trigger background analysis after storing the message
                 if attachment.content_type and attachment.content_type.startswith('image/'):
                     logger.info(f"Detected image attachment: {attachment.filename} ({attachment.content_type})")
             
