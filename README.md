@@ -20,6 +20,37 @@ A simple Discord bot built with discord.py.
 - `/sum-day` command works in any channel
 - Stores all messages in a SQLite database for logging and analysis
 
+## Project Structure
+
+```
+techfren-discord-bot/
+├── bot.py                     # Main bot entry point
+├── config.py                  # Configuration management
+├── llm_handler.py             # LLM API integration (Perplexity)
+├── command_handler.py         # Command processing logic
+├── command_abstraction.py     # Thread management and message sending
+├── chart_renderer.py          # Chart generation and table processing
+├── discord_formatter.py       # Discord message formatting
+├── database/                  # Database operations
+├── data/                      # Database files and logs
+├── fonts/                     # Local font files for charts
+├── tests/                     # Test suite
+│   ├── test_chart_*.py       # Chart-related tests
+│   ├── test_database*.py     # Database tests
+│   ├── test_*.py             # Other functional tests
+│   └── README.md             # Test documentation
+├── scripts/                   # Utility and maintenance scripts
+│   ├── migrate_*.py          # Database migration scripts
+│   ├── fix_*.py              # Code quality fix scripts
+│   └── README.md             # Scripts documentation
+├── docs/                      # Documentation files
+│   └── *.md                  # Various documentation
+├── assets/                    # Static assets
+│   └── images/               # Images and screenshots
+├── backups/                   # Backup files
+└── fonts/                     # Local font files
+```
+
 ## Setup
 
 1. Clone the repository

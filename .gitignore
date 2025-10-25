@@ -66,3 +66,8 @@ test_final_integration.py
 KH-Interference-TRIAL/
 KH-Interference-TRIAL.zip
 *.zip:Zone.Identifier
+
+# Additional directories
+backups/
+assets/
+debug_*.py
