@@ -513,6 +513,40 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     # Immediately defer to avoid timeout, then do validation in wrapper
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
+@bot.tree.command(name="shutdown", description="Shutdown the bot (Admin only)")
+async def shutdown_slash(interaction: discord.Interaction):
+    """Slash command to shutdown the bot - Admin only"""
+    # Check if user has administrator permissions
+    if not interaction.user.guild_permissions.administrator:
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        await interaction.response.send_message(
+            "❌ You do not have permission to use this command. Only administrators can shut down the bot.",
+            ephemeral=True,
+            allowed_mentions=allowed_mentions
+        )
+        logger.warning(f"Unauthorized shutdown attempt by {interaction.user} ({interaction.user.id}) in guild {interaction.guild.name if interaction.guild else 'DM'}")
+        return
+    
+    try:
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+        await interaction.response.send_message(
+            "🛑 **Bot shutting down...**\n\nInitiated by: " + interaction.user.mention,
+            allowed_mentions=allowed_mentions
+        )
+        logger.info(f"Shutdown command executed by admin {interaction.user} ({interaction.user.id}) in guild {interaction.guild.name if interaction.guild else 'DM'}")
+        await bot.close()
+    except Exception as e:
+        logger.error(f"Error during shutdown command: {e}", exc_info=True)
+        try:
+            allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+            await interaction.followup.send(
+                "❌ An error occurred while attempting to shutdown the bot.",
+                ephemeral=True,
+                allowed_mentions=allowed_mentions
+            )
+        except Exception as e:
+            logger.error(f"Failed to send shutdown error message: {e}")
+
 try:
     logger.info("Starting bot...")
     import config # Assuming config.py is in the same directory or accessible
