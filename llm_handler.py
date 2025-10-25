@@ -457,6 +457,10 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         # Select system prompt
         system_prompt = _select_system_prompt(force_charts, query, user_content)
 
+        # Log which system is being used
+        is_chart_mode = system_prompt == _get_chart_analysis_system_prompt()
+        logger.info(f"🔧 System mode selected: {'CHART ANALYSIS' if is_chart_mode else 'REGULAR CONVERSATION'}")
+
         # Make API request
         completion = await _make_llm_request(
             openai_client, config.llm_model, system_prompt, user_content, image_content
@@ -474,8 +478,11 @@ async def call_llm_api(query, message_context=None, force_charts=False):
         logger.info(
             f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}"  # noqa: E501
         )
-        if chart_data:
-            logger.info("Extracted %d chart(s) from LLM response", len(chart_data))
+        logger.info(f"📊 Chart extraction result: {len(chart_data)} chart(s) found")
+
+        # Log a preview of the LLM response for debugging
+        if len(chart_data) == 0 and ("chart" in query.lower() or "graph" in query.lower()):
+            logger.warning(f"⚠️ Chart requested but no charts extracted. LLM response preview: {message[:200]}{'...' if len(message) > 200 else ''}")
 
         return formatted_message, chart_data
 
@@ -891,6 +898,7 @@ You MUST create AT LEAST ONE properly formatted markdown table for EVERY request
 - When users provide data to visualize (in ANY format)
 - When users ask for charts or graphs
 - When users show you data and ask "create a graph"
+- **CRITICAL**: When users upload images and ask for charts/graphs - extract data from the image and create tables!
 
 EXAMPLE - User provides data:
 User: "| Month | Savings | | Jan | $250 | | Feb | $80 |"
@@ -903,6 +911,18 @@ You MUST respond with: "Here's your savings visualization:
 | March    | $420    |
 
 Your savings show a strong recovery in March after a dip in February."
+
+EXAMPLE - User uploads image with chart request:
+User: (uploads image with data) "create a pie chart from this image"
+You MUST respond with: "I've extracted the data from your image and created this visualization:
+
+| Category    | Value   | Percentage |
+| ----------- | ------- | ---------- |
+| Category A  | 45      | 45%        |
+| Category B  | 30      | 30%        |
+| Category C  | 25      | 25%        |
+
+The data shows Category A represents the largest portion at 45%."
 
 MARKDOWN TABLE FORMAT (STRICT):
 ```

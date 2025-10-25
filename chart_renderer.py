@@ -252,6 +252,9 @@ class ChartRenderer:
         tables = self.TABLE_PATTERN.findall(content)
 
         if not tables:
+            # Log when no tables are found, especially if chart was requested
+            if user_query and ("chart" in user_query.lower() or "graph" in user_query.lower()):
+                logger.warning(f"⚠️ No markdown tables found in response despite chart request. Response preview: {content[:200]}{'...' if len(content) > 200 else ''}")
             return content, []
 
         logger.info("Found %d markdown table(s) in response", len(tables))
