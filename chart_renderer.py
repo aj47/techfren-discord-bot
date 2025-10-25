@@ -243,38 +243,46 @@ class ChartRenderer:
 
             # Rule 2: Must have at least one column with quantifiable data
             has_quantifiable_data = False
-            logger.debug(f"Rows to check: {len(rows)}")
+            logger.info(f"Table validation Rule 2 - Checking {len(rows)} rows for quantifiable data")
+
             for row_idx, row in enumerate(rows):
-                logger.debug(f"Checking row {row_idx + 1}: {row}")
+                logger.info(f"Row {row_idx + 1}: {row}")
                 for i, cell in enumerate(row):
                     if cell and i < len(headers):
                         # Check if cell contains numbers, percentages, or quantifiable data
                         cell_clean = cell.replace('%', '').replace(',', '').replace('$', '').strip()
-                        logger.debug(f"  Cell {i}: '{cell}' -> clean: '{cell_clean}'")
+                        logger.info(f"  Cell {i}: '{cell}' -> clean: '{cell_clean}'")
 
                         # More robust numeric detection
                         if cell_clean and any(c.isdigit() for c in cell_clean):
                             # Remove all non-digit characters except decimal points
                             numeric_part = ''.join(c for c in cell_clean if c.isdigit() or c == '.')
+                            logger.info(f"  Numeric chars in '{cell_clean} -> '{numeric_part}'")
                             if numeric_part and numeric_part != '.':
                                 try:
                                     float(numeric_part)  # Try to parse as float
                                     has_quantifiable_data = True
-                                    logger.debug(f"  Found numeric data: {cell} -> {numeric_part}")
+                                    logger.info(f"  ✅ Found valid numeric data: {cell} -> {numeric_part}")
                                     break
-                                except ValueError:
+                                except ValueError as ve:
+                                    logger.info(f"  ❌ Failed to parse '{numeric_part}' as float: {ve}")
                                     pass
+                            else:
+                                logger.info(f"  ❌ Numeric part '{numeric_part}' is invalid (just dots)")
 
-                        # Fallback for obvious indicators
+                        # Fallback for obvious indicators - this should catch $251, $80, $420
                         elif '%' in cell or '$' in cell:
                             has_quantifiable_data = True
-                            logger.debug(f"  Found quantifiable indicator: {cell}")
+                            logger.info(f"  ✅ Found quantifiable indicator in: {cell}")
                             break
+                        else:
+                            logger.info(f"  No numeric data found in cell '{cell}'")
                 if has_quantifiable_data:
+                    logger.info(f"  ✅ Row {row_idx + 1} has quantifiable data, stopping search")
                     break
 
             if not has_quantifiable_data:
-                logger.warning(f"Table validation FAILED Rule 2: No quantifiable data found")
+                logger.error(f"Table validation FAILED Rule 2: No quantifiable data found in any of {len(rows)} rows")
                 return False
 
             logger.info(f"Table validation PASSED Rule 2: Found quantifiable data")
@@ -396,17 +404,21 @@ class ChartRenderer:
             # Log when no tables are found, especially if chart was requested
             if user_query and ("chart" in user_query.lower() or "graph" in user_query.lower()):
                 logger.warning(f"No markdown tables found in response despite chart request. Response preview: {content[:200]}{'...' if len(content) > 200 else ''}")
+                logger.info(f"Full response content for debugging:\n{content}")
             return content, []
+        else:
+            logger.info(f"Found {len(tables)} raw table(s) with pattern matching")
 
         # Filter tables to only include valid data tables
         valid_tables = []
         for i, table in enumerate(tables):
-            logger.debug(f"Validating table {i+1}: {table[:150]}...")
+            logger.info(f"Validating table {i+1}:")
+            logger.info(f"Table {i+1} content:\n{table}")
             if self._is_valid_data_table(table):
                 valid_tables.append(table)
-                logger.debug(f"Table {i+1} PASSED validation")
+                logger.info(f"✅ Table {i+1} PASSED validation")
             else:
-                logger.debug(f"Table {i+1} FAILED validation - filtered out")
+                logger.info(f"❌ Table {i+1} FAILED validation - filtered out")
 
         tables = valid_tables
 
