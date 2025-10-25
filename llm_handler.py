@@ -468,7 +468,7 @@ async def call_llm_api(query, message_context=None, force_charts=False):
 
         # Format response
         formatted_message, chart_data = DiscordFormatter.format_llm_response(
-            message, citations
+            message, citations, user_query=query
         )
 
         logger.info(
@@ -717,7 +717,7 @@ Keep it natural and engaging - this is for community members to understand what 
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
         # and extract any markdown tables for chart rendering
         formatted_summary, chart_data = DiscordFormatter.format_llm_response(
-            summary, citations
+            summary, citations, user_query=None
         )
 
         # Enhance specific sections in the summary

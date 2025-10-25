@@ -18,7 +18,7 @@ class DiscordFormatter:
 
     @staticmethod
     def format_llm_response(
-        content: str, citations: Optional[List[str]] = None
+        content: str, citations: Optional[List[str]] = None, user_query: str = ""
     ) -> Tuple[str, List[Dict]]:
         """
         Format an LLM response with enhanced Discord markdown and extract charts.
@@ -26,6 +26,7 @@ class DiscordFormatter:
         Args:
             content: The raw LLM response content
             citations: Optional list of citation URLs
+            user_query: The user's original query (for detecting explicit chart types)
 
         Returns:
             Tuple of (formatted_string, chart_data_list)
@@ -38,7 +39,7 @@ class DiscordFormatter:
         # Extract tables for chart rendering BEFORE converting to ASCII
         # This allows us to render nice chart images instead of messy ASCII tables
         try:
-            formatted, chart_data_list = extract_tables_for_rendering(formatted)
+            formatted, chart_data_list = extract_tables_for_rendering(formatted, user_query)
             if chart_data_list:
                 logger.info("Extracted %d chart(s) from response", len(chart_data_list))
         except Exception as e:

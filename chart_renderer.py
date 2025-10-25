@@ -204,12 +204,45 @@ class ChartRenderer:
             'font.monospace': ['KH Interference TRIAL', 'IBM Plex Mono', 'DejaVu Sans Mono', 'Courier New', 'monospace'],
         })
 
-    def extract_tables_for_rendering(self, content: str) -> Tuple[str, List[Dict]]:
+    def _detect_requested_chart_type(self, user_query: str) -> Optional[str]:
+        """
+        Detect if user explicitly requested a specific chart type in their query.
+
+        Returns chart type if found, None if user wants auto-detection.
+        """
+        if not user_query:
+            return None
+
+        query_lower = user_query.lower()
+
+        # Map keywords to chart types
+        chart_keywords = {
+            'scatter': ['scatter', 'scatter plot', 'scatterplot', 'correlation plot'],
+            'heatmap': ['heatmap', 'heat map', 'matrix'],
+            'box': ['box', 'box plot', 'boxplot', 'distribution'],
+            'histogram': ['histogram', 'frequency', 'hist'],
+            'area': ['area', 'area chart', 'filled'],
+            'pie': ['pie', 'pie chart'],
+            'line': ['line', 'line chart', 'trend'],
+            'bar': ['bar', 'bar chart', 'bar graph'],
+        }
+
+        # Check for explicit requests
+        for chart_type, keywords in chart_keywords.items():
+            for keyword in keywords:
+                if keyword in query_lower:
+                    logger.info("User explicitly requested '%s' chart type", chart_type)
+                    return chart_type
+
+        return None
+
+    def extract_tables_for_rendering(self, content: str, user_query: str = "") -> Tuple[str, List[Dict]]:
         """
         Extract markdown tables from content and prepare them for rendering.
 
         Args:
             content: The LLM response text containing potential markdown tables
+            user_query: The user's original query (to detect explicit chart type requests)
 
         Returns:
             Tuple of (cleaned_content, chart_data_list)
@@ -223,6 +256,11 @@ class ChartRenderer:
 
         logger.info("Found %d markdown table(s) in response", len(tables))
 
+        # Check if user explicitly requested a chart type
+        requested_type = self._detect_requested_chart_type(user_query)
+        if requested_type:
+            logger.info("Using user-requested chart type: %s", requested_type)
+
         chart_data_list = []
         cleaned_content = content
 
@@ -234,7 +272,8 @@ class ChartRenderer:
                     logger.warning("Failed to parse table %s, skipping", idx + 1)
                     continue
 
-                chart_type = self._infer_chart_type(table_data)
+                # Use requested type if specified, otherwise auto-detect
+                chart_type = requested_type or self._infer_chart_type(table_data)
 
                 chart_file = self._generate_chart_file(table_data, chart_type)
 
@@ -292,24 +331,49 @@ class ChartRenderer:
             return None
 
     def _infer_chart_type(self, table_data: Dict) -> str:
-        """Analyze table data to determine the best chart type."""
+        """
+        Analyze table data to determine the best chart type.
+
+        Supports: bar, pie, line, scatter, heatmap, box, histogram, area
+        """
         headers = table_data["headers"]
         rows = table_data["rows"]
 
+        # Check for heatmap: matrix of numeric data (3+ cols, 3+ rows, mostly numeric)
+        if len(headers) >= 3 and len(rows) >= 3:
+            if self._check_heatmap_suitability(headers, rows):
+                return "heatmap"
+
+        # Check for scatter: 2 numeric columns with correlation pattern
         if len(headers) == 2:
             patterns = self._analyze_data_patterns(rows)
+
+            if patterns["both_numeric"] and len(rows) >= 5:
+                return "scatter"
 
             if patterns["numeric_count"] / patterns["total_rows"] > 0.3:
                 if self._check_pie_chart_suitability(rows, patterns["has_percentages"]):
                     return "pie"
                 if patterns["has_time_data"] and len(rows) >= 3:
                     return "line"
+                # Check for histogram: single value column with frequency data
+                if self._check_histogram_suitability(rows):
+                    return "histogram"
                 return "bar"
 
+        # Check for box plot: categorical + numeric data with distribution
+        if len(headers) == 2 and len(rows) >= 5:
+            if self._check_box_plot_suitability(headers, rows):
+                return "box"
+
+        # Multi-column data analysis
         if len(headers) >= 3:
             multi_data = self._analyze_multicolumn_data(headers, rows)
 
             if multi_data["first_col_time"] and len(multi_data["numeric_cols"]) >= 2:
+                # Could be area chart if showing cumulative/filled data
+                if self._check_area_chart_suitability(headers, rows):
+                    return "area"
                 return "line"
             elif len(multi_data["numeric_cols"]) >= 2:
                 return "line"
@@ -332,6 +396,34 @@ class ChartRenderer:
         total_rows = len(rows)
         has_percentages = False
         has_time_data = False
+        both_numeric = False
+
+        # Check if both columns are numeric (for scatter plots)
+        if len(rows) > 0 and len(rows[0]) >= 2:
+            col1_numeric_count = 0
+            col2_numeric_count = 0
+
+            for row in rows:
+                if len(row) >= 2:
+                    # Check column 1
+                    try:
+                        clean_val1 = row[0].strip().replace(",", "").replace("$", "")
+                        float(clean_val1)
+                        col1_numeric_count += 1
+                    except ValueError:
+                        pass
+
+                    # Check column 2
+                    try:
+                        clean_val2 = row[1].strip().replace("%", "").replace(",", "").replace("$", "")
+                        float(clean_val2)
+                        col2_numeric_count += 1
+                    except ValueError:
+                        pass
+
+            # Both columns mostly numeric
+            if col1_numeric_count >= total_rows * 0.8 and col2_numeric_count >= total_rows * 0.8:
+                both_numeric = True
 
         for row in rows:
             if len(row) >= 2:
@@ -358,6 +450,7 @@ class ChartRenderer:
             "total_rows": total_rows,
             "has_percentages": has_percentages,
             "has_time_data": has_time_data,
+            "both_numeric": both_numeric,
         }
 
     def _check_pie_chart_suitability(
@@ -375,6 +468,89 @@ class ChartRenderer:
             return 95 <= total <= 105
         except (ValueError, TypeError, ZeroDivisionError):
             return False
+
+    def _check_heatmap_suitability(self, headers: List[str], rows: List[List[str]]) -> bool:
+        """Check if data is suitable for heatmap (matrix of numeric data)."""
+        if len(headers) < 3 or len(rows) < 3:
+            return False
+
+        # Count numeric cells
+        numeric_cells = 0
+        total_cells = 0
+
+        for row in rows:
+            for cell_idx in range(1, min(len(row), len(headers))):  # Skip first column (labels)
+                total_cells += 1
+                try:
+                    clean_val = str(row[cell_idx]).replace(",", "").replace("$", "").strip()
+                    float(clean_val)
+                    numeric_cells += 1
+                except (ValueError, AttributeError):
+                    pass
+
+        # At least 70% of cells should be numeric
+        return numeric_cells / max(total_cells, 1) >= 0.7
+
+    def _check_box_plot_suitability(self, headers: List[str], rows: List[List[str]]) -> bool:
+        """Check if data is suitable for box plot (categorical with numeric distribution)."""
+        if len(headers) != 2 or len(rows) < 5:
+            return False
+
+        # First column should have repeated categories
+        categories = {}
+        for row in rows:
+            if len(row) >= 2:
+                category = str(row[0]).strip()
+                categories[category] = categories.get(category, 0) + 1
+
+        # Need multiple values per category for distribution
+        has_distribution = any(count >= 3 for count in categories.values())
+
+        # Second column should be numeric
+        numeric_count = 0
+        for row in rows:
+            if len(row) >= 2:
+                try:
+                    clean_val = str(row[1]).replace(",", "").replace("$", "").strip()
+                    float(clean_val)
+                    numeric_count += 1
+                except (ValueError, AttributeError):
+                    pass
+
+        return has_distribution and numeric_count / len(rows) >= 0.8
+
+    def _check_histogram_suitability(self, rows: List[List[str]]) -> bool:
+        """Check if data is suitable for histogram (frequency distribution)."""
+        # Look for patterns like "Value | Frequency" or "Range | Count"
+        if len(rows) < 3:
+            return False
+
+        # Second column should be all numeric (counts/frequencies)
+        numeric_count = 0
+        for row in rows:
+            if len(row) >= 2:
+                try:
+                    clean_val = str(row[1]).replace(",", "").strip()
+                    float(clean_val)
+                    numeric_count += 1
+                except (ValueError, AttributeError):
+                    pass
+
+        # First column might have ranges like "0-10", "10-20"
+        has_ranges = any("-" in str(row[0]) for row in rows if len(row) > 0)
+
+        return numeric_count / len(rows) >= 0.9 and (has_ranges or len(rows) >= 5)
+
+    def _check_area_chart_suitability(self, headers: List[str], rows: List[List[str]]) -> bool:
+        """Check if data is suitable for area chart (cumulative/stacked data)."""
+        # Look for keywords suggesting cumulative or stacked data
+        cumulative_keywords = ["cumulative", "total", "sum", "aggregate", "running"]
+
+        for header in headers:
+            if any(keyword in header.lower() for keyword in cumulative_keywords):
+                return True
+
+        return False
 
     def _analyze_multicolumn_data(
         self, headers: List[str], rows: List[List[str]]
@@ -450,7 +626,19 @@ class ChartRenderer:
     def _generate_chart_file(
         self, table_data: Dict, chart_type: str
     ) -> Optional[io.BytesIO]:
-        """Generate a chart image file for the given table data and chart type."""
+        """
+        Generate a chart image file for the given table data and chart type.
+
+        Supported chart types:
+        - bar: Bar chart
+        - pie: Pie chart
+        - line: Line chart
+        - scatter: Scatter plot
+        - heatmap: Heatmap matrix
+        - box: Box plot
+        - histogram: Histogram
+        - area: Area chart
+        """
         try:
             if chart_type == "bar":
                 return self._generate_bar_chart(table_data)
@@ -458,6 +646,16 @@ class ChartRenderer:
                 return self._generate_pie_chart(table_data)
             elif chart_type == "line":
                 return self._generate_line_chart(table_data)
+            elif chart_type == "scatter":
+                return self._generate_scatter_plot(table_data)
+            elif chart_type == "heatmap":
+                return self._generate_heatmap(table_data)
+            elif chart_type == "box":
+                return self._generate_box_plot(table_data)
+            elif chart_type == "histogram":
+                return self._generate_histogram(table_data)
+            elif chart_type == "area":
+                return self._generate_area_chart(table_data)
             else:
                 logger.warning("Unknown chart type: %s", chart_type)
                 return None
@@ -736,6 +934,292 @@ class ChartRenderer:
             legend.get_frame().set_linewidth(1.5)
 
         plt.xticks(rotation=45, ha='right', color=self.COLORS['foreground'], fontsize=20)
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
+        buf.seek(0)
+        plt.close(fig)
+
+        return buf
+
+    def _generate_scatter_plot(self, table_data: Dict) -> Optional[io.BytesIO]:
+        """Generate a scatter plot for two numeric variables."""
+        headers = table_data["headers"]
+        rows = table_data["rows"]
+
+        # Extract X and Y values
+        x_values = []
+        y_values = []
+
+        for row in rows:
+            if len(row) >= 2:
+                try:
+                    x_val = float(str(row[0]).replace(",", "").replace("$", "").strip())
+                    y_val = float(str(row[1]).replace(",", "").replace("$", "").strip())
+                    x_values.append(x_val)
+                    y_values.append(y_val)
+                except (ValueError, AttributeError):
+                    continue
+
+        if not x_values or not y_values:
+            return None
+
+        df = pd.DataFrame({headers[0]: x_values, headers[1]: y_values})
+
+        title = f"{headers[0]} vs {headers[1]} Correlation"
+
+        fig, ax = plt.subplots(figsize=(14, 10))
+
+        # Create scatter plot
+        ax.scatter(df[headers[0]], df[headers[1]],
+                  color=self.COLORS['primary'],
+                  s=200,  # Point size
+                  alpha=0.7,
+                  edgecolors=self.COLORS['foreground'],
+                  linewidths=2)
+
+        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        ax.set_xlabel(headers[0], fontsize=24, color=self.COLORS['foreground'])
+        ax.set_ylabel(headers[1], fontsize=24, color=self.COLORS['foreground'])
+
+        ax.set_facecolor(self.COLORS['background'])
+        fig.patch.set_facecolor(self.COLORS['background'])
+
+        ax.tick_params(colors=self.COLORS['foreground'], labelsize=20)
+        ax.spines['bottom'].set_color(self.COLORS['foreground'])
+        ax.spines['left'].set_color(self.COLORS['foreground'])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
+        buf.seek(0)
+        plt.close(fig)
+
+        return buf
+
+    def _generate_heatmap(self, table_data: Dict) -> Optional[io.BytesIO]:
+        """Generate a heatmap for matrix data."""
+        headers = table_data["headers"]
+        rows = table_data["rows"]
+
+        # Build numeric matrix
+        row_labels = [row[0] for row in rows]
+        data_matrix = []
+
+        for row in rows:
+            row_values = []
+            for col_idx in range(1, len(headers)):
+                if len(row) > col_idx:
+                    try:
+                        val = float(str(row[col_idx]).replace(",", "").replace("$", "").strip())
+                        row_values.append(val)
+                    except (ValueError, AttributeError):
+                        row_values.append(0)
+                else:
+                    row_values.append(0)
+            data_matrix.append(row_values)
+
+        df = pd.DataFrame(data_matrix, columns=headers[1:], index=row_labels)
+
+        title = f"{headers[0]} Heatmap Analysis"
+
+        fig, ax = plt.subplots(figsize=(14, 10))
+
+        # Create heatmap with custom colors
+        sns.heatmap(df,
+                   annot=True,
+                   fmt='.1f',
+                   cmap='YlOrRd',
+                   cbar_kws={'label': 'Value'},
+                   linewidths=1,
+                   linecolor=self.COLORS['background'],
+                   ax=ax,
+                   annot_kws={'size': 16, 'color': self.COLORS['background']})
+
+        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        ax.set_xlabel('', fontsize=20)
+        ax.set_ylabel('', fontsize=20)
+
+        fig.patch.set_facecolor(self.COLORS['background'])
+        ax.set_facecolor(self.COLORS['background'])
+
+        plt.xticks(color=self.COLORS['foreground'], fontsize=18, rotation=45, ha='right')
+        plt.yticks(color=self.COLORS['foreground'], fontsize=18, rotation=0)
+
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
+        buf.seek(0)
+        plt.close(fig)
+
+        return buf
+
+    def _generate_box_plot(self, table_data: Dict) -> Optional[io.BytesIO]:
+        """Generate a box plot for categorical distributions."""
+        headers = table_data["headers"]
+        rows = table_data["rows"]
+
+        # Organize data by category
+        categories = []
+        values = []
+
+        for row in rows:
+            if len(row) >= 2:
+                try:
+                    category = str(row[0]).strip()
+                    value = float(str(row[1]).replace(",", "").replace("$", "").strip())
+                    categories.append(category)
+                    values.append(value)
+                except (ValueError, AttributeError):
+                    continue
+
+        if not categories or not values:
+            return None
+
+        df = pd.DataFrame({headers[0]: categories, headers[1]: values})
+
+        title = f"{headers[1]} Distribution by {headers[0]}"
+
+        fig, ax = plt.subplots(figsize=(14, 10))
+
+        # Create box plot
+        sns.boxplot(data=df, x=headers[0], y=headers[1],
+                   color=self.COLORS['primary'],
+                   ax=ax,
+                   linewidth=2)
+
+        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        ax.set_xlabel(headers[0], fontsize=24, color=self.COLORS['foreground'])
+        ax.set_ylabel(headers[1], fontsize=24, color=self.COLORS['foreground'])
+
+        ax.set_facecolor(self.COLORS['background'])
+        fig.patch.set_facecolor(self.COLORS['background'])
+
+        ax.tick_params(colors=self.COLORS['foreground'], labelsize=20)
+        plt.xticks(rotation=45, ha='right')
+
+        ax.spines['bottom'].set_color(self.COLORS['foreground'])
+        ax.spines['left'].set_color(self.COLORS['foreground'])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
+        buf.seek(0)
+        plt.close(fig)
+
+        return buf
+
+    def _generate_histogram(self, table_data: Dict) -> Optional[io.BytesIO]:
+        """Generate a histogram for frequency distribution."""
+        headers = table_data["headers"]
+        rows = table_data["rows"]
+
+        labels = [str(row[0]).strip() for row in rows]
+        raw_values = [row[1] if len(row) > 1 else "0" for row in rows]
+        values, _ = ChartDataValidator.validate_numeric_data(raw_values)
+
+        title = f"{headers[1]} Frequency Distribution"
+
+        fig, ax = plt.subplots(figsize=(14, 10))
+
+        # Create histogram-style bar chart
+        ax.bar(labels, values,
+              color=self.COLORS['primary'],
+              edgecolor=self.COLORS['foreground'],
+              linewidth=2)
+
+        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        ax.set_xlabel(headers[0], fontsize=24, color=self.COLORS['foreground'])
+        ax.set_ylabel(headers[1], fontsize=24, color=self.COLORS['foreground'])
+
+        ax.set_facecolor(self.COLORS['background'])
+        fig.patch.set_facecolor(self.COLORS['background'])
+
+        ax.tick_params(colors=self.COLORS['foreground'], labelsize=20)
+        plt.xticks(rotation=45, ha='right')
+
+        ax.spines['bottom'].set_color(self.COLORS['foreground'])
+        ax.spines['left'].set_color(self.COLORS['foreground'])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=self.COLORS['background'])
+        buf.seek(0)
+        plt.close(fig)
+
+        return buf
+
+    def _generate_area_chart(self, table_data: Dict) -> Optional[io.BytesIO]:
+        """Generate an area chart (filled line chart)."""
+        headers = table_data["headers"]
+        rows = table_data["rows"]
+
+        labels = [row[0] for row in rows]
+
+        data_dict = {headers[0]: labels}
+        for col_idx in range(1, len(headers)):
+            raw_values = [row[col_idx] if len(row) > col_idx else "0" for row in rows]
+            values, _ = ChartDataValidator.validate_numeric_data(raw_values)
+            data_dict[headers[col_idx]] = values
+
+        df = pd.DataFrame(data_dict)
+
+        title = self._generate_chart_title(headers, "area")
+
+        fig, ax = plt.subplots(figsize=(14, 10))
+
+        # Create filled area chart
+        x_positions = range(len(labels))
+
+        # Plot each series
+        for col_idx in range(1, len(headers)):
+            ax.fill_between(x_positions, df[headers[col_idx]],
+                           alpha=0.5,
+                           label=headers[col_idx],
+                           linewidth=3)
+            ax.plot(x_positions, df[headers[col_idx]],
+                   linewidth=3,
+                   marker='o',
+                   markersize=10)
+
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(labels)
+
+        ax.set_title(title, fontsize=18, fontweight='bold', color=self.COLORS['foreground'], pad=20)
+        ax.set_xlabel(headers[0], fontsize=24, color=self.COLORS['foreground'])
+        ax.set_ylabel('Value', fontsize=24, color=self.COLORS['foreground'])
+
+        ax.set_facecolor(self.COLORS['background'])
+        fig.patch.set_facecolor(self.COLORS['background'])
+
+        ax.tick_params(colors=self.COLORS['foreground'], labelsize=20)
+        ax.spines['bottom'].set_color(self.COLORS['foreground'])
+        ax.spines['left'].set_color(self.COLORS['foreground'])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
+        # Add legend if multiple series
+        if len(headers) > 2:
+            legend = ax.legend(
+                facecolor=self.COLORS['background'],
+                edgecolor=self.COLORS['foreground'],
+                labelcolor=self.COLORS['foreground'],
+                fontsize=22
+            )
+            legend.get_frame().set_linewidth(1.5)
+
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
 
         buf = io.BytesIO()
