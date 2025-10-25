@@ -231,41 +231,62 @@ class ChartRenderer:
             generic_headers = {'item', 'value', 'data', 'thing', 'stuff', 'info', 'detail', 'name', 'description'}
             header_lower = [h.lower().strip() for h in headers if h and h.strip()]
 
+            logger.debug(f"Headers found: {headers}")
+            logger.debug(f"Header lower case: {header_lower}")
+
             # If all headers are too generic, it's probably not a data table
             if all(h in generic_headers or len(h) < 3 for h in header_lower):
+                logger.debug(f"FAILED Rule 1: Headers too generic")
                 return False
+
+            logger.debug(f"PASSED Rule 1: Headers are meaningful")
 
             # Rule 2: Must have at least one column with quantifiable data
             has_quantifiable_data = False
-            for row in rows:
+            logger.debug(f"Rows to check: {len(rows)}")
+            for row_idx, row in enumerate(rows):
+                logger.debug(f"Checking row {row_idx + 1}: {row}")
                 for i, cell in enumerate(row):
                     if cell and i < len(headers):
                         # Check if cell contains numbers, percentages, or quantifiable data
                         cell_clean = cell.replace('%', '').replace(',', '').replace('$', '').strip()
+                        logger.debug(f"  Cell {i}: '{cell}' -> clean: '{cell_clean}'")
                         if cell_clean.replace('.', '').isdigit():
                             has_quantifiable_data = True
+                            logger.debug(f"  Found numeric data: {cell_clean}")
                             break
                         elif '%' in cell or '$' in cell or any(c.isdigit() for c in cell):
                             has_quantifiable_data = True
+                            logger.debug(f"  Found quantifiable data: {cell}")
                             break
                 if has_quantifiable_data:
                     break
 
             if not has_quantifiable_data:
+                logger.debug(f"FAILED Rule 2: No quantifiable data found")
                 return False
+
+            logger.debug(f"PASSED Rule 2: Found quantifiable data")
 
             # Rule 3: Must have consistent column counts
             expected_cols = len(headers)
-            for row in rows:
+            logger.debug(f"Expected columns: {expected_cols}")
+            for row_idx, row in enumerate(rows):
                 if len(row) != expected_cols:
+                    logger.debug(f"FAILED Rule 3: Row {row_idx + 1} has {len(row)} columns, expected {expected_cols}")
                     return False
+
+            logger.debug(f"PASSED Rule 3: Consistent column counts")
 
             # Rule 4: Not all cells should be identical (avoid repetitive non-data tables)
             if len(rows) > 1:
                 first_row_values = [cell.strip() for cell in rows[0] if cell]
                 if all(len(set([row[i].strip() for row in rows if len(row) > i])) <= 1 for i in range(len(first_row_values))):
+                    logger.debug(f"FAILED Rule 4: All values identical in columns")
                     return False
 
+            logger.debug(f"PASSED Rule 4: Values are not all identical")
+            logger.debug(f"Table validation PASSED all rules")
             return True
 
         except Exception as e:
@@ -327,11 +348,13 @@ class ChartRenderer:
 
         # Filter tables to only include valid data tables
         valid_tables = []
-        for table in tables:
+        for i, table in enumerate(tables):
+            logger.debug(f"Validating table {i+1}: {table[:150]}...")
             if self._is_valid_data_table(table):
                 valid_tables.append(table)
+                logger.debug(f"Table {i+1} PASSED validation")
             else:
-                logger.debug("Filtered out non-data table: %s", table[:100])
+                logger.debug(f"Table {i+1} FAILED validation - filtered out")
 
         tables = valid_tables
 
