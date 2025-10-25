@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS messages (
     command_type TEXT,
     scraped_url TEXT,
     scraped_content_summary TEXT,
-    scraped_content_key_points TEXT
+    scraped_content_key_points TEXT,
+    attachment_urls TEXT,
+    attachment_types TEXT,
+    image_analysis TEXT
 );
 """
 
@@ -68,8 +71,9 @@ INSERT_MESSAGE = """
 INSERT INTO messages (
     id, author_id, author_name, channel_id, channel_name,
     guild_id, guild_name, content, created_at, is_bot, is_command, command_type,
-    scraped_url, scraped_content_summary, scraped_content_key_points
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    scraped_url, scraped_content_summary, scraped_content_key_points,
+    attachment_urls, attachment_types, image_analysis
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 INSERT_CHANNEL_SUMMARY = """
@@ -234,7 +238,10 @@ def store_message(
     command_type: Optional[str] = None,
     scraped_url: Optional[str] = None,
     scraped_content_summary: Optional[str] = None,
-    scraped_content_key_points: Optional[str] = None
+    scraped_content_key_points: Optional[str] = None,
+    attachment_urls: Optional[str] = None,
+    attachment_types: Optional[str] = None,
+    image_analysis: Optional[str] = None
 ) -> bool:
     """
     Store a message in the database.
@@ -255,6 +262,9 @@ def store_message(
         scraped_url (Optional[str]): The URL that was scraped from the message (if any)
         scraped_content_summary (Optional[str]): Summary of the scraped content (if any)
         scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)
+        attachment_urls (Optional[str]): JSON string of attachment URLs (if any)
+        attachment_types (Optional[str]): JSON string of attachment types (if any)
+        image_analysis (Optional[str]): Analysis result of image attachments (if any)
 
     Returns:
         bool: True if the message was stored successfully, False otherwise
@@ -284,7 +294,10 @@ def store_message(
                     command_type,
                     scraped_url,
                     scraped_content_summary,
-                    scraped_content_key_points
+                    scraped_content_key_points,
+                    attachment_urls,
+                    attachment_types,
+                    image_analysis
                 )
             )
 
@@ -341,7 +354,10 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
                             msg.get('command_type'),
                             msg.get('scraped_url'),
                             msg.get('scraped_content_summary'),
-                            msg.get('scraped_content_key_points')
+                            msg.get('scraped_content_key_points'),
+                            msg.get('attachment_urls'),
+                            msg.get('attachment_types'),
+                            msg.get('image_analysis')
                         )
                     )
                 
@@ -416,6 +432,93 @@ async def update_message_with_scraped_data(
     except Exception as e:
         logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
         return False
+
+async def update_message_with_image_analysis(
+    message_id: str,
+    image_analysis: str
+) -> bool:
+    """
+    Update an existing message with image analysis data.
+
+    Args:
+        message_id (str): The Discord message ID to update
+        image_analysis (str): JSON string of image analysis results
+
+    Returns:
+        bool: True if the message was updated successfully, False otherwise
+    """
+    try:
+        # Define a synchronous function to run in a thread pool
+        def _update_message_sync():
+            with get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Update the message with image analysis
+                cursor.execute(
+                    """
+                    UPDATE messages
+                    SET image_analysis = ?
+                    WHERE id = ?
+                    """,
+                    (image_analysis, message_id)
+                )
+
+                # Check if any rows were affected
+                rows_affected = cursor.rowcount > 0
+                conn.commit()
+                return rows_affected
+
+        # Run the synchronous function in a thread pool to avoid blocking the event loop
+        success = await asyncio.to_thread(_update_message_sync)
+
+        if not success:
+            logger.warning(f"No message found with ID {message_id} to update with image analysis")
+            return False
+
+        logger.info(f"Message {message_id} updated with image analysis")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating message {message_id} with image analysis: {str(e)}", exc_info=True)
+        return False
+
+async def get_message_by_id(message_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a message by its Discord ID.
+
+    Args:
+        message_id (str): The Discord message ID
+
+    Returns:
+        Optional[Dict[str, Any]]: Message data as a dictionary or None if not found
+    """
+    try:
+        # Define a synchronous function to run in a thread pool
+        def _get_message_sync():
+            with get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT * FROM messages WHERE id = ?", (message_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    # Convert to dictionary
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+
+        # Run the synchronous function in a thread pool to avoid blocking the event loop
+        result = await asyncio.to_thread(_get_message_sync)
+
+        if result:
+            logger.debug(f"Retrieved message {message_id} from database")
+        else:
+            logger.debug(f"Message {message_id} not found in database")
+
+        return result
+    except Exception as e:
+        logger.error(f"Error retrieving message {message_id}: {str(e)}", exc_info=True)
+        return None
 
 def get_message_count() -> int:
     """

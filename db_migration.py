@@ -45,6 +45,12 @@ def migrate_database():
                 columns_to_add.append(("scraped_content_summary", "TEXT"))
             if 'scraped_content_key_points' not in columns:
                 columns_to_add.append(("scraped_content_key_points", "TEXT"))
+            if 'attachment_urls' not in columns:
+                columns_to_add.append(("attachment_urls", "TEXT"))
+            if 'attachment_types' not in columns:
+                columns_to_add.append(("attachment_types", "TEXT"))
+            if 'image_analysis' not in columns:
+                columns_to_add.append(("image_analysis", "TEXT"))
             
             # Execute ALTER TABLE statements
             for column_name, column_type in columns_to_add:

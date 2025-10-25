@@ -48,12 +48,16 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
             processing_msg = await thread_sender.send("Processing your request, please wait...")
 
             try:
-                # Get message context (referenced messages and linked messages)
+                # Get message context (original message, referenced messages, linked messages)
                 message_context = None
-                if bot_client and (message.reference or 'discord.com/channels/' in message.content):
+                if bot_client:
                     try:
                         message_context = await get_message_context(message, bot_client)
-                        logger.debug(f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+                        logger.debug(
+                            "Retrieved message context: referenced=%s, linked_count=%d",
+                            message_context['referenced_message'] is not None,
+                            len(message_context['linked_messages'])
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to get message context: {e}")
 
@@ -133,12 +137,16 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
     """Fallback handler for bot commands when thread creation fails."""
     processing_msg = await message.channel.send("Processing your request, please wait...")
     try:
-        # Get message context (referenced messages and linked messages)
+        # Get message context (original message, referenced messages, linked messages)
         message_context = None
-        if bot_client and (message.reference or 'discord.com/channels/' in message.content):
+        if bot_client:
             try:
                 message_context = await get_message_context(message, bot_client)
-                logger.debug(f"Retrieved message context in fallback: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+                logger.debug(
+                    "Retrieved message context in fallback: referenced=%s, linked_count=%d",
+                    message_context['referenced_message'] is not None,
+                    len(message_context['linked_messages'])
+                )
             except Exception as e:
                 logger.warning(f"Failed to get message context in fallback: {e}")
 
