@@ -1,1 +1,16 @@
-discord
+discord.py
+openai
+tabulate
+pynacl
+firecrawl
+apify-client
+pytest-asyncio
+python-dotenv
+youtube-transcript-api
+seaborn
+matplotlib
+pandas
+aiohttp
+aiosqlite
+
+# Python 3.9+ required for asyncio.to_thread functionality

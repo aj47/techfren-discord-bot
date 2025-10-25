@@ -1,0 +1,380 @@
+"""
+Apify handler module for the Discord bot.
+Handles scraping Twitter/X.com content using the Apify API.
+"""
+
+import asyncio
+from apify_client import ApifyClient
+import logging
+from typing import Optional, Dict, List, Any
+import re
+
+# Import config for API token
+import config
+
+# Set up logging
+logger = logging.getLogger("discord_bot.apify_handler")
+
+
+async def fetch_tweet(url: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch a tweet using Apify's Twitter Scraper.
+
+    Args:
+        url (str): The Twitter/X.com URL to scrape
+
+    Returns:
+        Optional[Dict[str, Any]]: The tweet data or None if scraping failed
+    """
+    try:
+        logger.info("Fetching tweet from URL: %s", url)
+
+        # Check if Apify API token exists
+        if not hasattr(config, "apify_api_token") or not config.apify_api_token:
+            logger.error("Apify API token not found in config.py or is empty")
+            return None
+
+        # Initialize the Apify client
+        client = ApifyClient(token=config.apify_api_token)
+
+        # Extract tweet ID from URL
+        tweet_id = extract_tweet_id(url)
+        if not tweet_id:
+            logger.error("Could not extract tweet ID from URL: %s", url)
+            return None
+
+        # Ensure URL is properly formatted
+        if not url.startswith("http"):
+            formatted_url = f"https://{url}"
+        else:
+            formatted_url = url
+
+        logger.info("Using formatted URL: %s", formatted_url)
+
+        # Prepare the input for the Twitter Scraper actor
+        input_data = {
+            "startUrls": [{"url": formatted_url}],
+            "tweetsDesired": 1,
+            "addUserInfo": True,
+            "proxyConfig": {"useApifyProxy": True},
+        }
+
+        # Use a separate thread for the blocking API call
+        loop = asyncio.get_event_loop()
+        run = await loop.run_in_executor(
+            None, lambda: client.actor("u6ppkMWAx2E2MpEuF").call(run_input=input_data)
+        )
+
+        # Get the dataset items
+        dataset_items = await loop.run_in_executor(
+            None, lambda: client.dataset(run["defaultDatasetId"]).list_items().items
+        )
+
+        if not dataset_items:
+            logger.warning("No tweet data found for URL: %s", url)
+            return None
+
+        # Get the first (and should be only) item
+        tweet_data = dataset_items[0]
+
+        # Log success
+        logger.info("Successfully fetched tweet from URL: %s", url)
+
+        return tweet_data
+
+    except Exception as e:
+        logger.error("Error fetching tweet from URL %s: %s", url, str(e), exc_info=True)
+        return None
+
+
+async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetch replies to a tweet using Apify's Twitter Replies Scraper.
+
+    Args:
+        url (str): The Twitter/X.com URL to scrape replies from
+
+    Returns:
+        Optional[List[Dict[str, Any]]]: List of reply data or None if scraping failed
+    """
+    try:
+        logger.info("Fetching tweet replies from URL: %s", url)
+
+        # Check if Apify API token exists
+        if not hasattr(config, "apify_api_token") or not config.apify_api_token:
+            logger.error("Apify API token not found in config.py or is empty")
+            return None
+
+        # Initialize the Apify client
+        client = ApifyClient(token=config.apify_api_token)
+
+        # Ensure URL is properly formatted
+        if not url.startswith("http"):
+            formatted_url = f"https://{url}"
+        else:
+            formatted_url = url
+
+        logger.info("Using formatted URL for replies: %s", formatted_url)
+
+        # Prepare the input for the Twitter Replies Scraper actor
+        input_data = {"postUrls": [formatted_url], "resultsLimit": 30}
+
+        # Use a separate thread for the blocking API call
+        loop = asyncio.get_event_loop()
+        run = await loop.run_in_executor(
+            None, lambda: client.actor("qhybbvlFivx7AP0Oh").call(run_input=input_data)
+        )
+
+        # Get the dataset items
+        dataset_items = await loop.run_in_executor(
+            None, lambda: client.dataset(run["defaultDatasetId"]).list_items().items
+        )
+
+        if not dataset_items:
+            logger.warning("No reply data found for URL: %s", url)
+            return []
+
+        # Log success
+        logger.info(
+            f"Successfully fetched {len(dataset_items)} replies from URL: {url}"
+        )
+
+        return dataset_items
+
+    except Exception as e:
+        logger.error(
+            f"Error fetching tweet replies from URL {url}: {str(e)}", exc_info=True
+        )
+        return None
+
+
+def extract_tweet_id(url: str) -> Optional[str]:
+    """
+    Extract the tweet ID from a Twitter/X.com URL.
+
+    Args:
+        url (str): The Twitter/X.com URL
+
+    Returns:
+        Optional[str]: The tweet ID or None if extraction failed
+    """
+    try:
+        # Pattern to match tweet IDs in Twitter/X.com URLs
+        pattern = r"(?:twitter\.com|x\.com)/\w+/status/(\d+)"
+        match = re.search(pattern, url)
+
+        if match:
+            return match.group(1)
+
+        # Log the URL and pattern when no match is found
+        logger.debug("No tweet ID found in URL: %s using pattern: %s", url, pattern)
+
+        return None
+    except Exception as e:
+        logger.error(
+            f"Error extracting tweet ID from URL {url}: {str(e)}", exc_info=True
+        )
+        return None
+
+
+def _get_video_url_from_variants(
+    variants: List[Dict[str, Any]], url_key: str, content_type_key: str
+) -> Optional[str]:
+    """Extracts the best video URL from a list of variants."""
+    if not variants:
+        return None
+
+    # Prefer MP4 format
+    mp4_variants = [v for v in variants if v.get(content_type_key) == "video/mp4"]
+
+    if mp4_variants:
+        # Sort by bitrate if available, otherwise just take the first one
+        if "bitrate" in mp4_variants[0]:
+            from sorting_utils import quick_sort
+            mp4_variants = quick_sort(mp4_variants, key="bitrate", reverse=True)
+        return mp4_variants[0].get(url_key)
+
+    # If no MP4 variants, return the first variant's source
+    return variants[0].get(url_key)
+
+
+def _extract_from_video_field(tweet_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts video URL from the 'video' field of tweet data."""
+    if (
+        "video" in tweet_data
+        and tweet_data["video"]
+        and "variants" in tweet_data["video"]
+    ):
+        return _get_video_url_from_variants(
+            tweet_data["video"]["variants"], "src", "type"
+        )
+    return None
+
+
+def _extract_from_media_details(tweet_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts video URL from the 'mediaDetails' field of tweet data."""
+    if "mediaDetails" in tweet_data:
+        for media in tweet_data["mediaDetails"]:
+            if (
+                media.get("type") == "video"
+                and "video_info" in media
+                and "variants" in media["video_info"]
+            ):
+                video_url = _get_video_url_from_variants(
+                    media["video_info"]["variants"], "url", "content_type"
+                )
+                if video_url:
+                    return video_url
+    return None
+
+
+def extract_video_url(tweet_data: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract the video URL from tweet data if it exists.
+
+    Args:
+        tweet_data (Dict[str, Any]): The tweet data
+
+    Returns:
+        Optional[str]: The video URL or None if no video exists
+    """
+    try:
+        # Check primary 'video' field first
+        video_url = _extract_from_video_field(tweet_data)
+        if video_url:
+            return video_url
+
+        # Check 'mediaDetails' as an alternative
+        video_url = _extract_from_media_details(tweet_data)
+        if video_url:
+            return video_url
+
+        return None
+    except Exception as e:
+        logger.error(
+            f"Error extracting video URL from tweet data: {str(e)}", exc_info=True
+        )
+        return None
+
+
+async def scrape_twitter_content(url: str) -> Optional[Dict[str, Any]]:
+    """
+    Scrape content from a Twitter/X.com URL using Apify API.
+    This function orchestrates the fetching of the original tweet and its replies.
+
+    Args:
+        url (str): The Twitter/X.com URL to scrape
+
+    Returns:
+        Optional[Dict[str, Any]]: A dictionary containing the scraped
+            content or None if scraping failed
+    """
+    try:
+        logger.info("Scraping Twitter/X.com URL: %s", url)
+
+        # Fetch the original tweet
+        tweet_data = await fetch_tweet(url)
+        if not tweet_data:
+            logger.warning("Failed to fetch tweet from URL: %s", url)
+            return None
+
+        # Extract the tweet text
+        tweet_text = tweet_data.get("text", "")
+
+        # Extract the video URL if it exists
+        video_url = extract_video_url(tweet_data)
+
+        # Extract the author information
+        author = tweet_data.get("user", {})
+        author_name = author.get("name", "")
+        author_screen_name = author.get("screen_name", "")
+
+        # Fetch the tweet replies
+        replies_data = await fetch_tweet_replies(url)
+
+        # Extract reply information
+        replies = []
+        if replies_data:
+            for reply in replies_data:
+                reply_text = reply.get("replyText", "")
+                reply_author = reply.get("author", {})
+                reply_author_name = reply_author.get("name", "")
+
+                replies.append({"author": reply_author_name, "text": reply_text})
+
+        # Compile the scraped content
+        scraped_content = {
+            "tweet": {
+                "text": tweet_text,
+                "author": author_name,
+                "screen_name": author_screen_name,
+                "video_url": video_url,
+            },
+            "replies": replies,
+        }
+
+        # Format the content as markdown for compatibility with the existing system
+        markdown_content = format_as_markdown(scraped_content)
+
+        return {"markdown": markdown_content, "raw_data": scraped_content}
+
+    except Exception as e:
+        logger.error("Error scraping Twitter/X.com URL %s: %s", url, str(e), exc_info=True)
+        return None
+
+
+def format_as_markdown(scraped_content: Dict[str, Any]) -> str:
+    """
+    Format the scraped Twitter/X.com content as markdown.
+
+    Args:
+        scraped_content (Dict[str, Any]): The scraped content
+
+    Returns:
+        str: The formatted markdown content
+    """
+    try:
+        tweet = scraped_content["tweet"]
+        replies = scraped_content["replies"]
+
+        # Format the tweet
+        markdown = f"# Tweet by @{tweet['screen_name']} ({tweet['author']})\n\n"
+        markdown += f"{tweet['text']}\n\n"
+
+        # Add video URL if it exists
+        if tweet["video_url"]:
+            markdown += f"**Video URL:** {tweet['video_url']}\n\n"
+
+        # Format the replies
+        if replies:
+            markdown += "## Replies\n\n"
+
+            for reply in replies:
+                markdown += f"**{reply['author']}:** {reply['text']}\n\n"
+
+        return markdown
+    except Exception as e:
+        logger.error(
+            f"Error formatting scraped content as markdown: {str(e)}", exc_info=True
+        )
+        return "Error formatting Twitter/X.com content."
+
+
+async def is_twitter_url(url: str) -> bool:
+    """
+    Check if a URL is from Twitter/X.com.
+
+    Args:
+        url (str): The URL to check
+
+    Returns:
+        bool: True if the URL is from Twitter/X.com, False otherwise
+    """
+    # More specific pattern to match Twitter/X.com domains
+    # This ensures we're matching the domain part of the URL, not just any
+    # occurrence of these strings
+    pattern = (
+        r"(?:^https?://(?:www\.)?(?:twitter\.com|x\.com))"
+        r"|(?://(?:www\.)?(?:twitter\.com|x\.com))"
+    )
+    return bool(re.search(pattern, url))
