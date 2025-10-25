@@ -151,7 +151,7 @@ class ChartRenderer:
     """Handles detection and rendering of tables/charts from LLM responses."""
 
     TABLE_PATTERN = re.compile(
-        r"(\|[^|\n]+\|[\r\n]+\|[\s\-:|]+\|[\r\n]+(?:\|[^|\n]+\|[\r\n]*)+)", re.MULTILINE
+        r"((?:^\|[^\n]*\|[ \t]*\n)+\|[\s\-\:|]+\|[ \t]*\n(?:^\|[^\n]*\|[ \t]*\n){1,})", re.MULTILINE
     )
 
     # Custom color scheme (0x96f theme)
