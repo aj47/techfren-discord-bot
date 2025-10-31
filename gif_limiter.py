@@ -48,7 +48,7 @@ async def check_and_record_gif_post(
             history = deque()
             _gif_post_history[user_id] = history
 
-        while history and history[0] <= cutoff:
+        while history and history[0] < cutoff:
             history.popleft()
 
         if len(history) >= GIF_LIMIT_PER_WINDOW:
