@@ -411,6 +411,28 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             # Check if this message has an image summary
             image_summary = msg.get('image_summary')
 
+            # On-demand image summary generation: if no summary exists, check for image URLs
+            if not image_summary and content:
+                # Look for Discord CDN image URLs in message content
+                import re
+                image_url_pattern = r'https://(?:cdn|media)\.discordapp\.(?:com|net)/attachments/[\w/]+\.(?:png|jpg|jpeg|gif|webp)'
+                image_urls = re.findall(image_url_pattern, content, re.IGNORECASE)
+
+                if image_urls:
+                    try:
+                        # Generate summary for first image only
+                        image_summary = await generate_image_summary(image_urls[0])
+                        if image_summary and message_id:
+                            # Store summary in database for future queries
+                            import database
+                            try:
+                                await database.update_message_image_summary(message_id, image_summary)
+                                logger.info(f"Generated and stored on-demand image summary for message {message_id}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to store image summary for {message_id}: {db_err}")
+                    except Exception as img_err:
+                        logger.warning(f"Failed to generate on-demand image summary: {img_err}")
+
             # Format the message with the basic content and clickable Discord link
             if message_link:
                 # Format as clickable Discord link that the LLM will understand

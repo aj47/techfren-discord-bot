@@ -560,6 +560,50 @@ async def update_message_with_scraped_data(
         logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
         return False
 
+async def update_message_image_summary(message_id: str, image_summary: str) -> bool:
+    """
+    Update an existing message with an image summary (on-demand generation).
+
+    Args:
+        message_id (str): The Discord message ID to update
+        image_summary (str): AI-generated image summary text
+
+    Returns:
+        bool: True if the message was updated successfully, False otherwise
+    """
+    try:
+        def _update_sync():
+            with get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Compress image summary to save space
+                compressed_summary = compress_text(image_summary)
+
+                cursor.execute(
+                    """
+                    UPDATE messages
+                    SET image_summary = ?
+                    WHERE id = ?
+                    """,
+                    (compressed_summary, message_id)
+                )
+
+                rows_affected = cursor.rowcount
+                conn.commit()
+                return rows_affected > 0
+
+        success = await asyncio.to_thread(_update_sync)
+
+        if not success:
+            logger.warning(f"No message found with ID {message_id} to update with image summary")
+            return False
+
+        logger.debug(f"Message {message_id} updated with on-demand image summary")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating message {message_id} with image summary: {str(e)}", exc_info=True)
+        return False
+
 def get_message_count() -> int:
     """
     Get the total number of messages in the database.

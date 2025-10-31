@@ -381,24 +381,30 @@ async def on_message(message):
         # Note: Image summaries are generated on-demand during /sum or @bot queries
         # to minimize API costs and avoid processing images that are never queried
 
-        success = database.store_message(
-            message_id=str(message.id),
-            author_id=str(message.author.id),
-            author_name=str(message.author),
-            channel_id=channel_id,
-            channel_name=channel_name,
-            content=message.content,
-            created_at=message.created_at,
-            guild_id=guild_id,
-            guild_name=guild_name,
-            is_bot=message.author.bot,
-            is_command=is_command,
-            command_type=command_type
-        )
+        # Offload database write to background thread to prevent event loop blocking
+        # This ensures slash commands can be deferred immediately without timeout
+        async def store_message_async():
+            success = await asyncio.to_thread(
+                database.store_message,
+                message_id=str(message.id),
+                author_id=str(message.author.id),
+                author_name=str(message.author),
+                channel_id=channel_id,
+                channel_name=channel_name,
+                content=message.content,
+                created_at=message.created_at,
+                guild_id=guild_id,
+                guild_name=guild_name,
+                is_bot=message.author.bot,
+                is_command=is_command,
+                command_type=command_type
+            )
+            if not success:
+                # This is usually because the message already exists (common when bot restarts)
+                logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
 
-        if not success:
-            # This is usually because the message already exists (common when bot restarts)
-            logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
+        # Fire and forget - don't await to keep event loop responsive
+        asyncio.create_task(store_message_async())
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
