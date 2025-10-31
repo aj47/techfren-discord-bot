@@ -493,17 +493,8 @@ async def sum_day_slash(interaction: discord.Interaction):
         deferred = True
     except discord.NotFound as e:
         if e.code == 10062:
-            # Interaction already expired - try to send ephemeral message to user
+            # Interaction already expired - Discord will show standard "interaction failed" message
             logger.error(f"Interaction expired before defer for sum-day (Discord latency >3s)")
-            try:
-                # Try to send error message via DM as fallback
-                await interaction.user.send(
-                    "⚠️ The /sum-day command timed out due to Discord latency. "
-                    "Please try the text command instead: `/sum-day` (type it in chat, not as slash command)"
-                )
-            except (discord.Forbidden, discord.HTTPException) as dm_error:
-                # User has DMs disabled or other Discord API error
-                logger.debug(f"Could not send timeout DM to user {interaction.user.id}: {dm_error}")
             return
         raise
     except Exception as e:
@@ -523,17 +514,8 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
         deferred = True
     except discord.NotFound as e:
         if e.code == 10062:
-            # Interaction already expired - try to send ephemeral message to user
+            # Interaction already expired - Discord will show standard "interaction failed" message
             logger.error(f"Interaction expired before defer for sum-hr (Discord latency >3s)")
-            try:
-                # Try to send error message via DM as fallback
-                await interaction.user.send(
-                    f"⚠️ The /sum-hr {hours} command timed out due to Discord latency. "
-                    f"Please try the text command instead: `/sum-hr {hours}` (type it in chat, not as slash command)"
-                )
-            except (discord.Forbidden, discord.HTTPException) as dm_error:
-                # User has DMs disabled or other Discord API error
-                logger.debug(f"Could not send timeout DM to user {interaction.user.id}: {dm_error}")
             return
         raise
     except Exception as e:
