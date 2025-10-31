@@ -378,24 +378,8 @@ async def on_message(message):
             logger.error("Database module not properly imported or initialized")
             return
 
-        # Check for image attachments and generate summary if present
-        image_summary = None
-        if message.attachments:
-            from image_handler import extract_images_from_message
-            from llm_handler import generate_image_summary
-
-            try:
-                image_urls = await extract_images_from_message(message)
-                if image_urls:
-                    # Only process first image to minimize API costs
-                    image_summary = await generate_image_summary(image_urls[0])
-                    if image_summary:
-                        logger.info(f"Generated image summary for message {message.id}")
-                    else:
-                        logger.warning(f"Failed to generate image summary for message {message.id}")
-            except Exception as img_err:
-                logger.error(f"Error processing image attachment: {str(img_err)}", exc_info=True)
-                # Continue with message storage even if image processing fails
+        # Note: Image summaries are generated on-demand during /sum or @bot queries
+        # to minimize API costs and avoid processing images that are never queried
 
         success = database.store_message(
             message_id=str(message.id),
@@ -409,8 +393,7 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type,
-            image_summary=image_summary
+            command_type=command_type
         )
 
         if not success:
