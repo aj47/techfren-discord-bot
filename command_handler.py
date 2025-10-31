@@ -90,7 +90,7 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     if processing_msg:
                         await processing_msg.delete()
                 except discord.NotFound:
-                    pass
+                    logger.debug("Processing message already deleted")
         else:
             # Fallback: if thread creation completely failed, send response in main channel
             logger.warning("Thread creation failed for bot command, falling back to channel response")
@@ -172,7 +172,7 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
         try:
             await processing_msg.delete()
         except discord.NotFound:
-            pass
+            logger.debug("Processing message already deleted")
 
 
 # Helper functions for parameter validation

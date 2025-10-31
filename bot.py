@@ -416,9 +416,6 @@ async def on_message(message):
         if not success:
             # This is usually because the message already exists (common when bot restarts)
             logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
-
-        # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
-        # This saves resources and avoids processing URLs that nobody asks about
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
@@ -447,8 +444,6 @@ async def on_message(message):
             await handle_sum_hr_command(message, bot.user)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
-        # Optionally notify about the error in the channel if it's a user-facing command error
-        # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
@@ -523,8 +518,9 @@ async def sum_day_slash(interaction: discord.Interaction):
                     "⚠️ The /sum-day command timed out due to Discord latency. "
                     "Please try the text command instead: `/sum-day` (type it in chat, not as slash command)"
                 )
-            except:
-                pass  # Can't do anything if DM also fails
+            except (discord.Forbidden, discord.HTTPException) as dm_error:
+                # User has DMs disabled or other Discord API error
+                logger.debug(f"Could not send timeout DM to user {interaction.user.id}: {dm_error}")
             return
         raise
     except Exception as e:
@@ -552,8 +548,9 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
                     f"⚠️ The /sum-hr {hours} command timed out due to Discord latency. "
                     f"Please try the text command instead: `/sum-hr {hours}` (type it in chat, not as slash command)"
                 )
-            except:
-                pass  # Can't do anything if DM also fails
+            except (discord.Forbidden, discord.HTTPException) as dm_error:
+                # User has DMs disabled or other Discord API error
+                logger.debug(f"Could not send timeout DM to user {interaction.user.id}: {dm_error}")
             return
         raise
     except Exception as e:
