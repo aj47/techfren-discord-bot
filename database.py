@@ -220,8 +220,9 @@ def init_database() -> None:
 
         logger.info(f"Database initialized successfully at {DB_FILE}")
 
-        # Run migration to add image_summary column if needed
+        # Run migrations
         migrate_add_image_summary_column()
+        migrate_fix_bot_response_channel_ids()
     except Exception as e:
         logger.error(f"Error initializing database: {str(e)}", exc_info=True)
         raise
@@ -244,6 +245,41 @@ def migrate_add_image_summary_column() -> None:
                 logger.debug("image_summary column already exists")
     except Exception as e:
         logger.error(f"Error migrating database schema: {str(e)}", exc_info=True)
+
+def migrate_fix_bot_response_channel_ids() -> None:
+    """Migration to fix bot response channel_ids that were stored as message IDs."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+
+            # Find bot messages where channel_id matches a user message ID (thread bug)
+            cursor.execute("""
+                SELECT
+                    m1.id as bot_msg_id,
+                    m1.channel_id as current_channel_id,
+                    m2.channel_id as correct_channel_id
+                FROM messages m1
+                LEFT JOIN messages m2 ON m1.channel_id = m2.id
+                WHERE m1.is_bot = 1
+                  AND m2.channel_id IS NOT NULL
+                  AND m1.channel_id != m2.channel_id
+            """)
+
+            fixes = cursor.fetchall()
+
+            if fixes:
+                for bot_msg_id, current_channel_id, correct_channel_id in fixes:
+                    cursor.execute(
+                        "UPDATE messages SET channel_id = ? WHERE id = ?",
+                        (correct_channel_id, bot_msg_id)
+                    )
+
+                conn.commit()
+                logger.info(f"Fixed {len(fixes)} bot response channel_ids from thread bug")
+            else:
+                logger.debug("No bot response channel_ids need fixing")
+    except Exception as e:
+        logger.error(f"Error fixing bot response channel_ids: {str(e)}", exc_info=True)
 
 def get_connection() -> sqlite3.Connection:
     """
