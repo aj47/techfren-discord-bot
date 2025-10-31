@@ -348,8 +348,9 @@ async def handle_summary_command(
 
             if initial_message:
                 try:
-                    # Create thread from the initial message (will fetch with guild info if needed)
-                    thread = await thread_manager.create_thread_from_message(initial_message, thread_name)
+                    # Create thread from channel instead of message to avoid fetching webhook messages
+                    # Webhook messages from interaction.followup.send() lack guild info
+                    thread = await thread_manager.create_thread(thread_name)
 
                     if thread:
                         # Send all summary content in the thread
