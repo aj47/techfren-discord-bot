@@ -509,15 +509,59 @@ async def _handle_slash_command_wrapper(
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
     # Defer IMMEDIATELY to avoid timeout (must respond within 3 seconds)
-    await interaction.response.defer()
-    await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
+    deferred = False
+    try:
+        await interaction.response.defer()
+        deferred = True
+    except discord.NotFound as e:
+        if e.code == 10062:
+            # Interaction already expired - try to send ephemeral message to user
+            logger.error(f"Interaction expired before defer for sum-day (Discord latency >3s)")
+            try:
+                # Try to send error message via DM as fallback
+                await interaction.user.send(
+                    "⚠️ The /sum-day command timed out due to Discord latency. "
+                    "Please try the text command instead: `/sum-day` (type it in chat, not as slash command)"
+                )
+            except:
+                pass  # Can't do anything if DM also fails
+            return
+        raise
+    except Exception as e:
+        logger.error(f"Failed to defer sum-day interaction: {e}")
+        return
+
+    if deferred:
+        await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
     # Defer IMMEDIATELY to avoid timeout (must respond within 3 seconds)
-    await interaction.response.defer()
-    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+    deferred = False
+    try:
+        await interaction.response.defer()
+        deferred = True
+    except discord.NotFound as e:
+        if e.code == 10062:
+            # Interaction already expired - try to send ephemeral message to user
+            logger.error(f"Interaction expired before defer for sum-hr (Discord latency >3s)")
+            try:
+                # Try to send error message via DM as fallback
+                await interaction.user.send(
+                    f"⚠️ The /sum-hr {hours} command timed out due to Discord latency. "
+                    f"Please try the text command instead: `/sum-hr {hours}` (type it in chat, not as slash command)"
+                )
+            except:
+                pass  # Can't do anything if DM also fails
+            return
+        raise
+    except Exception as e:
+        logger.error(f"Failed to defer sum-hr interaction: {e}")
+        return
+
+    if deferred:
+        await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
     logger.info("Starting bot...")
