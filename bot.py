@@ -555,27 +555,33 @@ async def on_message(message):
             logger.error("Database module not properly imported or initialized")
             return
 
-        success = database.store_message(
-            message_id=str(message.id),
-            author_id=str(message.author.id),
-            author_name=str(message.author),
-            channel_id=channel_id,
-            channel_name=channel_name,
-            content=message.content,
-            created_at=message.created_at,
-            guild_id=guild_id,
-            guild_name=guild_name,
-            is_bot=message.author.bot,
-            is_command=is_command,
-            command_type=command_type
-        )
+        # Note: Image summaries are generated on-demand during /sum or @bot queries
+        # to minimize API costs and avoid processing images that are never queried
 
-        if not success:
-            # This is usually because the message already exists (common when bot restarts)
-            logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
+        # Offload database write to background thread to prevent event loop blocking
+        # This ensures slash commands can be deferred immediately without timeout
+        async def store_message_async():
+            success = await asyncio.to_thread(
+                database.store_message,
+                message_id=str(message.id),
+                author_id=str(message.author.id),
+                author_name=str(message.author),
+                channel_id=channel_id,
+                channel_name=channel_name,
+                content=message.content,
+                created_at=message.created_at,
+                guild_id=guild_id,
+                guild_name=guild_name,
+                is_bot=message.author.bot,
+                is_command=is_command,
+                command_type=command_type
+            )
+            if not success:
+                # This is usually because the message already exists (common when bot restarts)
+                logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
 
-        # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
-        # This saves resources and avoids processing URLs that nobody asks about
+        # Fire and forget - don't await to keep event loop responsive
+        asyncio.create_task(store_message_async())
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
@@ -604,8 +610,6 @@ async def on_message(message):
             await handle_sum_hr_command(message, bot.user)
     except Exception as e:
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
-        # Optionally notify about the error in the channel if it's a user-facing command error
-        # await message.channel.send("Sorry, an error occurred while processing your command.")
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
@@ -614,27 +618,10 @@ async def _handle_slash_command_wrapper(
     hours: int = 24,
     error_message: Optional[str] = None
 ) -> None:
-    """Unified wrapper for slash command handling with error management."""
-    # Only defer if the interaction hasn't been acknowledged yet
-    try:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-    except discord.HTTPException as e:
-        if e.status == 400 and e.code == 40060:
-            # Interaction already acknowledged, continue without deferring
-            logger.warning(f"Interaction already acknowledged for {command_name}, continuing...")
-        else:
-            # Re-raise other HTTP exceptions
-            raise
-    except discord.NotFound as e:
-        if e.code == 10062:
-            # Interaction expired (took too long to respond)
-            logger.error(f"Interaction expired for {command_name} - took too long to respond")
-            return  # Can't do anything with an expired interaction
-        else:
-            # Re-raise other NotFound exceptions
-            raise
-    
+    """Unified wrapper for slash command handling with error management.
+
+    NOTE: This function expects the interaction to already be deferred by the caller.
+    """
     if error_message is None:
         error_message = f"Sorry, an error occurred while processing the {command_name} command. Please try again later."
 
@@ -682,13 +669,44 @@ async def _handle_slash_command_wrapper(
 @bot.tree.command(name="sum-day", description="Generate a summary of messages from today")
 async def sum_day_slash(interaction: discord.Interaction):
     """Slash command version of /sum-day"""
-    await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
+    # Defer IMMEDIATELY to avoid timeout (must respond within 3 seconds)
+    deferred = False
+    try:
+        await interaction.response.defer()
+        deferred = True
+    except discord.NotFound as e:
+        if e.code == 10062:
+            # Interaction already expired - Discord will show standard "interaction failed" message
+            logger.error(f"Interaction expired before defer for sum-day (Discord latency >3s)")
+            return
+        raise
+    except Exception as e:
+        logger.error(f"Failed to defer sum-day interaction: {e}")
+        return
+
+    if deferred:
+        await _handle_slash_command_wrapper(interaction, "sum-day", hours=24)
 
 @bot.tree.command(name="sum-hr", description="Generate a summary of messages from the past N hours")
 async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
-    # Immediately defer to avoid timeout, then do validation in wrapper
-    await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+    # Defer IMMEDIATELY to avoid timeout (must respond within 3 seconds)
+    deferred = False
+    try:
+        await interaction.response.defer()
+        deferred = True
+    except discord.NotFound as e:
+        if e.code == 10062:
+            # Interaction already expired - Discord will show standard "interaction failed" message
+            logger.error(f"Interaction expired before defer for sum-hr (Discord latency >3s)")
+            return
+        raise
+    except Exception as e:
+        logger.error(f"Failed to defer sum-hr interaction: {e}")
+        return
+
+    if deferred:
+        await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
 try:
     logger.info("Starting bot...")

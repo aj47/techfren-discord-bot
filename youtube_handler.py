@@ -77,20 +77,16 @@ async def get_video_transcript(video_id: str) -> Optional[str]:
 async def get_video_metadata(video_id: str) -> Dict[str, Any]:
     """
     Get basic metadata for a YouTube video.
-    Note: This is a placeholder for potential YouTube Data API integration.
-    
+
     Args:
         video_id (str): The YouTube video ID
-        
+
     Returns:
-        Dict[str, Any]: Basic metadata (currently just video_id and constructed URL)
+        Dict[str, Any]: Basic metadata (video_id and URL)
     """
     return {
         'video_id': video_id,
-        'url': f"https://www.youtube.com/watch?v={video_id}",
-        'title': None,  # Would require YouTube Data API
-        'channel': None,  # Would require YouTube Data API
-        'duration': None  # Would require YouTube Data API
+        'url': f"https://www.youtube.com/watch?v={video_id}"
     }
 
 async def scrape_youtube_content(url: str) -> Optional[Dict[str, Any]]:

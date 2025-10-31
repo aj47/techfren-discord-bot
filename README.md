@@ -1,4 +1,4 @@
-# TechFren Discord Bot
+# TechFren Discord Bot.
 
 A simple Discord bot built with discord.py.
 
@@ -19,6 +19,10 @@ A simple Discord bot built with discord.py.
 - Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel, with responses posted in threads attached to your original message. Mentions can appear anywhere in the message (beginning, middle, or end)
 - `/sum-day` command works in any channel
 - Stores all messages in a SQLite database for logging and analysis
+- **Vision Support**: Bot can analyze images attached to messages, referenced messages, or linked Discord messages. Simply mention the bot with your question and attach an image or reply to a message containing an image. Requires a vision-capable LLM model (e.g., GPT-4V, Claude 3 with vision, Qwen2.5-VL). Images are automatically compressed and sent to the LLM for analysis.
+- **Image Compression**: Automatically compresses images to reduce API costs while maintaining quality (configurable max size and quality settings)
+- **Links Dump Channel**: Designate a channel for links-only, automatically deleting text-only messages
+- **Database Compression**: Automatic gzip compression for large text fields (>100 bytes) to reduce storage
 
 ## Setup
 
@@ -72,10 +76,16 @@ A simple Discord bot built with discord.py.
    SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
    SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
    REPORTS_CHANNEL_ID=channel_id  # Optional: Channel to post daily summaries
-   PERPLEXITY_BASE_URL=https://api.perplexity.ai  # Base URL for Perplexity API
+   LINKS_DUMP_CHANNEL_ID=channel_id  # Optional: Links-only channel (text-only messages deleted)
+   PERPLEXITY_BASE_URL=https://api.perplexity.ai  # Base URL for Perplexity API (or custom endpoint)
    HTTP_REFERER=https://techfren.net  # HTTP Referer header for API requests
    X_TITLE=TechFren Discord Bot  # X-Title header for API requests
    ```
+
+   **Vision-capable models:**
+   - For custom endpoints (like chutes.ai): `Qwen/Qwen2.5-VL-72B-Instruct`, `Qwen/Qwen2.5-VL-32B-Instruct`
+   - For OpenAI: `gpt-4o`, `gpt-4-vision-preview`
+   - For Anthropic: `claude-3-opus`, `claude-3-sonnet`
    - You can get a Perplexity API key by signing up at [Perplexity.ai](https://perplexity.ai/)
    - You can get a Firecrawl API key by signing up at [Firecrawl.dev](https://firecrawl.dev)
    - You can get an Apify API token by signing up at [Apify.com](https://apify.com)
@@ -142,6 +152,22 @@ SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
 SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
 REPORTS_CHANNEL_ID=CHANNEL_ID  # Optional: Channel to post daily summaries
 ```
+
+## Links Dump Channel
+
+Configure a channel where only links are allowed - text-only messages are automatically deleted:
+
+```bash
+LINKS_DUMP_CHANNEL_ID=your_channel_id  # In .env file
+```
+
+**How it works:**
+- Messages with URLs are allowed
+- Text-only messages are deleted after 1 minute with a warning
+- Forwarded messages are always allowed
+- Bot messages and commands are ignored
+
+**To find channel ID:** Enable Developer Mode in Discord → Right-click channel → Copy Channel ID
 
 ## Database
 

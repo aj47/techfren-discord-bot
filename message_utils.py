@@ -215,14 +215,14 @@ def extract_message_links(text: str) -> list[str]:
 
 async def get_message_context(message: discord.Message, bot: discord.Client) -> Dict[str, Any]:
     """
-    Get context for a message including any referenced messages and linked messages.
+    Get context for a message including any referenced messages, linked messages, and the original message.
     
     Args:
         message (discord.Message): The message to get context for
         bot (discord.Client): The Discord bot client
         
     Returns:
-        Dict[str, Any]: Dictionary containing message context
+        Dict[str, Any]: Dictionary containing message context with original_message, referenced_message, and linked_messages
     """
     context = {
         'original_message': message,

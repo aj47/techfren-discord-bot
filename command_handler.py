@@ -48,12 +48,13 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
             processing_msg = await thread_sender.send("Processing your request, please wait...")
 
             try:
-                # Get message context (referenced messages and linked messages)
+                # Get message context (original message, referenced messages, and linked messages)
+                # Always get context to include the original message (which may have image attachments)
                 message_context = None
-                if bot_client and (message.reference or 'discord.com/channels/' in message.content):
+                if bot_client:
                     try:
                         message_context = await get_message_context(message, bot_client)
-                        logger.debug(f"Retrieved message context: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+                        logger.debug(f"Retrieved message context: original_message={message_context['original_message'] is not None}, referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
                     except Exception as e:
                         logger.warning(f"Failed to get message context: {e}")
 
@@ -89,7 +90,7 @@ async def handle_bot_command(message: discord.Message, client_user: discord.Clie
                     if processing_msg:
                         await processing_msg.delete()
                 except discord.NotFound:
-                    pass
+                    logger.debug("Processing message already deleted")
         else:
             # Fallback: if thread creation completely failed, send response in main channel
             logger.warning("Thread creation failed for bot command, falling back to channel response")
@@ -133,12 +134,17 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
     """Fallback handler for bot commands when thread creation fails."""
     processing_msg = await message.channel.send("Processing your request, please wait...")
     try:
-        # Get message context (referenced messages and linked messages)
+        # Get message context (original, referenced, and linked messages)
         message_context = None
-        if bot_client and (message.reference or 'discord.com/channels/' in message.content):
+        if bot_client:
             try:
                 message_context = await get_message_context(message, bot_client)
-                logger.debug(f"Retrieved message context in fallback: referenced={message_context['referenced_message'] is not None}, linked_count={len(message_context['linked_messages'])}")
+                logger.debug(
+                    f"Retrieved message context in fallback: "
+                    f"original_message={message_context['original_message'] is not None}, "
+                    f"referenced={message_context['referenced_message'] is not None}, "
+                    f"linked_count={len(message_context['linked_messages'])}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to get message context in fallback: {e}")
 
@@ -166,7 +172,7 @@ async def _handle_bot_command_fallback(message: discord.Message, client_user: di
         try:
             await processing_msg.delete()
         except discord.NotFound:
-            pass
+            logger.debug("Processing message already deleted")
 
 
 # Helper functions for parameter validation
@@ -249,9 +255,15 @@ async def store_bot_response_db(bot_msg_obj: discord.Message, client_user: disco
     try:
         guild_id_str = str(guild.id) if guild else None
         guild_name_str = guild.name if guild else None
-        channel_id_str = str(channel.id)
-        # Handle DM channel name
-        channel_name_str = channel.name if hasattr(channel, 'name') else f"DM with {channel.recipient}"
+
+        # Handle threads: get parent channel ID instead of thread ID
+        if isinstance(channel, discord.Thread):
+            channel_id_str = str(channel.parent_id) if channel.parent_id else str(channel.id)
+            channel_name_str = channel.parent.name if channel.parent else channel.name
+        else:
+            channel_id_str = str(channel.id)
+            # Handle DM channel name
+            channel_name_str = channel.name if hasattr(channel, 'name') else f"DM with {channel.recipient}"
 
 
         success = database.store_message(

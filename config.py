@@ -35,11 +35,14 @@ llm_model = os.getenv('LLM_MODEL', 'sonar')
 rate_limit_seconds = int(os.getenv('RATE_LIMIT_SECONDS', '10'))
 max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
 
-# Firecrawl API Key (required for link scraping)
+# Firecrawl API Key (optional - required for link scraping)
 # Environment variable: FIRECRAWL_API_KEY
+# If not set, link scraping features will be disabled
 firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
-if not firecrawl_api_key:
-    raise ValueError("FIRECRAWL_API_KEY environment variable is required")
+if not firecrawl_api_key or firecrawl_api_key == 'YOUR_FIRECRAWL_API_KEY':
+    import warnings
+    warnings.warn("FIRECRAWL_API_KEY not configured - link scraping features will be disabled", stacklevel=2)
+    firecrawl_api_key = None
 
 # Apify API Token (optional, for x.com/twitter.com link scraping)
 # Environment variable: APIFY_API_TOKEN
@@ -58,9 +61,9 @@ reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
-# LLM API Configuration (optional)
+# Perplexity API Configuration (optional)
 # Environment variable: PERPLEXITY_BASE_URL
-# Base URL for Perplexity API (or compatible API)
+# Base URL for Perplexity API (OpenAI-compatible endpoint)
 perplexity_base_url = os.getenv('PERPLEXITY_BASE_URL', 'https://api.perplexity.ai')
 
 # HTTP Headers Configuration (optional)

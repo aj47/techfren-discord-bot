@@ -71,8 +71,9 @@ async def scrape_url_content(url: str) -> Optional[str]:
                 response_text = e.response.text
                 if response_text:
                     error_message += f" - Response: {response_text[:200]}"
-            except:
-                pass
+            except AttributeError:
+                # Response object may not have text attribute
+                logger.debug(f"Could not extract response text from HTTPError for {url}")
                 
         logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
         return None

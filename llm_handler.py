@@ -8,6 +8,7 @@ import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
+from image_handler import get_all_images_from_context
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -88,6 +89,80 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
         return None
 
+async def generate_image_summary(image_url: str) -> Optional[str]:
+    """
+    Generate a concise text summary of an image using the LLM vision API.
+
+    Args:
+        image_url (str): The Discord CDN URL of the image
+
+    Returns:
+        Optional[str]: Text summary of the image (2-3 sentences), or None if failed
+    """
+    try:
+        logger.info(f"Generating image summary for: {image_url}")
+
+        # Import image handler to download and compress image
+        from image_handler import download_image, compress_image
+        import base64
+
+        # Download the image
+        image_bytes = await download_image(image_url)
+        if not image_bytes:
+            logger.warning(f"Failed to download image from {image_url}")
+            return None
+
+        # Compress the image to reduce token usage
+        compressed_bytes = compress_image(image_bytes, max_size=512, quality=85)
+
+        # Convert to base64 data URL
+        base64_image = base64.b64encode(compressed_bytes).decode('utf-8')
+
+        # Determine MIME type
+        mime_type = "image/jpeg"  # compress_image converts to JPEG
+        data_url = f"data:{mime_type};base64,{base64_image}"
+
+        # Initialize OpenAI client with Perplexity
+        openai_client = AsyncOpenAI(
+            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
+            api_key=config.perplexity,
+            timeout=30.0
+        )
+
+        # Use vision model
+        model = getattr(config, 'llm_model', "sonar")
+
+        # Create vision API request
+        completion = await openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe this image concisely in 2-3 sentences. Focus on the main subject, key details, and any text visible in the image."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=150
+        )
+
+        summary = completion.choices[0].message.content.strip()
+        logger.info(f"Generated image summary: {summary[:100]}...")
+        return summary
+
+    except Exception as e:
+        logger.error(f"Error generating image summary for {image_url}: {str(e)}", exc_info=True)
+        return None
+
 async def call_llm_api(query, message_context=None):
     """
     Call the LLM API with the user's query and return the response
@@ -116,6 +191,9 @@ async def call_llm_api(query, message_context=None):
         
         # Get the model from config or use default (Perplexity models)
         model = getattr(config, 'llm_model', "sonar")
+        
+        # Check for images in message context
+        image_data_urls = await get_all_images_from_context(message_context) if message_context else []
         
         # Prepare the user content with message context if available
         user_content = query
@@ -204,6 +282,28 @@ async def call_llm_api(query, message_context=None):
                     user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
                 logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
 
+        # Prepare user message content (text + images if available)
+        if image_data_urls:
+            # Vision mode: construct message with both text and images
+            user_message_content = [
+                {
+                    "type": "text",
+                    "text": user_content
+                }
+            ]
+            # Add all images to the message
+            for image_url in image_data_urls:
+                user_message_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url
+                    }
+                })
+            logger.info(f"Vision mode enabled: sending {len(image_data_urls)} image(s) to LLM")
+        else:
+            # Text-only mode
+            user_message_content = user_content
+
         # Make the API request
         completion = await openai_client.chat.completions.create(
             extra_headers={
@@ -218,6 +318,7 @@ async def call_llm_api(query, message_context=None):
                     Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
                     Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
                     When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant. \
+                    When users send images, analyze them carefully and provide relevant information about what you see. \
                     IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. \
                     Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables. \
                     Wide tables or tables with long content will be automatically reformatted into a card-style vertical layout for better mobile readability. \
@@ -225,7 +326,7 @@ async def call_llm_api(query, message_context=None):
                 },
                 {
                     "role": "user",
-                    "content": user_content
+                    "content": user_message_content
                 }
             ],
             max_tokens=1000,  # Increased for better responses
@@ -307,12 +408,41 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
+            # Check if this message has an image summary
+            image_summary = msg.get('image_summary')
+
+            # On-demand image summary generation: if no summary exists, check for image URLs
+            if not image_summary and content:
+                # Look for Discord CDN image URLs in message content
+                import re
+                image_url_pattern = r'https://(?:cdn|media)\.discordapp\.(?:com|net)/attachments/[\w/]+\.(?:png|jpg|jpeg|gif|webp)'
+                image_urls = re.findall(image_url_pattern, content, re.IGNORECASE)
+
+                if image_urls:
+                    try:
+                        # Generate summary for first image only
+                        image_summary = await generate_image_summary(image_urls[0])
+                        if image_summary and message_id:
+                            # Store summary in database for future queries
+                            import database
+                            try:
+                                await database.update_message_image_summary(message_id, image_summary)
+                                logger.info(f"Generated and stored on-demand image summary for message {message_id}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to store image summary for {message_id}: {db_err}")
+                    except Exception as img_err:
+                        logger.warning(f"Failed to generate on-demand image summary: {img_err}")
+
             # Format the message with the basic content and clickable Discord link
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
                 message_text = f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
             else:
                 message_text = f"[{time_str}] {author_name}: {content}"
+
+            # If there's an image summary, add it to the message
+            if image_summary:
+                message_text += f"\n[Image: {image_summary}]"
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:

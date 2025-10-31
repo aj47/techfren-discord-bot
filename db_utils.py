@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from tabulate import tabulate
 from typing import List, Dict, Any, Optional
+from database import decompress_text
 
 # Database constants
 DB_DIRECTORY = "data"
@@ -32,8 +33,7 @@ def list_recent_messages(limit: int = 10) -> None:
     cursor = conn.cursor()
 
     query = """
-    SELECT id, author_name, channel_name, guild_name,
-           substr(content, 1, 50) as content_preview,
+    SELECT id, author_name, channel_name, guild_name, content,
            created_at, is_command, command_type
     FROM messages
     ORDER BY created_at DESC
@@ -47,15 +47,19 @@ def list_recent_messages(limit: int = 10) -> None:
         print("No messages found in the database.")
         return
 
-    # Convert rows to list of dicts for tabulate
+    # Convert rows to list of dicts for tabulate and decompress content
     data = []
     for row in rows:
+        # Decompress content
+        content = decompress_text(row['content'])
+        # Get preview of decompressed content
+        content_preview = content[:50] if content else ''
         data.append({
             "ID": row['id'],
             "Author": row['author_name'],
             "Channel": row['channel_name'],
             "Guild": row['guild_name'] or 'DM',
-            "Content": row['content_preview'] + ('...' if len(row['content_preview']) >= 50 else ''),
+            "Content": content_preview + ('...' if len(content_preview) >= 50 else ''),
             "Created At": row['created_at'],
             "Command": f"{row['command_type'] if row['is_command'] else 'No'}"
         })
@@ -140,8 +144,7 @@ def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optiona
 
     # Build the query based on filters
     query = """
-    SELECT id, channel_name, guild_name, date,
-           substr(summary_text, 1, 100) as summary_preview,
+    SELECT id, channel_name, guild_name, date, summary_text,
            message_count, active_users, created_at
     FROM channel_summaries
     """
@@ -170,9 +173,13 @@ def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optiona
         print("No summaries found in the database.")
         return
 
-    # Convert rows to list of dicts for tabulate
+    # Convert rows to list of dicts for tabulate and decompress summary_text
     data = []
     for row in rows:
+        # Decompress summary text
+        summary_text = decompress_text(row['summary_text'])
+        # Get preview of decompressed summary
+        summary_preview = summary_text[:100] if summary_text else ''
         data.append({
             "ID": row['id'],
             "Channel": row['channel_name'],
@@ -180,7 +187,7 @@ def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optiona
             "Date": row['date'],
             "Messages": row['message_count'],
             "Users": row['active_users'],
-            "Summary Preview": row['summary_preview'] + ('...' if len(row['summary_preview']) >= 100 else ''),
+            "Summary Preview": summary_preview + ('...' if len(summary_preview) >= 100 else ''),
             "Created At": row['created_at']
         })
 
@@ -215,11 +222,26 @@ def view_summary(summary_id: int) -> None:
         print(f"No summary found with ID {summary_id}")
         return
 
+    # Decompress summary text, active users list, and metadata
+    decompressed_summary = decompress_text(row['summary_text'])
+    decompressed_users_list = decompress_text(row['active_users_list'])
+    decompressed_metadata = decompress_text(row['metadata'])
+
     # Parse the active users list from JSON
-    active_users = json.loads(row['active_users_list'])
+    active_users = []
+    if decompressed_users_list:
+        try:
+            active_users = json.loads(decompressed_users_list)
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"Warning: Failed to parse active_users_list for summary ID {summary_id}: {e}")
 
     # Parse metadata if available
-    metadata = json.loads(row['metadata']) if row['metadata'] else {}
+    metadata = {}
+    if decompressed_metadata:
+        try:
+            metadata = json.loads(decompressed_metadata)
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"Warning: Failed to parse metadata for summary ID {summary_id}: {e}")
 
     # Print the summary details
     print("\n" + "=" * 80)
@@ -241,7 +263,7 @@ def view_summary(summary_id: int) -> None:
 
     print("\nSummary:")
     print("-" * 80)
-    print(row['summary_text'])
+    print(decompressed_summary)
     print("-" * 80)
 
     conn.close()

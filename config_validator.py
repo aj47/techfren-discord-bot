@@ -32,24 +32,32 @@ def validate_config(config_module):
         # This is a warning.
         logger.warning("Perplexity API key in config.py appears to be invalid (too short or not a string).")
         
-    # Check Firecrawl API key
+    # Check Firecrawl API key (optional - required for link scraping)
+    has_firecrawl = hasattr(config_module, 'firecrawl_api_key') and config_module.firecrawl_api_key and \
+                    isinstance(config_module.firecrawl_api_key, str) and len(config_module.firecrawl_api_key) >= 10
+    
     if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
-        logger.error("Firecrawl API key not found in config.py or is empty")
-        raise ValueError("Firecrawl API key is missing or empty in config.py")
-
-    if not isinstance(config_module.firecrawl_api_key, str) or len(config_module.firecrawl_api_key) < 10:
-        # This is a warning.
+        logger.warning("Firecrawl API key not found in config.py or is empty - Firecrawl link scraping features will be disabled")
+    elif not isinstance(config_module.firecrawl_api_key, str) or len(config_module.firecrawl_api_key) < 10:
         logger.warning("Firecrawl API key in config.py appears to be invalid (too short or not a string).")
+        has_firecrawl = False
         
     # Check Apify API token (optional)
+    has_apify = hasattr(config_module, 'apify_api_token') and config_module.apify_api_token and \
+                isinstance(config_module.apify_api_token, str) and len(config_module.apify_api_token) >= 10
+    
     if hasattr(config_module, 'apify_api_token') and config_module.apify_api_token:
         if not isinstance(config_module.apify_api_token, str) or len(config_module.apify_api_token) < 10:
-            # This is a warning.
             logger.warning("Apify API token in config.py appears to be invalid (too short or not a string).")
+            has_apify = False
         else:
             logger.info("Apify API token found in config.py. Twitter/X.com links will be processed using Apify.")
     else:
-        logger.info("Apify API token not found in config.py. Twitter/X.com links will be processed using Firecrawl.")
+        # Check combined state for X.com link scraping
+        if not has_apify and not has_firecrawl:
+            logger.warning("Neither Apify nor Firecrawl API credentials found. Twitter/X.com link scraping will be disabled.")
+        elif has_firecrawl:
+            logger.info("Apify API token not found in config.py. Twitter/X.com links will be processed using Firecrawl.")
 
     # Check optional rate limiting configuration and update the rate_limiter module
     # Default values are set in rate_limiter.py (10 seconds, 6 requests/minute)

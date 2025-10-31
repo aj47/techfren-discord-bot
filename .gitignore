@@ -23,6 +23,7 @@ var/
 # Virtual Environment
 .venv/
 venv/
+myenv/
 ENV/
 
 # Environment files with sensitive data
@@ -61,3 +62,6 @@ test_final_integration.py
 
 #Ignore vscode AI rules
 .github\copilot-instructions.md
+
+# Windows Zone.Identifier files
+*:Zone.Identifier
