@@ -10,6 +10,7 @@ import os
 import json
 from typing import Optional
 from datetime import datetime, timedelta, timezone
+import config
 import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
@@ -245,6 +246,116 @@ async def process_url(message_id: str, url: str):
 
     except Exception as e:
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
+
+async def handle_x_post_summary(message: discord.Message) -> bool:
+    """
+    Detect X/Twitter links in a message, scrape and summarize them, then reply with the summary.
+
+    Args:
+        message: The Discord message to check for X/Twitter links
+
+    Returns:
+        bool: True if an X link was found and processed, False otherwise
+    """
+    try:
+        # Extract URLs from message content
+        url_pattern = re.compile(r'https?://[^\s]+')
+        urls = url_pattern.findall(message.content)
+
+        if not urls:
+            return False
+
+        # Check if any URL is an X/Twitter link
+        x_url = None
+        for url in urls:
+            if await is_twitter_url(url):
+                x_url = url
+                break
+
+        if not x_url:
+            return False
+
+        logger.info(f"Detected X/Twitter URL in message {message.id}: {x_url}")
+
+        # Send a "processing" message
+        processing_msg = await message.reply("🔄 Scraping and summarizing X post...")
+
+        try:
+            # Validate if the URL contains a tweet ID
+            from apify_handler import extract_tweet_id
+            tweet_id = extract_tweet_id(x_url)
+
+            if not tweet_id:
+                await processing_msg.edit(content="❌ This X/Twitter URL doesn't contain a valid tweet ID.")
+                return True
+
+            # Check if Apify API token is configured
+            if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                await processing_msg.edit(content="❌ Apify API token not configured. Cannot scrape X posts.")
+                return True
+
+            # Scrape the X post
+            scraped_result = await scrape_twitter_content(x_url)
+
+            if not scraped_result or 'markdown' not in scraped_result:
+                await processing_msg.edit(content="❌ Failed to scrape X post content.")
+                return True
+
+            markdown_content = scraped_result.get('markdown', '')
+
+            if not markdown_content:
+                await processing_msg.edit(content="❌ No content found in X post.")
+                return True
+
+            # Summarize the content
+            summary_data = await summarize_scraped_content(markdown_content, x_url)
+
+            if not summary_data or 'summary' not in summary_data:
+                await processing_msg.edit(content="❌ Failed to generate summary for X post.")
+                return True
+
+            # Format the summary for Discord
+            summary_text = summary_data.get('summary', '')
+            key_points = summary_data.get('key_points', [])
+
+            # Build the response message
+            response_parts = ["📊 **X Post Summary**\n"]
+            response_parts.append(f"**Summary:** {summary_text}\n")
+
+            if key_points:
+                response_parts.append("\n**Key Points:**")
+                for i, point in enumerate(key_points, 1):
+                    response_parts.append(f"{i}. {point}")
+
+            response = "\n".join(response_parts)
+
+            # Discord has a 2000 character limit
+            if len(response) > 2000:
+                response = response[:1997] + "..."
+
+            # Update the processing message with the summary
+            await processing_msg.edit(content=response)
+
+            # Store the scraped data in the database
+            key_points_json = json.dumps(key_points)
+            await database.update_message_with_scraped_data(
+                str(message.id),
+                x_url,
+                summary_text,
+                key_points_json
+            )
+
+            logger.info(f"Successfully processed X post from message {message.id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error processing X post: {str(e)}", exc_info=True)
+            await processing_msg.edit(content=f"❌ Error processing X post: {str(e)}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Error in handle_x_post_summary: {str(e)}", exc_info=True)
+        return False
 
 async def handle_links_dump_channel(message: discord.Message) -> bool:
     """
@@ -583,6 +694,17 @@ async def on_message(message):
         # This saves resources and avoids processing URLs that nobody asks about
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+
+    # Handle X/Twitter post summarization
+    # This runs asynchronously and doesn't block other message processing
+    try:
+        handled_x_post = await handle_x_post_summary(message)
+        if handled_x_post:
+            # X post was processed, but we continue to check for commands
+            # in case the message also contains a command
+            pass
+    except Exception as e:
+        logger.error(f"Error handling X post summary: {str(e)}", exc_info=True)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
