@@ -474,8 +474,93 @@ async def on_message(message):
     if not message.author.bot and is_potential_forward and not has_gif and not message.embeds:
         logger.info(f"DEBUG - Potential forward detected, waiting for embeds to load: {message.id}")
 
-        # Wait a short time for embeds to load
-        await asyncio.sleep(1.5)
+        # Also try to fetch the original message being referenced to see if it has a GIF
+        try:
+            if message.reference and message.reference.message_id:
+                # Try to get the original message
+                ref_channel_id = message.reference.channel_id
+                ref_message_id = message.reference.message_id
+
+                # Get the channel (might be different from current channel)
+                if ref_channel_id == message.channel.id:
+                    ref_channel = message.channel
+                else:
+                    ref_channel = message.guild.get_channel(ref_channel_id) if message.guild else None
+
+                if ref_channel:
+                    try:
+                        original_message = await ref_channel.fetch_message(ref_message_id)
+                        original_has_gif = message_contains_gif(original_message)
+
+                        logger.info(
+                            f"DEBUG - Original message {ref_message_id}: "
+                            f"has_gif={original_has_gif}, "
+                            f"embeds_count={len(original_message.embeds)}, "
+                            f"content_length={len(original_message.content)}"
+                        )
+
+                        # If the original message has a GIF, this forward should be blocked
+                        if original_has_gif:
+                            logger.info(f"Forwarded message references a GIF, blocking: {message.id}")
+
+                            try:
+                                await message.delete()
+                                logger.debug(f"Deleted forwarded GIF message {message.id}")
+                            except discord.NotFound:
+                                logger.info(f"Forwarded GIF message {message.id} already deleted")
+                            except discord.Forbidden:
+                                logger.warning(f"Insufficient permissions to delete forwarded GIF message {message.id}")
+                            except Exception as delete_error:
+                                logger.error(
+                                    f"Unexpected error deleting forwarded GIF message {message.id}: {delete_error}",
+                                    exc_info=True,
+                                )
+
+                            # Send warning
+                            warning_message = (
+                                f"{message.author.mention} Forwarding messages with GIFs is not allowed. "
+                                f"Please post GIFs directly (subject to the 1 GIF per 5 minutes limit). "
+                                f"This message will be deleted in 30 seconds."
+                            )
+
+                            warning_msg = None
+                            try:
+                                warning_msg = await message.channel.send(warning_message)
+                            except discord.Forbidden:
+                                logger.warning(f"Insufficient permissions to send forwarded GIF warning in channel {message.channel.id}")
+                            except Exception as send_error:
+                                logger.error(
+                                    f"Failed to send forwarded GIF warning message in channel {message.channel.id}: {send_error}",
+                                    exc_info=True,
+                                )
+
+                            if warning_msg:
+                                async def delete_warning_after_delay():
+                                    await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
+                                    try:
+                                        await warning_msg.delete()
+                                    except discord.NotFound:
+                                        logger.debug(f"Forwarded GIF warning message {warning_msg.id} already deleted")
+                                    except discord.Forbidden:
+                                        logger.warning(f"Insufficient permissions to delete forwarded GIF warning message {warning_msg.id}")
+                                    except Exception as warning_delete_error:
+                                        logger.error(
+                                            f"Failed to delete forwarded GIF warning message {warning_msg.id}: {warning_delete_error}",
+                                            exc_info=True,
+                                        )
+
+                                asyncio.create_task(delete_warning_after_delay())
+
+                            return  # Stop processing this message
+                    except discord.NotFound:
+                        logger.info(f"Original message {ref_message_id} not found")
+                    except Exception as ref_error:
+                        logger.error(f"Error fetching original message {ref_message_id}: {ref_error}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Error checking original message for forward {message.id}: {e}", exc_info=True)
+
+        # Wait a short time for embeds to load on the forwarded message itself
+        await asyncio.sleep(2.5)
 
         # Fetch the message again to get updated embeds
         try:
