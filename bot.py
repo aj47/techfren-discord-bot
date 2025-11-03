@@ -436,6 +436,18 @@ async def on_message(message):
             and message.reference.channel_id != message.channel.id
         )
 
+        # Debug logging for forwarded message detection
+        if message.reference:
+            logger.debug(
+                f"Message {message.id} has reference: "
+                f"message_id={message.reference.message_id}, "
+                f"channel_id={message.reference.channel_id}, "
+                f"current_channel_id={message.channel.id}, "
+                f"is_forwarded={is_forwarded}, "
+                f"content_length={len(message.content)}, "
+                f"embeds_count={len(message.embeds)}"
+            )
+
         # Block all forwarded messages with GIFs to prevent bypassing rate limits
         if is_forwarded:
             user_id = str(message.author.id)
