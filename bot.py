@@ -468,7 +468,7 @@ async def on_message(message):
             if user_warning_expiry is None or user_warning_expiry <= now:
                 wait_text = _format_gif_cooldown(seconds_remaining)
                 warning_message = (
-                    f"{message.author.mention} You can only post one GIF every 15 minutes. "
+                    f"{message.author.mention} You can only post one GIF every 5 minutes. "
                     f"Please wait {wait_text} before posting another GIF. "
                     f"This message will be deleted in 30 seconds."
                 )
@@ -476,8 +476,8 @@ async def on_message(message):
                 warning_msg = None
                 try:
                     warning_msg = await message.channel.send(warning_message)
-                    # Mark user as warned for the next 15 minutes
-                    _gif_warned_users[user_id] = now + timedelta(minutes=15)
+                    # Mark user as warned for the next 5 minutes
+                    _gif_warned_users[user_id] = now + timedelta(minutes=5)
                     logger.debug(f"User {user_id} warned about GIF limit, will suppress warnings until {_gif_warned_users[user_id]}")
                 except discord.Forbidden:
                     logger.warning(

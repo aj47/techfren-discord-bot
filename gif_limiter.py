@@ -10,7 +10,7 @@ from typing import Deque, Dict, Optional, Tuple
 from logging_config import logger
 
 GIF_LIMIT_PER_WINDOW = 1
-GIF_TIME_WINDOW = timedelta(minutes=15)
+GIF_TIME_WINDOW = timedelta(minutes=5)
 
 _gif_post_history: Dict[str, Deque[datetime]] = {}
 _lock: Optional[asyncio.Lock] = None
