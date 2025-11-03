@@ -741,13 +741,144 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     logger.info(
         f"DEBUG - on_message_edit: message {after.id}, "
         f"before_had_gif={before_had_gif}, after_has_gif={after_has_gif}, "
-        f"before_embeds={len(before.embeds)}, after_embeds={len(after.embeds)}"
+        f"before_embeds={len(before.embeds)}, after_embeds={len(after.embeds)}, "
+        f"has_reference={after.reference is not None}, "
+        f"content_empty={not after.content.strip() if after.content else True}"
     )
 
     if after_has_gif and not before_had_gif:
-        # A GIF was added via edit - treat as a new GIF post
-        logger.info(f"DEBUG - GIF added via edit, re-processing message {after.id}")
-        await on_message(after)
+        # A GIF was added via edit
+        # Check if this is a forwarded message (has reference + empty content)
+        is_forwarded = (
+            after.reference
+            and after.reference.message_id
+            and not after.content.strip()
+        )
+
+        if is_forwarded:
+            # This is a forwarded GIF that just loaded its embeds - block it
+            logger.info(f"Forwarded GIF embeds loaded for message {after.id}, blocking")
+
+            try:
+                await after.delete()
+                logger.debug(f"Deleted forwarded GIF message {after.id} (embeds loaded via edit)")
+            except discord.NotFound:
+                logger.info(f"Forwarded GIF message {after.id} already deleted")
+            except discord.Forbidden:
+                logger.warning(f"Insufficient permissions to delete forwarded GIF message {after.id}")
+            except Exception as delete_error:
+                logger.error(
+                    f"Unexpected error deleting forwarded GIF message {after.id}: {delete_error}",
+                    exc_info=True,
+                )
+
+            # Send warning about forwarding GIFs
+            warning_message = (
+                f"{after.author.mention} Forwarding messages with GIFs is not allowed. "
+                f"Please post GIFs directly (subject to the 1 GIF per 5 minutes limit). "
+                f"This message will be deleted in 30 seconds."
+            )
+
+            warning_msg = None
+            try:
+                warning_msg = await after.channel.send(warning_message)
+            except discord.Forbidden:
+                logger.warning(f"Insufficient permissions to send forwarded GIF warning in channel {after.channel.id}")
+            except Exception as send_error:
+                logger.error(
+                    f"Failed to send forwarded GIF warning message in channel {after.channel.id}: {send_error}",
+                    exc_info=True,
+                )
+
+            if warning_msg:
+                async def delete_warning_after_delay():
+                    await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
+                    try:
+                        await warning_msg.delete()
+                    except discord.NotFound:
+                        logger.debug(f"Forwarded GIF warning message {warning_msg.id} already deleted")
+                    except discord.Forbidden:
+                        logger.warning(f"Insufficient permissions to delete forwarded GIF warning message {warning_msg.id}")
+                    except Exception as warning_delete_error:
+                        logger.error(
+                            f"Failed to delete forwarded GIF warning message {warning_msg.id}: {warning_delete_error}",
+                            exc_info=True,
+                        )
+
+                asyncio.create_task(delete_warning_after_delay())
+        else:
+            # Regular GIF added via edit (not a forward) - check rate limit
+            logger.info(f"DEBUG - GIF added via edit (not forwarded), checking rate limit for message {after.id}")
+
+            can_post_gif, seconds_remaining = await check_and_record_gif_post(
+                str(after.author.id), after.created_at
+            )
+
+            if not can_post_gif:
+                # Handle rate-limited GIF (same as in on_message)
+                user_id = str(after.author.id)
+                logger.info(f"User {after.author.id} attempted to post a GIF via edit but is rate limited")
+
+                try:
+                    await after.delete()
+                    logger.debug(f"Deleted rate-limited GIF message {after.id} (added via edit)")
+                except discord.NotFound:
+                    logger.info(f"GIF message {after.id} already deleted")
+                except discord.Forbidden:
+                    logger.warning(f"Insufficient permissions to delete GIF message {after.id}")
+                except Exception as delete_error:
+                    logger.error(
+                        f"Unexpected error deleting GIF message {after.id}: {delete_error}",
+                        exc_info=True,
+                    )
+
+                # Check if user has already been warned recently
+                now = datetime.now(timezone.utc)
+                user_warning_expiry = _gif_warned_users.get(user_id)
+
+                # Clean up expired warnings
+                expired_users = [uid for uid, expiry in _gif_warned_users.items() if expiry <= now]
+                for uid in expired_users:
+                    del _gif_warned_users[uid]
+
+                # Only send warning if user hasn't been warned recently
+                if user_warning_expiry is None or user_warning_expiry <= now:
+                    wait_text = _format_gif_cooldown(seconds_remaining)
+                    warning_message = (
+                        f"{after.author.mention} You can only post one GIF every 5 minutes. "
+                        f"Please wait {wait_text} before posting another GIF. "
+                        f"This message will be deleted in 30 seconds."
+                    )
+
+                    warning_msg = None
+                    try:
+                        warning_msg = await after.channel.send(warning_message)
+                        _gif_warned_users[user_id] = now + timedelta(minutes=5)
+                        logger.debug(f"User {user_id} warned about GIF limit")
+                    except discord.Forbidden:
+                        logger.warning(f"Insufficient permissions to send GIF warning in channel {after.channel.id}")
+                    except Exception as send_error:
+                        logger.error(
+                            f"Failed to send GIF warning message in channel {after.channel.id}: {send_error}",
+                            exc_info=True,
+                        )
+
+                    if warning_msg:
+                        async def delete_warning_after_delay():
+                            await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
+                            try:
+                                await warning_msg.delete()
+                            except discord.NotFound:
+                                logger.debug(f"GIF warning message {warning_msg.id} already deleted")
+                            except discord.Forbidden:
+                                logger.warning(f"Insufficient permissions to delete GIF warning message {warning_msg.id}")
+                            except Exception as warning_delete_error:
+                                logger.error(
+                                    f"Failed to delete GIF warning message {warning_msg.id}: {warning_delete_error}",
+                                    exc_info=True,
+                                )
+
+                        asyncio.create_task(delete_warning_after_delay())
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
