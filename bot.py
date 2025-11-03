@@ -428,7 +428,7 @@ async def on_message(message):
         return  # Message was handled (deleted), stop processing
 
     # Debug logging for all messages with references or empty content
-    if message.reference or (not message.content and message.embeds):
+    if message.reference or not message.content:
         logger.info(
             f"DEBUG - Message {message.id}: "
             f"has_reference={message.reference is not None}, "
@@ -441,30 +441,39 @@ async def on_message(message):
                 f"DEBUG - Reference details: "
                 f"message_id={message.reference.message_id}, "
                 f"channel_id={message.reference.channel_id}, "
-                f"current_channel_id={message.channel.id}"
+                f"current_channel_id={message.channel.id}, "
+                f"same_channel={message.reference.channel_id == message.channel.id}"
             )
         if message.embeds:
             for i, embed in enumerate(message.embeds):
                 logger.info(
                     f"DEBUG - Embed {i}: type={embed.type}, "
                     f"url={getattr(embed, 'url', None)}, "
-                    f"image_url={getattr(getattr(embed, 'image', None), 'url', None)}"
+                    f"image_url={getattr(getattr(embed, 'image', None), 'url', None)}, "
+                    f"thumbnail_url={getattr(getattr(embed, 'thumbnail', None), 'url', None)}"
                 )
+        else:
+            logger.info(f"DEBUG - Message {message.id}: NO EMBEDS YET (may load later via edit event)")
 
     # Enforce GIF posting limits for regular users
     has_gif = message_contains_gif(message)
     logger.info(f"DEBUG - Message {message.id}: message_contains_gif={has_gif}")
 
     if not message.author.bot and has_gif:
-        # Check if this is a forwarded message from another channel
+        # Check if this is a forwarded message
+        # Forwarded messages have a reference AND empty content (no text added by user)
+        # Regular replies have a reference but usually have content
         is_forwarded = (
             message.reference
             and message.reference.message_id
-            and message.reference.channel_id != message.channel.id
+            and not message.content.strip()  # Empty or whitespace-only content indicates a forward
         )
 
         logger.info(
-            f"DEBUG - GIF detected in message {message.id}: is_forwarded={is_forwarded}"
+            f"DEBUG - GIF detected in message {message.id}: "
+            f"is_forwarded={is_forwarded}, "
+            f"has_reference={message.reference is not None}, "
+            f"content_empty={not message.content.strip() if message.content else True}"
         )
 
         # Block all forwarded messages with GIFs to prevent bypassing rate limits
