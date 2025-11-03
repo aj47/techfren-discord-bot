@@ -427,8 +427,35 @@ async def on_message(message):
     if handled_by_links_dump:
         return  # Message was handled (deleted), stop processing
 
+    # Debug logging for all messages with references or empty content
+    if message.reference or (not message.content and message.embeds):
+        logger.info(
+            f"DEBUG - Message {message.id}: "
+            f"has_reference={message.reference is not None}, "
+            f"content_length={len(message.content)}, "
+            f"embeds_count={len(message.embeds)}, "
+            f"attachments_count={len(message.attachments)}"
+        )
+        if message.reference:
+            logger.info(
+                f"DEBUG - Reference details: "
+                f"message_id={message.reference.message_id}, "
+                f"channel_id={message.reference.channel_id}, "
+                f"current_channel_id={message.channel.id}"
+            )
+        if message.embeds:
+            for i, embed in enumerate(message.embeds):
+                logger.info(
+                    f"DEBUG - Embed {i}: type={embed.type}, "
+                    f"url={getattr(embed, 'url', None)}, "
+                    f"image_url={getattr(getattr(embed, 'image', None), 'url', None)}"
+                )
+
     # Enforce GIF posting limits for regular users
-    if not message.author.bot and message_contains_gif(message):
+    has_gif = message_contains_gif(message)
+    logger.info(f"DEBUG - Message {message.id}: message_contains_gif={has_gif}")
+
+    if not message.author.bot and has_gif:
         # Check if this is a forwarded message from another channel
         is_forwarded = (
             message.reference
@@ -436,17 +463,9 @@ async def on_message(message):
             and message.reference.channel_id != message.channel.id
         )
 
-        # Debug logging for forwarded message detection
-        if message.reference:
-            logger.debug(
-                f"Message {message.id} has reference: "
-                f"message_id={message.reference.message_id}, "
-                f"channel_id={message.reference.channel_id}, "
-                f"current_channel_id={message.channel.id}, "
-                f"is_forwarded={is_forwarded}, "
-                f"content_length={len(message.content)}, "
-                f"embeds_count={len(message.embeds)}"
-            )
+        logger.info(
+            f"DEBUG - GIF detected in message {message.id}: is_forwarded={is_forwarded}"
+        )
 
         # Block all forwarded messages with GIFs to prevent bypassing rate limits
         if is_forwarded:
@@ -710,8 +729,15 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     before_had_gif = message_contains_gif(before)
     after_has_gif = message_contains_gif(after)
 
+    logger.info(
+        f"DEBUG - on_message_edit: message {after.id}, "
+        f"before_had_gif={before_had_gif}, after_has_gif={after_has_gif}, "
+        f"before_embeds={len(before.embeds)}, after_embeds={len(after.embeds)}"
+    )
+
     if after_has_gif and not before_had_gif:
         # A GIF was added via edit - treat as a new GIF post
+        logger.info(f"DEBUG - GIF added via edit, re-processing message {after.id}")
         await on_message(after)
 
 # Helper function for slash command handling
