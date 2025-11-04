@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS daily_point_awards (
     date TEXT NOT NULL,
     points_awarded INTEGER NOT NULL,
     reason TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id, date)
 );
 """
 
@@ -925,12 +926,27 @@ def award_points_to_user(
         author_id (str): The Discord user ID
         author_name (str): The username
         guild_id (str): The Discord guild ID
-        points (int): Number of points to award
+        points (int): Number of points to award (must be 1-20)
 
     Returns:
         bool: True if successful, False otherwise
     """
     try:
+        # Validate author_id is present
+        if not author_id or not author_id.strip():
+            logger.error("Cannot award points: author_id is empty or None")
+            return False
+
+        # Validate points are positive (reject zero or negative)
+        if points <= 0:
+            logger.warning(f"Skipping point award for {author_name}: points={points} (must be > 0)")
+            return False
+
+        # Clamp points to maximum of 20 per award
+        if points > 20:
+            logger.warning(f"Clamping points for {author_name} from {points} to 20 (max per user per day)")
+            points = 20
+
         with get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1049,17 +1065,45 @@ def store_daily_point_award(
         author_name (str): The username
         guild_id (str): The Discord guild ID
         date (datetime): The date of the award
-        points (int): Number of points awarded
+        points (int): Number of points awarded (must be 1-20)
         reason (str): Reason for the award
 
     Returns:
         bool: True if successful, False otherwise
     """
     try:
+        # Validate author_id is present
+        if not author_id or not author_id.strip():
+            logger.error("Cannot store daily point award: author_id is empty or None")
+            return False
+
+        # Validate points are within acceptable range (1-20)
+        if points <= 0:
+            logger.warning(f"Skipping award for {author_name}: points={points} (must be > 0)")
+            return False
+
+        if points > 20:
+            logger.warning(f"Clamping points for {author_name} from {points} to 20 (max per user)")
+            points = 20
+
         date_str = date.strftime('%Y-%m-%d')
 
         with get_connection() as conn:
             cursor = conn.cursor()
+
+            # Check if award already exists for this user/guild/date
+            cursor.execute(
+                """
+                SELECT points_awarded FROM daily_point_awards
+                WHERE author_id = ? AND guild_id = ? AND date = ?
+                """,
+                (author_id, guild_id, date_str)
+            )
+
+            existing = cursor.fetchone()
+            if existing:
+                logger.warning(f"Points already awarded to {author_name} ({author_id}) on {date_str}. Skipping duplicate.")
+                return False
 
             cursor.execute(
                 """
@@ -1082,6 +1126,10 @@ def store_daily_point_award(
 
         logger.info(f"Stored daily point award for {author_name} ({author_id}): {points} points for {reason}")
         return True
+    except sqlite3.IntegrityError as e:
+        # This handles the UNIQUE constraint violation as a backup
+        logger.warning(f"Duplicate daily point award prevented for {author_name} ({author_id}) on {date.strftime('%Y-%m-%d')}: {str(e)}")
+        return False
     except Exception as e:
         logger.error(f"Error storing daily point award: {str(e)}", exc_info=True)
         return False

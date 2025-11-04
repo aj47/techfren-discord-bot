@@ -706,19 +706,76 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
             if "summary" not in result:
                 result["summary"] = "Point analysis completed."
 
-            # Ensure total_awarded is present
-            if "total_awarded" not in result and result.get("awards"):
-                result["total_awarded"] = sum(award.get("points", 0) for award in result["awards"])
+            # Sanitize awards: validate author_id and points
+            sanitized_awards = []
+            for award in result.get("awards", []):
+                author_id = award.get("author_id", "").strip()
+                author_name = award.get("author_name", "Unknown")
+                points = award.get("points", 0)
+                reason = award.get("reason", "")
 
-            # Validate that total points don't exceed max_points
-            total_awarded = sum(award.get("points", 0) for award in result["awards"])
+                # Skip awards with missing/empty author_id
+                if not author_id:
+                    logger.warning(f"Skipping award with missing author_id: {award}")
+                    continue
+
+                # Skip awards with zero or negative points
+                if points <= 0:
+                    logger.warning(f"Skipping award for {author_name} with points={points}")
+                    continue
+
+                # Clamp individual awards to max 20 points
+                if points > 20:
+                    logger.warning(f"Clamping {author_name} points from {points} to 20")
+                    points = 20
+
+                sanitized_awards.append({
+                    "author_id": author_id,
+                    "author_name": author_name,
+                    "points": points,
+                    "reason": reason
+                })
+
+            # Calculate total after sanitization
+            total_awarded = sum(award["points"] for award in sanitized_awards)
+
+            # Enforce max_points pool cap
             if total_awarded > max_points:
-                logger.warning(f"Total points awarded ({total_awarded}) exceeds max ({max_points}). Scaling down.")
-                # Scale down proportionally
+                logger.warning(f"Total points ({total_awarded}) exceeds pool ({max_points}). Applying strict scaling.")
+
+                # Sort by points descending to prioritize top contributors
+                sanitized_awards.sort(key=lambda x: x["points"], reverse=True)
+
+                # Scale down proportionally, but enforce minimum of 1 point per award
                 scale_factor = max_points / total_awarded
-                for award in result["awards"]:
-                    award["points"] = max(1, int(award["points"] * scale_factor))
-                result["total_awarded"] = sum(award.get("points", 0) for award in result["awards"])
+                running_total = 0
+                final_awards = []
+
+                for award in sanitized_awards:
+                    scaled_points = int(award["points"] * scale_factor)
+                    # Ensure at least 1 point, but stop if we'd exceed the pool
+                    scaled_points = max(1, scaled_points)
+
+                    if running_total + scaled_points <= max_points:
+                        award["points"] = scaled_points
+                        running_total += scaled_points
+                        final_awards.append(award)
+                    elif running_total < max_points:
+                        # Award remaining points to this user
+                        award["points"] = max_points - running_total
+                        running_total = max_points
+                        final_awards.append(award)
+                        break
+                    else:
+                        # Pool exhausted, skip remaining users
+                        logger.warning(f"Pool exhausted, skipping award for {award['author_name']}")
+                        break
+
+                sanitized_awards = final_awards
+                total_awarded = running_total
+
+            result["awards"] = sanitized_awards
+            result["total_awarded"] = total_awarded
 
             logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points")
             return result

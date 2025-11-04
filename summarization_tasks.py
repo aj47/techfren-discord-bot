@@ -132,8 +132,13 @@ async def daily_channel_summarization():
                 point_awards_result = await analyze_messages_for_points(all_messages_for_points, max_points=50)
 
                 if point_awards_result and point_awards_result.get('awards'):
-                    # Get a representative guild_id (use the first one we find)
-                    guild_id = all_messages_for_points[0].get('guild_id') if all_messages_for_points else None
+                    # Get a representative guild_id (use the first message with a valid guild_id)
+                    guild_id = None
+                    for msg in all_messages_for_points:
+                        msg_guild_id = msg.get('guild_id')
+                        if msg_guild_id:
+                            guild_id = msg_guild_id
+                            break
 
                     if guild_id:
                         for award in point_awards_result['awards']:
@@ -252,7 +257,7 @@ async def post_daily_summary_with_points(date, point_awards_result):
         for part in message_parts:
             await general_channel.send(part, allowed_mentions=discord.AllowedMentions.none())
 
-        logger.info(f"Posted daily summary with points to general channel")
+        logger.info("Posted daily summary with points to general channel")
     except Exception as e:
         logger.error(f"Error posting daily summary with points: {str(e)}", exc_info=True)
 
