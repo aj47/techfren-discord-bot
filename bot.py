@@ -436,7 +436,8 @@ async def on_message(message):
         """
         if depth >= max_depth:
             logger.warning(f"Reference chain depth limit reached ({max_depth})")
-            return False, depth, False
+            # Fail closed: treat unresolved depth as an external GIF to avoid bypasses
+            return True, depth, True
         
         if not msg.reference or not msg.reference.message_id:
             return False, depth, False
