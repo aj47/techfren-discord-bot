@@ -21,7 +21,7 @@ from config_validator import validate_config # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
-from gif_limiter import check_and_record_gif_post
+from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 GIF_URL_PATTERN = re.compile(r"https?://\S+\.gif(?:\?\S*)?", re.IGNORECASE)
@@ -508,19 +508,18 @@ async def on_message(message):
             )
             
             if chain_has_gif or current_has_gif:
-                # Check if user can post a GIF (rate limit check)
-                can_post_gif, seconds_remaining = await check_and_record_gif_post(
+                # Check if user can post a GIF (read-only check, will record later)
+                can_post_gif, seconds_remaining = await check_gif_rate_limit(
                     str(message.author.id), message.created_at
                 )
                 
                 if can_post_gif:
-                    # User is allowed to post - let the forward through
-                    # It's already been recorded as a GIF post
+                    # User is allowed to post - let the forward through (will be recorded below)
                     logger.info(
                         f"Forward/reply with GIF allowed - User: {message.author.id} | "
                         f"Chain GIF: {chain_has_gif} | Current GIF: {current_has_gif}"
                     )
-                    # Don't block, let it continue processing normally
+                    # Continue to record the GIF post below in the direct GIF handler
                 else:
                     # User is rate limited - block the forward
                     logger.info(
@@ -541,7 +540,7 @@ async def on_message(message):
                     # Send rate limit warning with wait time
                     wait_text = _format_gif_cooldown(seconds_remaining)
                     warning_message = (
-                        f"{message.author.mention} You can only post one GIF every 15 minutes. "
+                        f"{message.author.mention} You can only post one GIF every 5 minutes. "
                         f"Please wait {wait_text} before posting another GIF. "
                         f"This message will be deleted in 30 seconds."
                     )
