@@ -22,6 +22,7 @@ from command_handler import handle_bot_command, handle_sum_day_command, handle_s
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
+from role_manager import RoleManager
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 GIF_URL_PATTERN = re.compile(r"https?://\S+\.gif(?:\?\S*)?", re.IGNORECASE)
@@ -912,6 +913,69 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     """Slash command version of /sum-hr"""
     # Immediately defer to avoid timeout, then do validation in wrapper
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
+
+# Role Management Slash Commands
+@bot.tree.command(name="join", description="Join a self-assignable role")
+@discord.app_commands.describe(
+    role="The role you want to join (voice-gang or live-gang)"
+)
+@discord.app_commands.choices(role=[
+    discord.app_commands.Choice(name="Voice Gang - Get pinged for voice chats", value="voice-gang"),
+    discord.app_commands.Choice(name="Live Gang - Get notified when streams start", value="live-gang")
+])
+async def join_role(interaction: discord.Interaction, role: discord.app_commands.Choice[str]):
+    """Allow users to self-assign to approved roles"""
+    await interaction.response.defer(ephemeral=True)
+
+    success, message = await RoleManager.add_role_to_member(
+        interaction.user,
+        role.value
+    )
+
+    await interaction.followup.send(message, ephemeral=True)
+
+@bot.tree.command(name="leave", description="Leave a self-assignable role")
+@discord.app_commands.describe(
+    role="The role you want to leave (voice-gang or live-gang)"
+)
+@discord.app_commands.choices(role=[
+    discord.app_commands.Choice(name="Voice Gang", value="voice-gang"),
+    discord.app_commands.Choice(name="Live Gang", value="live-gang")
+])
+async def leave_role(interaction: discord.Interaction, role: discord.app_commands.Choice[str]):
+    """Allow users to remove self-assigned roles"""
+    await interaction.response.defer(ephemeral=True)
+
+    success, message = await RoleManager.remove_role_from_member(
+        interaction.user,
+        role.value
+    )
+
+    await interaction.followup.send(message, ephemeral=True)
+
+@bot.tree.command(name="roles", description="List available self-assignable roles")
+async def list_roles(interaction: discord.Interaction):
+    """Show users which roles they can self-assign"""
+    embed = discord.Embed(
+        title="📋 Self-Assignable Roles",
+        description="Use `/join` to add these roles, `/leave` to remove them",
+        color=discord.Color.blue()
+    )
+
+    for role_key, role_name in RoleManager.ALLOWED_ROLES.items():
+        role = discord.utils.get(interaction.guild.roles, name=role_name)
+        has_role = role in interaction.user.roles if role else False
+        status = "✅ You have this" if has_role else "⬜ Available"
+
+        description = RoleManager.get_role_description(role_key)
+
+        embed.add_field(
+            name=f"{status} — {role.mention if role else role_name}",
+            value=description,
+            inline=False
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 try:
     logger.info("Starting bot...")
