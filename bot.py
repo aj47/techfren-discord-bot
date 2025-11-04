@@ -14,7 +14,7 @@ import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
-from message_utils import split_long_message # Import message utility functions
+from message_utils import split_long_message, fetch_referenced_message # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
 from config_validator import validate_config # Import config validator
@@ -427,8 +427,168 @@ async def on_message(message):
     if handled_by_links_dump:
         return  # Message was handled (deleted), stop processing
 
-    # Enforce GIF posting limits for regular users
-    if not message.author.bot and message_contains_gif(message):
+    # Helper function to recursively check reference chain for GIFs
+    async def check_reference_chain_for_gif(msg, depth=0, max_depth=5):
+        """
+        Recursively follow message references to check if any message in the chain contains a GIF.
+        Returns (has_gif, chain_depth, is_external) tuple.
+        is_external=True means the reference is from a channel/server the bot can't access.
+        """
+        if depth >= max_depth:
+            logger.warning(f"Reference chain depth limit reached ({max_depth})")
+            return False, depth, False
+        
+        if not msg.reference or not msg.reference.message_id:
+            return False, depth, False
+        
+        try:
+            # Use existing utility to fetch referenced message (handles caching, cross-channel refs)
+            ref_msg = await fetch_referenced_message(msg)
+            
+            if ref_msg is None:
+                # Determine why we couldn't fetch: external server or deleted message
+                ref_channel = bot.get_channel(msg.reference.channel_id) if msg.reference.channel_id else msg.channel
+                if ref_channel is None:
+                    logger.info(
+                        f"Chain[{depth}] Cannot access channel {msg.reference.channel_id} - "
+                        f"likely external server or no permission"
+                    )
+                    return True, depth, True  # Block external forwards we can't verify
+                else:
+                    # Channel exists but message couldn't be fetched (likely deleted or no permission)
+                    logger.info(f"Chain[{depth}] Message {msg.reference.message_id} not accessible")
+                    return False, depth, False  # Allow if just deleted
+            
+            # Successfully fetched message
+            has_gif = message_contains_gif(ref_msg)
+            logger.info(
+                f"Chain[{depth}] msg {ref_msg.id} - "
+                f"GIF: {has_gif} | "
+                f"Embeds: {len(ref_msg.embeds)} | "
+                f"Has ref: {ref_msg.reference is not None}"
+            )
+            
+            if has_gif:
+                return True, depth, False
+            
+            # Continue following the chain
+            if ref_msg.reference:
+                return await check_reference_chain_for_gif(ref_msg, depth + 1, max_depth)
+            
+            return False, depth, False
+        except Exception as e:
+            logger.error(f"Error checking chain at depth {depth}: {e}")
+            return False, depth, False
+        
+        return False, depth, False
+    
+    # Check if this message references another message (reply or forward)
+    # This must happen BEFORE the GIF check because forwards might not have GIF content loaded yet
+    if not message.author.bot and message.reference and message.reference.message_id:
+        try:
+            logger.info(f"Reference detected - User: {message.author.id} | Ref: {message.reference.message_id}")
+            
+            # Log embed details of current message if present
+            if message.embeds:
+                for i, embed in enumerate(message.embeds):
+                    logger.info(
+                        f"Current msg embed {i}: "
+                        f"type={getattr(embed, 'type', None)} | "
+                        f"url={getattr(embed, 'url', None)}"
+                    )
+            
+            # Check if the CURRENT message (the forward) contains a GIF
+            current_has_gif = message_contains_gif(message)
+            
+            # Check the entire reference chain for GIFs
+            chain_has_gif, chain_depth, is_external = await check_reference_chain_for_gif(message)
+            logger.info(
+                f"Chain check complete - GIF: {chain_has_gif} | "
+                f"Depth: {chain_depth} | External: {is_external}"
+            )
+            
+            if chain_has_gif or current_has_gif:
+                # Check if user can post a GIF (rate limit check)
+                can_post_gif, seconds_remaining = await check_and_record_gif_post(
+                    str(message.author.id), message.created_at
+                )
+                
+                if can_post_gif:
+                    # User is allowed to post - let the forward through
+                    # It's already been recorded as a GIF post
+                    logger.info(
+                        f"Forward/reply with GIF allowed - User: {message.author.id} | "
+                        f"Chain GIF: {chain_has_gif} | Current GIF: {current_has_gif}"
+                    )
+                    # Don't block, let it continue processing normally
+                else:
+                    # User is rate limited - block the forward
+                    logger.info(
+                        f"Blocking forward/reply (rate limited) - User: {message.author.id} | "
+                        f"Wait: {seconds_remaining}s"
+                    )
+                    
+                    # Delete the forward/reply
+                    try:
+                        await message.delete()
+                    except discord.NotFound:
+                        pass
+                    except discord.Forbidden:
+                        logger.warning(f"No permission to delete message {message.id}")
+                    except Exception as delete_error:
+                        logger.error(f"Error deleting message: {delete_error}", exc_info=True)
+                    
+                    # Send rate limit warning with wait time
+                    wait_text = _format_gif_cooldown(seconds_remaining)
+                    warning_message = (
+                        f"{message.author.mention} You can only post one GIF every 15 minutes. "
+                        f"Please wait {wait_text} before posting another GIF. "
+                        f"This message will be deleted in 30 seconds."
+                    )
+                    
+                    warning_msg = None
+                    try:
+                        warning_msg = await message.channel.send(warning_message)
+                    except Exception as send_error:
+                        logger.error(f"Error sending rate limit warning: {send_error}", exc_info=True)
+                    
+                    if warning_msg:
+                        async def delete_warning_after_delay():
+                            await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
+                            try:
+                                await warning_msg.delete()
+                            except Exception:
+                                pass
+                        
+                        asyncio.create_task(delete_warning_after_delay())
+                    
+                    return  # Stop processing this message
+        except discord.NotFound:
+            pass  # Referenced message not found
+        except discord.Forbidden:
+            logger.warning(f"No permission to fetch referenced message {message.reference.message_id}")
+        except Exception as ref_error:
+            logger.error(f"Error fetching referenced message: {ref_error}", exc_info=True)
+    
+    # Check if message contains GIF (for all non-bot messages)
+    has_gif = False
+    if not message.author.bot:
+        has_gif = message_contains_gif(message)
+        if has_gif:
+            logger.info(f"Direct GIF detected - User: {message.author.id} | Embeds: {len(message.embeds)}")
+            
+            # Log embed details
+            if message.embeds:
+                for i, embed in enumerate(message.embeds):
+                    logger.info(
+                        f"GIF embed {i}: "
+                        f"type={getattr(embed, 'type', None)} | "
+                        f"url={getattr(embed, 'url', None)}"
+                    )
+    
+    # Enforce GIF posting limits for regular users (rate limiting only, forwards already handled above)
+    if not message.author.bot and has_gif:
+        # Check rate limit for direct GIF posts (forwards already blocked above)
         can_post_gif, seconds_remaining = await check_and_record_gif_post(
             str(message.author.id), message.created_at
         )
@@ -436,7 +596,7 @@ async def on_message(message):
         if not can_post_gif:
             user_id = str(message.author.id)
             logger.info(
-                "User %s attempted to post a GIF but is rate limited", message.author.id
+                f"Rate limited - User: {message.author.id} | Wait: {seconds_remaining}s"
             )
 
             # Delete the GIF message
@@ -620,12 +780,10 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     if after.author == bot.user or after.author.bot:
         return
 
-    # Only enforce if a NEW GIF was added (didn't contain GIF before, but does now)
-    before_had_gif = message_contains_gif(before)
-    after_has_gif = message_contains_gif(after)
-
-    if after_has_gif and not before_had_gif:
-        # A GIF was added via edit - treat as a new GIF post
+    # Only enforce if the message NOW contains a GIF (didn't before, or still does)
+    if message_contains_gif(after):
+        logger.info(f"GIF in edited message - User: {after.author.id}")
+        # Reuse the same enforcement logic by treating it as a new message check
         await on_message(after)
 
 # Helper function for slash command handling
