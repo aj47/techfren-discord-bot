@@ -603,6 +603,26 @@ IMPORTANT GUIDELINES:
 - Each user can receive between 1-20 points depending on their contribution level
 - Include a brief reason (1-2 sentences) for each award
 
+CRITICAL - ANTI-GAMING RULES:
+- DETECT AND PENALIZE spam or gaming behavior (repetitive messages, superficial comments, excessive posting)
+- DO NOT award points for:
+  * Generic responses like "thanks", "cool", "nice" without substance
+  * Repetitive or copy-paste messages
+  * Excessive volume without depth (quantity over quality)
+  * Artificial helpfulness that lacks genuine engagement
+  * Short messages that don't add value to the conversation
+- PRIORITIZE quality over quantity - one insightful message is worth more than 20 shallow ones
+- Look for DEPTH: detailed explanations, thoughtful questions, substantive discussions
+- Users who post 50+ messages should be scrutinized - are they being genuinely helpful or just spamming?
+- If you suspect gaming behavior, award 0 points to that user
+- Be STRICT and CONSERVATIVE - when in doubt, don't award points
+
+EVALUATION CRITERIA:
+1. Depth: Does the message show genuine thought and effort?
+2. Uniqueness: Is it repetitive or does it add new value?
+3. Impact: Did it actually help someone or advance the discussion?
+4. Authenticity: Does it feel genuine or like point-farming?
+
 Messages to analyze:
 {messages_text}
 
@@ -620,7 +640,7 @@ Respond with a JSON object in this exact format:
     "summary": "Brief 1-2 sentence overview of today's point distribution"
 }}
 
-Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions."""
+Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions. Be strict about gaming detection."""
 
         logger.info(f"Calling LLM API for point analysis of {len(messages)} messages")
 
