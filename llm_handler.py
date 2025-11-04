@@ -547,3 +547,173 @@ Format your response exactly as follows:
     except Exception as e:
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
         return None
+
+async def analyze_messages_for_points(messages, max_points=50):
+    """
+    Call the LLM API to analyze messages and determine point awards based on community value.
+
+    Args:
+        messages (list): List of message dictionaries with author_id, author_name, content
+        max_points (int): Maximum total points to award (default: 50)
+
+    Returns:
+        dict: Dictionary with 'awards' (list of user awards) and 'summary' (explanation text)
+              Returns None if the analysis fails
+    """
+    try:
+        if not messages:
+            return {
+                'awards': [],
+                'summary': 'No messages to analyze for point awards.'
+            }
+
+        # Prepare messages for analysis
+        formatted_messages_text = []
+        for msg in messages:
+            author_name = msg.get('author_name', 'Unknown')
+            content = msg.get('content', '')
+            author_id = msg.get('author_id', '')
+
+            # Include author_id for tracking
+            message_text = f"[User: {author_name} (ID: {author_id})] {content}"
+            formatted_messages_text.append(message_text)
+
+        # Join messages
+        messages_text = "\n".join(formatted_messages_text)
+
+        # Truncate if too long
+        max_input_length = 60000
+        if len(messages_text) > max_input_length:
+            messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
+
+        # Create the prompt for point analysis
+        prompt = f"""Analyze the following Discord messages from the past 24 hours and award points to users based on their contributions to the community. The total pool is {max_points} points per day.
+
+Award points based on:
+- Being supportive and helpful to other members
+- Providing technical help or answering questions
+- Being the first to share relevant tech news or interesting links
+- Contributing valuable insights or starting meaningful discussions
+- Creating a positive, welcoming community atmosphere
+
+IMPORTANT GUIDELINES:
+- You do NOT have to award all {max_points} points if contributions don't warrant it
+- Only award points for genuine, valuable contributions
+- Award between 0 and {max_points} points total across all users
+- Each user can receive between 1-20 points depending on their contribution level
+- Include a brief reason (1-2 sentences) for each award
+
+Messages to analyze:
+{messages_text}
+
+Respond with a JSON object in this exact format:
+{{
+    "awards": [
+        {{
+            "author_id": "user_discord_id",
+            "author_name": "username",
+            "points": 15,
+            "reason": "Brief explanation of why they earned points"
+        }}
+    ],
+    "total_awarded": 30,
+    "summary": "Brief 1-2 sentence overview of today's point distribution"
+}}
+
+Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions."""
+
+        logger.info(f"Calling LLM API for point analysis of {len(messages)} messages")
+
+        # Check if Perplexity API key exists
+        if not hasattr(config, 'perplexity') or not config.perplexity:
+            logger.error("Perplexity API key not found in config.py or is empty")
+            return None
+
+        # Initialize the OpenAI client with Perplexity base URL
+        openai_client = AsyncOpenAI(
+            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
+            api_key=config.perplexity,
+            timeout=60.0
+        )
+
+        # Get the model from config
+        model = getattr(config, 'llm_model', "sonar")
+
+        # Make the API request
+        completion = await openai_client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
+                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
+            },
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"You are an AI that analyzes Discord community contributions and awards points fairly. You have a daily pool of {max_points} points to distribute based on value provided to the community. Be discerning - only award points for genuine contributions. Respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=1500,
+            temperature=0.3  # Lower temperature for more consistent analysis
+        )
+
+        # Extract the response
+        response_text = completion.choices[0].message.content
+        logger.info(f"LLM point analysis received: {response_text[:100]}...")
+
+        # Parse the JSON response
+        try:
+            # Find JSON between triple backticks if present
+            if "```json" in response_text and "```" in response_text.split("```json", 1)[1]:
+                json_str = response_text.split("```json", 1)[1].split("```", 1)[0].strip()
+            elif "```" in response_text and "```" in response_text.split("```", 1)[1]:
+                json_str = response_text.split("```", 1)[1].split("```", 1)[0].strip()
+            else:
+                # If no backticks, try to parse the whole response
+                json_str = response_text.strip()
+
+            # Parse the JSON
+            result = json.loads(json_str)
+
+            # Validate structure
+            if "awards" not in result:
+                logger.warning(f"LLM response missing 'awards' field: {result}")
+                result["awards"] = []
+
+            if "summary" not in result:
+                result["summary"] = "Point analysis completed."
+
+            # Ensure total_awarded is present
+            if "total_awarded" not in result and result.get("awards"):
+                result["total_awarded"] = sum(award.get("points", 0) for award in result["awards"])
+
+            # Validate that total points don't exceed max_points
+            total_awarded = sum(award.get("points", 0) for award in result["awards"])
+            if total_awarded > max_points:
+                logger.warning(f"Total points awarded ({total_awarded}) exceeds max ({max_points}). Scaling down.")
+                # Scale down proportionally
+                scale_factor = max_points / total_awarded
+                for award in result["awards"]:
+                    award["points"] = max(1, int(award["points"] * scale_factor))
+                result["total_awarded"] = sum(award.get("points", 0) for award in result["awards"])
+
+            logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points")
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from LLM point analysis: {e}", exc_info=True)
+            logger.error(f"Raw response: {response_text}")
+            return {
+                'awards': [],
+                'summary': 'Failed to analyze messages for points due to parsing error.'
+            }
+
+    except asyncio.TimeoutError:
+        logger.error("LLM API request timed out during point analysis")
+        return None
+    except Exception as e:
+        logger.error(f"Error analyzing messages for points: {str(e)}", exc_info=True)
+        return None

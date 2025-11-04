@@ -47,11 +47,12 @@ if not firecrawl_api_key:
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
 # Daily Summary Configuration (optional)
-# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID
+# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, GENERAL_CHANNEL_ID
 # Default time: 00:00 UTC
 summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
 summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
+general_channel_id = os.getenv('GENERAL_CHANNEL_ID')
 
 # Links Dump Channel Configuration (optional)
 # Environment variable: LINKS_DUMP_CHANNEL_ID
