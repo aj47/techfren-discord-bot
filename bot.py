@@ -521,9 +521,44 @@ async def on_message(message):
                     )
                     # Record the GIF post now (don't rely on direct GIF handler for forwards)
                     if chain_has_gif and not current_has_gif:
-                        # This is a forward without a direct GIF - record it here
-                        from gif_limiter import check_and_record_gif_post
-                        await check_and_record_gif_post(str(message.author.id), message.created_at)
+                        recorded, record_seconds_remaining = await check_and_record_gif_post(
+                            str(message.author.id), message.created_at
+                        )
+                        if not recorded:
+                            logger.info(
+                                f"Blocking forward/reply (race-triggered rate limit) - "
+                                f"User: {message.author.id} | Wait: {record_seconds_remaining}s"
+                            )
+                            try:
+                                await message.delete()
+                            except discord.NotFound:
+                                pass
+                            except discord.Forbidden:
+                                logger.warning(f"No permission to delete message {message.id}")
+                            except Exception as delete_error:
+                                logger.error(f"Error deleting message: {delete_error}", exc_info=True)
+
+                            wait_text = _format_gif_cooldown(record_seconds_remaining)
+                            warning_message = (
+                                f"{message.author.mention} You can only post one GIF every 5 minutes. "
+                                f"Please wait {wait_text} before posting another GIF. "
+                                f"This message will be deleted in 30 seconds."
+                            )
+                            warning_msg = None
+                            try:
+                                warning_msg = await message.channel.send(warning_message)
+                            except Exception as send_error:
+                                logger.error(f"Error sending rate limit warning: {send_error}", exc_info=True)
+                            if warning_msg:
+                                async def delete_warning_after_delay():
+                                    await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
+                                    try:
+                                        await warning_msg.delete()
+                                    except Exception:
+                                        pass
+                                asyncio.create_task(delete_warning_after_delay())
+                            return
+
                         logger.info(f"Recorded forwarded GIF for user {message.author.id}")
                     # If current_has_gif is also True, it will be recorded below in the direct handler
                 else:
