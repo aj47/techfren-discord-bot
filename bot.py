@@ -292,8 +292,53 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                     logger.warning("Apify API token not configured, skipping X post summarization")
                     continue
 
-                # Send a "processing" message
-                processing_msg = await message.reply("🔄 Fetching and summarizing X post...")
+                # Create or get existing thread from the message
+                thread = None
+                try:
+                    # Try to create a thread from the message
+                    from apify_handler import extract_tweet_id
+                    tweet_id = extract_tweet_id(url)
+                    thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
+                    thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
+                    # Join the thread to ensure it's visible and active
+                    await thread.join()
+                    logger.info(f"Created and joined thread {thread.id} for message {message.id}")
+                except discord.errors.HTTPException as e:
+                    if e.code == 160004:  # Thread already exists
+                        logger.info(f"Thread already exists for message {message.id}, fetching it")
+                        # Get the existing thread
+                        # Discord doesn't provide a direct way to get thread from message, so we need to search
+                        if isinstance(message.channel, discord.TextChannel):
+                            # Search through active threads
+                            for active_thread in message.channel.threads:
+                                if active_thread.id == message.id or (hasattr(active_thread, 'starter_message') and active_thread.starter_message and active_thread.starter_message.id == message.id):
+                                    thread = active_thread
+                                    break
+
+                            # If not found in active threads, search archived threads
+                            if not thread:
+                                async for archived_thread in message.channel.archived_threads(limit=100):
+                                    if archived_thread.id == message.id or (hasattr(archived_thread, 'starter_message') and archived_thread.starter_message and archived_thread.starter_message.id == message.id):
+                                        thread = archived_thread
+                                        break
+                    else:
+                        raise
+
+                if not thread:
+                    logger.error(f"Could not create or find thread for message {message.id}")
+                    continue
+
+                # Ensure bot is a member of the thread (important for visibility)
+                try:
+                    if not thread.me:
+                        await thread.join()
+                        logger.info(f"Joined existing thread {thread.id}")
+                except Exception as e:
+                    logger.warning(f"Could not join thread {thread.id}: {e}")
+
+                # Send a "processing" message in the thread
+                processing_msg = await thread.send("🔄 Fetching and summarizing X post...")
+                logger.info(f"Sent processing message {processing_msg.id} to thread {thread.id} (thread name: {thread.name})")
 
                 # Scrape the X/Twitter content
                 scraped_result = await scrape_twitter_content(url)
@@ -329,11 +374,13 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 response = "\n".join(response_parts)
 
                 # Update the processing message with the summary
-                # Split if too long (Discord has 2000 char limit)
+                # Split if too long (Discord thread messages have 2000 char limit)
                 if len(response) > 1900:
                     await processing_msg.edit(content=response[:1900] + "...")
+                    logger.info(f"Posted truncated summary ({len(response)} chars) to thread {thread.id}")
                 else:
                     await processing_msg.edit(content=response)
+                    logger.info(f"Posted complete summary ({len(response)} chars) to thread {thread.id}")
 
                 # Store the scraped data in the database
                 key_points_json = json.dumps(key_points)
