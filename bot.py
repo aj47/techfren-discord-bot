@@ -514,12 +514,18 @@ async def on_message(message):
                 )
                 
                 if can_post_gif:
-                    # User is allowed to post - let the forward through (will be recorded below)
+                    # User is allowed to post - record it and let the forward through
                     logger.info(
                         f"Forward/reply with GIF allowed - User: {message.author.id} | "
                         f"Chain GIF: {chain_has_gif} | Current GIF: {current_has_gif}"
                     )
-                    # Continue to record the GIF post below in the direct GIF handler
+                    # Record the GIF post now (don't rely on direct GIF handler for forwards)
+                    if chain_has_gif and not current_has_gif:
+                        # This is a forward without a direct GIF - record it here
+                        from gif_limiter import check_and_record_gif_post
+                        await check_and_record_gif_post(str(message.author.id), message.created_at)
+                        logger.info(f"Recorded forwarded GIF for user {message.author.id}")
+                    # If current_has_gif is also True, it will be recorded below in the direct handler
                 else:
                     # User is rate limited - block the forward
                     logger.info(
@@ -779,9 +785,12 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     if after.author == bot.user or after.author.bot:
         return
 
-    # Only enforce if the message NOW contains a GIF (didn't before, or still does)
-    if message_contains_gif(after):
-        logger.info(f"GIF in edited message - User: {after.author.id}")
+    # Only enforce if the message NOW contains a GIF that wasn't there before
+    before_has_gif = message_contains_gif(before)
+    after_has_gif = message_contains_gif(after)
+    
+    if after_has_gif and not before_has_gif:
+        logger.info(f"New GIF detected in edited message - User: {after.author.id}")
         # Reuse the same enforcement logic by treating it as a new message check
         await on_message(after)
 
