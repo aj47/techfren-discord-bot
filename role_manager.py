@@ -12,8 +12,9 @@ Supports:
 """
 
 import discord
-from typing import Optional, Tuple
+from typing import Tuple
 import logging
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +22,8 @@ logger = logging.getLogger(__name__)
 class RoleManager:
     """Handles self-assignable role operations for the Discord bot."""
 
-    # Whitelist of roles that users can self-assign
-    # Format: command_key: actual_role_name_in_discord
-    ALLOWED_ROLES = {
-        'voice-gang': 'voice gang',
-        'live-gang': 'live gang'
-    }
+    # Import roles from config to maintain single source of truth
+    ALLOWED_ROLES = config.SELF_ASSIGNABLE_ROLES
 
     @staticmethod
     async def add_role_to_member(
@@ -78,14 +75,14 @@ class RoleManager:
 
         # Attempt to add the role
         try:
-            await member.add_roles(role, reason=f"Self-assigned via /join command")
+            await member.add_roles(role, reason="Self-assigned via /join command")
             logger.info(f"Added role {role.id} ({role_name}) to user {member.id}")
             return True, f"✅ You now have the {role.mention} role!"
         except discord.Forbidden:
-            logger.error(f"Bot lacks permission to add role {role.id} to user {member.id}")
+            logger.exception(f"Bot lacks permission to add role {role.id} to user {member.id}")
             return False, "Bot lacks permission to manage this role. Please contact an admin."
         except discord.HTTPException as e:
-            logger.error(f"HTTP error adding role {role.id} to user {member.id}: {e}")
+            logger.exception(f"HTTP error adding role {role.id} to user {member.id}: {e}")
             return False, f"Failed to add role due to a Discord error: {str(e)}"
 
     @staticmethod
@@ -138,14 +135,14 @@ class RoleManager:
 
         # Attempt to remove the role
         try:
-            await member.remove_roles(role, reason=f"Self-removed via /leave command")
+            await member.remove_roles(role, reason="Self-removed via /leave command")
             logger.info(f"Removed role {role.id} ({role_name}) from user {member.id}")
             return True, f"✅ You no longer have the **{role_name}** role"
         except discord.Forbidden:
-            logger.error(f"Bot lacks permission to remove role {role.id} from user {member.id}")
+            logger.exception(f"Bot lacks permission to remove role {role.id} from user {member.id}")
             return False, "Bot lacks permission to manage this role. Please contact an admin."
         except discord.HTTPException as e:
-            logger.error(f"HTTP error removing role {role.id} from user {member.id}: {e}")
+            logger.exception(f"HTTP error removing role {role.id} from user {member.id}: {e}")
             return False, f"Failed to remove role due to a Discord error: {str(e)}"
 
     @staticmethod

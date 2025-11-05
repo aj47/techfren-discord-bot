@@ -916,6 +916,7 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
 
 # Role Management Slash Commands
 @bot.tree.command(name="join", description="Join a self-assignable role")
+@discord.app_commands.guild_only()
 @discord.app_commands.describe(
     role="The role you want to join (voice-gang or live-gang)"
 )
@@ -927,7 +928,7 @@ async def join_role(interaction: discord.Interaction, role: discord.app_commands
     """Allow users to self-assign to approved roles"""
     await interaction.response.defer(ephemeral=True)
 
-    success, message = await RoleManager.add_role_to_member(
+    _, message = await RoleManager.add_role_to_member(
         interaction.user,
         role.value
     )
@@ -935,6 +936,7 @@ async def join_role(interaction: discord.Interaction, role: discord.app_commands
     await interaction.followup.send(message, ephemeral=True)
 
 @bot.tree.command(name="leave", description="Leave a self-assignable role")
+@discord.app_commands.guild_only()
 @discord.app_commands.describe(
     role="The role you want to leave (voice-gang or live-gang)"
 )
@@ -946,7 +948,7 @@ async def leave_role(interaction: discord.Interaction, role: discord.app_command
     """Allow users to remove self-assigned roles"""
     await interaction.response.defer(ephemeral=True)
 
-    success, message = await RoleManager.remove_role_from_member(
+    _, message = await RoleManager.remove_role_from_member(
         interaction.user,
         role.value
     )
@@ -954,6 +956,7 @@ async def leave_role(interaction: discord.Interaction, role: discord.app_command
     await interaction.followup.send(message, ephemeral=True)
 
 @bot.tree.command(name="roles", description="List available self-assignable roles")
+@discord.app_commands.guild_only()
 async def list_roles(interaction: discord.Interaction):
     """Show users which roles they can self-assign"""
     embed = discord.Embed(
