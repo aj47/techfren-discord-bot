@@ -293,7 +293,32 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                     logger.warning("Apify API token not configured, skipping X post summarization")
                     continue
 
-                # Create or get existing thread from the message
+                # Scrape the X/Twitter content FIRST (before creating thread)
+                logger.info(f"Starting to scrape X post: {url}")
+                scraped_result = await scrape_twitter_content(url)
+
+                if not scraped_result or 'markdown' not in scraped_result:
+                    logger.warning(f"Failed to scrape X post: {url}")
+                    continue
+
+                markdown_content = scraped_result.get('markdown', '')
+
+                # Summarize the content BEFORE creating thread
+                logger.info(f"Summarizing scraped content for: {url}")
+                summary_text = await summarize_scraped_content(markdown_content, url)
+
+                if not summary_text:
+                    logger.warning(f"Failed to summarize X post: {url}")
+                    continue
+
+                # Build the response message with header
+                response = f"📊 **X Post Summary:**\n\n{summary_text}"
+
+                # Split if too long (Discord thread messages have 4000 char limit)
+                if len(response) > 3900:
+                    response = response[:3900] + "..."
+
+                # NOW create or get existing thread from the message (after Apify calls complete)
                 thread = None
                 try:
                     # Try to create a thread from the message
@@ -337,39 +362,9 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 except Exception as e:
                     logger.warning(f"Could not join thread {thread.id}: {e}")
 
-                # Send a "processing" message in the thread
-                processing_msg = await thread.send("🔄 Fetching and summarizing X post...")
-                logger.info(f"Sent processing message {processing_msg.id} to thread {thread.id} (thread name: {thread.name})")
-
-                # Scrape the X/Twitter content
-                scraped_result = await scrape_twitter_content(url)
-
-                if not scraped_result or 'markdown' not in scraped_result:
-                    logger.warning(f"Failed to scrape X post: {url}")
-                    await processing_msg.edit(content="❌ Failed to scrape X post content.")
-                    continue
-
-                markdown_content = scraped_result.get('markdown', '')
-
-                # Summarize the content
-                summary_text = await summarize_scraped_content(markdown_content, url)
-
-                if not summary_text:
-                    logger.warning(f"Failed to summarize X post: {url}")
-                    await processing_msg.edit(content="❌ Failed to generate summary.")
-                    continue
-
-                # Build the response message with header
-                response = f"📊 **X Post Summary:**\n\n{summary_text}"
-
-                # Update the processing message with the summary
-                # Split if too long (Discord thread messages have 4000 char limit)
-                if len(response) > 3900:
-                    await processing_msg.edit(content=response[:3900] + "...")
-                    logger.info(f"Posted truncated summary ({len(response)} chars) to thread {thread.id}")
-                else:
-                    await processing_msg.edit(content=response)
-                    logger.info(f"Posted complete summary ({len(response)} chars) to thread {thread.id}")
+                # Post the summary directly to the thread (no "processing" message needed)
+                summary_msg = await thread.send(response)
+                logger.info(f"Posted summary ({len(response)} chars) to thread {thread.id} (thread name: {thread.name})")
 
                 # Store the scraped data in the database
                 # Store empty JSON array for key_points to maintain database compatibility
@@ -385,9 +380,10 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
 
             except Exception as e:
                 logger.error(f"Error processing X URL {url}: {str(e)}", exc_info=True)
+                # If thread was created before error, post error message to it
                 try:
-                    if 'processing_msg' in locals():
-                        await processing_msg.edit(content=f"❌ Error processing X post: {str(e)[:100]}")
+                    if 'thread' in locals() and thread:
+                        await thread.send(f"❌ Error processing X post: {str(e)[:100]}")
                 except:
                     pass
 
