@@ -589,7 +589,7 @@ async def on_message(message):
         return  # Message was handled (deleted), stop processing
 
     # Helper function to recursively check reference chain for GIFs
-    async def check_reference_chain_for_gif(msg, depth=0, max_depth=5):
+    async def check_reference_chain_for_gif(msg, depth=0, max_depth=25):
         """
         Recursively follow message references to check if any message in the chain contains a GIF.
         Returns (has_gif, chain_depth, is_external) tuple.
@@ -597,8 +597,8 @@ async def on_message(message):
         """
         if depth >= max_depth:
             logger.warning(f"Reference chain depth limit reached ({max_depth})")
-            # Fail closed: treat unresolved depth as an external GIF to avoid bypasses
-            return True, depth, True
+            # Allow deep chains - fail open to avoid blocking legitimate conversations
+            return False, depth, False
         
         if not msg.reference or not msg.reference.message_id:
             return False, depth, False
