@@ -25,12 +25,12 @@ def extract_urls_from_text(text: str) -> list[str]:
 async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
     """
     Scrape a URL on-demand and return summarized content.
-    
+
     Args:
         url (str): The URL to scrape
-        
+
     Returns:
-        Optional[Dict[str, Any]]: Dictionary containing summary and key_points, or None if failed
+        Optional[Dict[str, Any]]: Dictionary containing summary (plain text with key points), or None if failed
     """
     try:
         # Import here to avoid circular imports
@@ -38,7 +38,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         from firecrawl_handler import scrape_url_content
         from apify_handler import is_twitter_url, scrape_twitter_content
         import config
-        
+
         # Check if the URL is from YouTube
         if await is_youtube_url(url):
             logger.info(f"Scraping YouTube URL on-demand: {url}")
@@ -47,7 +47,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
                 logger.warning(f"Failed to scrape YouTube content: {url}")
                 return None
             markdown_content = scraped_result.get('markdown', '')
-            
+
         # Check if the URL is from Twitter/X.com
         elif await is_twitter_url(url):
             logger.info(f"Scraping Twitter/X.com URL on-demand: {url}")
@@ -62,28 +62,28 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
             else:
                 scraped_result = await scrape_url_content(url)
                 markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-                
+
         else:
             # For other URLs, use Firecrawl
             logger.info(f"Scraping URL with Firecrawl on-demand: {url}")
             scraped_result = await scrape_url_content(url)
             markdown_content = scraped_result if isinstance(scraped_result, str) else ''
-        
+
         if not markdown_content:
             logger.warning(f"No content scraped for URL: {url}")
             return None
-            
-        # Summarize the scraped content
-        summarized_data = await summarize_scraped_content(markdown_content, url)
-        if not summarized_data:
+
+        # Summarize the scraped content (returns plain text with summary and key points)
+        summary_text = await summarize_scraped_content(markdown_content, url)
+        if not summary_text:
             logger.warning(f"Failed to summarize scraped content for URL: {url}")
             return None
-            
+
         return {
-            'summary': summarized_data.get('summary', ''),
-            'key_points': summarized_data.get('key_points', [])
+            'summary': summary_text,
+            'key_points': []  # Empty list for backward compatibility
         }
-        
+
     except Exception as e:
         logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
         return None
@@ -421,17 +421,16 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
-async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[Dict[str, Any]]:
+async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
     """
-    Call the LLM API to summarize scraped content from a URL and extract key points.
+    Call the LLM API to summarize scraped content from a URL.
 
     Args:
         markdown_content (str): The scraped content in markdown format
         url (str): The URL that was scraped
 
     Returns:
-        Optional[Dict[str, Any]]: A dictionary containing the summary and key points,
-                                 or None if summarization failed
+        Optional[str]: A formatted summary string with key points, or None if summarization failed
     """
     try:
         # Truncate content if it's too long (to avoid token limits)
@@ -458,28 +457,14 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
         model = getattr(config, 'llm_model', "sonar")
 
         # Create the prompt for the LLM
-        prompt = f"""Please analyze the following content from the URL: {url}
+        prompt = f"""Analyze and summarize this content from {url}:
 
 {truncated_content}
 
-Provide:
-1. A concise summary (2-3 paragraphs) of the main content.
-2. 3-5 key bullet points highlighting the most important information.
-
-Format your response exactly as follows:
-```json
-{{
-  "summary": "Your summary text here...",
-  "key_points": [
-    "First key point",
-    "Second key point",
-    "Third key point",
-    "Fourth key point (if applicable)",
-    "Fifth key point (if applicable)"
-  ]
-}}
-```
-"""
+Provide a concise summary (2-3 sentences) followed by 3-5 key points as bullet points.
+Format your response as plain text with bullet points (use - for bullets).
+Do not include an introductory paragraph or title.
+Keep the summary brief and focused on the most important information."""
 
         # Make the API request
         completion = await openai_client.chat.completions.create(
@@ -491,14 +476,14 @@ Format your response exactly as follows:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert assistant that summarizes web content and extracts key points. You always respond in the exact JSON format requested."
+                    "content": "You are a helpful assistant that summarizes web content concisely. Create brief summaries with bullet points. Do not use JSON format. Respond with plain text only. CRITICAL: Never wrap your response in a markdown code block (```). Use plain text with inline formatting only."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=200,  # Perplexity limit: 200 output tokens
+            max_tokens=500,  # Enough for a concise summary with key points
             temperature=0.3   # Lower temperature for more focused and consistent summaries
         )
 
@@ -506,40 +491,25 @@ Format your response exactly as follows:
         response_text = completion.choices[0].message.content
         logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
-        # Extract the JSON part from the response
-        try:
-            # Find JSON between triple backticks if present
-            if "```json" in response_text and "```" in response_text.split("```json", 1)[1]:
-                json_str = response_text.split("```json", 1)[1].split("```", 1)[0].strip()
-            elif "```" in response_text and "```" in response_text.split("```", 1)[1]:
-                json_str = response_text.split("```", 1)[1].split("```", 1)[0].strip()
-            else:
-                # If no backticks, try to parse the whole response
-                json_str = response_text.strip()
+        # Clean up the response
+        cleaned_response = response_text.strip()
 
-            # Parse the JSON
-            result = json.loads(json_str)
+        # Remove any markdown code block wrappers if present
+        if cleaned_response.startswith("```") and cleaned_response.endswith("```"):
+            # Remove the code block markers
+            lines = cleaned_response.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned_response = "\n".join(lines).strip()
 
-            # Validate the expected structure
-            if "summary" not in result or "key_points" not in result:
-                logger.warning(f"LLM response missing required fields: {result}")
-                # Create a fallback structure
-                if "summary" not in result:
-                    result["summary"] = "Summary could not be extracted from the content."
-                if "key_points" not in result:
-                    result["key_points"] = ["Key points could not be extracted from the content."]
+        # Apply Discord formatting enhancements
+        formatted_response = DiscordFormatter.format_llm_response(cleaned_response)
 
-            return result
+        logger.info(f"Formatted scraped content summary: {formatted_response[:50]}{'...' if len(formatted_response) > 50 else ''}")
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from LLM response: {e}", exc_info=True)
-            logger.error(f"Raw response: {response_text}")
-
-            # Create a fallback response
-            return {
-                "summary": "Failed to generate a proper summary from the content.",
-                "key_points": ["The content could not be properly summarized due to a processing error."]
-            }
+        return formatted_response
 
     except asyncio.TimeoutError:
         logger.error(f"LLM API request timed out while summarizing content from URL {url}")

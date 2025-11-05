@@ -222,19 +222,20 @@ async def process_url(message_id: str, url: str):
                 return
 
         # Step 2: Summarize the scraped content
-        scraped_data = await summarize_scraped_content(markdown_content, url)
-        if not scraped_data:
+        summary_text = await summarize_scraped_content(markdown_content, url)
+        if not summary_text:
             logger.warning(f"Failed to summarize content from URL: {url}")
             return
 
-        # Step 3: Convert key points to JSON string
-        key_points_json = json.dumps(scraped_data.get('key_points', []))
+        # Step 3: Store the summary (no separate key points since it's now plain text)
+        # Store empty JSON array for key_points to maintain database compatibility
+        key_points_json = json.dumps([])
 
         # Step 4: Update the message in the database with the scraped data
         success = await database.update_message_with_scraped_data(
             message_id,
             url,
-            scraped_data.get('summary', ''),
+            summary_text,
             key_points_json
         )
 
@@ -351,39 +352,28 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 markdown_content = scraped_result.get('markdown', '')
 
                 # Summarize the content
-                summary_data = await summarize_scraped_content(markdown_content, url)
+                summary_text = await summarize_scraped_content(markdown_content, url)
 
-                if not summary_data:
+                if not summary_text:
                     logger.warning(f"Failed to summarize X post: {url}")
                     await processing_msg.edit(content="❌ Failed to generate summary.")
                     continue
 
-                # Format the summary for Discord
-                summary_text = summary_data.get('summary', '')
-                key_points = summary_data.get('key_points', [])
-
-                # Build the response message
-                response_parts = ["📊 **X Post Summary:**\n"]
-                response_parts.append(f"{summary_text}\n")
-
-                if key_points:
-                    response_parts.append("\n**Key Points:**")
-                    for point in key_points:
-                        response_parts.append(f"• {point}")
-
-                response = "\n".join(response_parts)
+                # Build the response message with header
+                response = f"📊 **X Post Summary:**\n\n{summary_text}"
 
                 # Update the processing message with the summary
-                # Split if too long (Discord thread messages have 2000 char limit)
-                if len(response) > 1900:
-                    await processing_msg.edit(content=response[:1900] + "...")
+                # Split if too long (Discord thread messages have 4000 char limit)
+                if len(response) > 3900:
+                    await processing_msg.edit(content=response[:3900] + "...")
                     logger.info(f"Posted truncated summary ({len(response)} chars) to thread {thread.id}")
                 else:
                     await processing_msg.edit(content=response)
                     logger.info(f"Posted complete summary ({len(response)} chars) to thread {thread.id}")
 
                 # Store the scraped data in the database
-                key_points_json = json.dumps(key_points)
+                # Store empty JSON array for key_points to maintain database compatibility
+                key_points_json = json.dumps([])
                 await database.update_message_with_scraped_data(
                     str(message.id),
                     url,
