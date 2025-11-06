@@ -20,6 +20,7 @@
 # SUMMARY_HOUR=0
 # SUMMARY_MINUTE=0
 # REPORTS_CHANNEL_ID=your_channel_id
+# GENERAL_CHANNEL_ID=your_general_channel_id
 #
 # ============================================================
 # LEGACY CONFIG (for reference only - not recommended)
@@ -51,7 +52,8 @@ firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
 apify_api_token = "YOUR_APIFY_API_TOKEN"
 
 # Daily Summary Configuration (optional)
-# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID
+# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, GENERAL_CHANNEL_ID
 summary_hour = 0
 summary_minute = 0
-reports_channel_id = "YOUR_CHANNEL_ID"
+reports_channel_id = "YOUR_CHANNEL_ID"  # For channel summaries
+general_channel_id = "YOUR_GENERAL_CHANNEL_ID"  # For daily point awards (fallback to reports_channel_id if not set)
