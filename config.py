@@ -53,6 +53,21 @@ summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
 summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 
+# Channel Summary Filtering (optional)
+# Environment variable: SUMMARY_CHANNEL_WHITELIST (comma-separated channel IDs)
+# If set, only these channels will be summarized. If empty, all channels are eligible.
+summary_channel_whitelist_str = os.getenv('SUMMARY_CHANNEL_WHITELIST', '')
+summary_channel_whitelist = [cid.strip() for cid in summary_channel_whitelist_str.split(',') if cid.strip()] if summary_channel_whitelist_str else []
+
+# Environment variable: SUMMARY_CHANNEL_BLACKLIST (comma-separated channel name patterns)
+# Channels matching these patterns will be excluded from summaries
+summary_channel_blacklist_str = os.getenv('SUMMARY_CHANNEL_BLACKLIST', 'bot-log,system,voice-activity,Carl-bot')
+summary_channel_blacklist = [pattern.strip().lower() for pattern in summary_channel_blacklist_str.split(',') if pattern.strip()]
+
+# Environment variable: MAX_SUMMARY_CHANNELS
+# Maximum number of channels to summarize per day (ordered by message count)
+max_summary_channels = int(os.getenv('MAX_SUMMARY_CHANNELS', '10'))
+
 # Links Dump Channel Configuration (optional)
 # Environment variable: LINKS_DUMP_CHANNEL_ID
 # Channel where only links are allowed - text messages will be auto-deleted

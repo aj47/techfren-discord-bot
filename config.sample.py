@@ -55,3 +55,11 @@ apify_api_token = "YOUR_APIFY_API_TOKEN"
 summary_hour = 0
 summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"
+
+# Channel Summary Filtering (optional)
+# SUMMARY_CHANNEL_WHITELIST: comma-separated channel IDs (if empty, all channels eligible)
+# SUMMARY_CHANNEL_BLACKLIST: comma-separated channel name patterns to exclude
+# MAX_SUMMARY_CHANNELS: maximum number of channels to summarize per day
+summary_channel_whitelist = []
+summary_channel_blacklist = ["bot-log", "system", "voice-activity", "carl-bot"]
+max_summary_channels = 10

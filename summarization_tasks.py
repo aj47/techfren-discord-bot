@@ -45,6 +45,36 @@ async def daily_channel_summarization():
 
         logger.info(f"Found {len(active_channels)} active channels to summarize")
 
+        # Apply channel filtering
+        filtered_channels = []
+        for channel_data in active_channels:
+            channel_id = str(channel_data['channel_id'])
+            channel_name = channel_data['channel_name'].lower()
+
+            # If whitelist is configured, only include whitelisted channels
+            if config.summary_channel_whitelist:
+                if channel_id not in config.summary_channel_whitelist:
+                    logger.debug(f"Skipping channel {channel_data['channel_name']} (not in whitelist)")
+                    continue
+
+            # Skip blacklisted channels
+            if any(pattern in channel_name for pattern in config.summary_channel_blacklist):
+                logger.debug(f"Skipping channel {channel_data['channel_name']} (matches blacklist)")
+                continue
+
+            filtered_channels.append(channel_data)
+
+        # Limit to max_summary_channels (already sorted by message_count DESC)
+        if len(filtered_channels) > config.max_summary_channels:
+            logger.info(f"Limiting to top {config.max_summary_channels} channels by activity")
+            filtered_channels = filtered_channels[:config.max_summary_channels]
+
+        if not filtered_channels:
+            logger.info("No channels remaining after filtering. Skipping summarization.")
+            return
+
+        logger.info(f"Processing {len(filtered_channels)} channels after filtering")
+
         # Get messages for each channel
         messages_by_channel = database.get_messages_for_time_range(yesterday, now)
 
@@ -53,7 +83,7 @@ async def daily_channel_summarization():
         total_messages_processed = 0
 
         # Process each active channel
-        for channel_data in active_channels:
+        for channel_data in filtered_channels:
             channel_id = channel_data['channel_id']
             channel_name = channel_data['channel_name']
 

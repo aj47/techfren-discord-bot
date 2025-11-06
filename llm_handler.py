@@ -346,15 +346,15 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
+        prompt = f"""Summarize this conversation from #{channel_name} (past {time_period}):
 
 {messages_text}
 
-Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
-Highlight all user names/aliases with backticks (e.g., `username`).
-IMPORTANT: Each message has a [Jump to message](discord_link) link. For each bullet point, preserve these Discord message links at the end in the format: [Source](https://discord.com/channels/...)
-At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link in the same [Source](https://discord.com/channels/...) format.
-"""
+Create a brief summary with 3-5 short bullet points covering only the main topics. Skip minor details.
+Highlight user names with backticks (e.g., `username`).
+Each message has a [Jump to message](link) - preserve these links at the end of each bullet point: [Source](https://discord.com/channels/...)
+End with the top 3 most interesting quotes, each with their source link [Source](https://discord.com/channels/...).
+Keep it concise and focused."""
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
@@ -383,14 +383,14 @@ At the end, include a section with the top 3 most interesting or notable one-lin
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. IMPORTANT: For each link or topic mentioned, search the web for relevant context and incorporate that information. When users share GitHub repos, YouTube videos, or documentation, search for and include relevant information about those resources. Create concise summaries with short bullet points that combine the Discord messages with web-sourced context. Highlight all user names with backticks. For each bullet point, include both the Discord message source [Source](link) and cite any web sources you found. End with the top 3 most interesting quotes from the conversation, each with their source link. Always search the web to provide additional context about shared links and topics. If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. Keep tables simple with 2-3 columns max. For complex comparisons, use a list format instead of tables. CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting. Bold, h2, etc is good"
+                    "content": "You are a helpful assistant that creates concise Discord conversation summaries. Create brief summaries with short bullet points covering only the main topics and key discussions. Highlight user names with backticks. For each bullet point, include the Discord message source [Source](link). End with the top 3 most interesting quotes from the conversation with their source links. Be concise and focus on the most important information only. Skip minor details and off-topic chatter. CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=2500,  # Increased for very detailed summaries with extensive web context
+            max_tokens=1000,  # Reduced for more concise summaries
             temperature=0.5   # Lower temperature for more focused summaries
         )
 
