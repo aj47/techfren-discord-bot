@@ -32,6 +32,11 @@ async def daily_channel_summarization():
     try:
         logger.info("Starting daily automated channel summarization")
 
+        # Check if links dump channel is configured
+        if not hasattr(config, 'links_dump_channel_id') or not config.links_dump_channel_id:
+            logger.warning("Links dump channel not configured. Skipping daily summarization.")
+            return
+
         # Get the current time and 24 hours ago (in UTC)
         now = datetime.now(timezone.utc)
         yesterday = now - timedelta(hours=24)
@@ -43,7 +48,20 @@ async def daily_channel_summarization():
             logger.info("No active channels found in the past 24 hours. Skipping summarization.")
             return
 
-        logger.info(f"Found {len(active_channels)} active channels to summarize")
+        # Filter to only include the links-dump channel
+        links_dump_channel = None
+        for channel_data in active_channels:
+            if str(channel_data['channel_id']) == config.links_dump_channel_id:
+                links_dump_channel = channel_data
+                break
+
+        if not links_dump_channel:
+            logger.info("Links dump channel had no activity in the past 24 hours. Skipping summarization.")
+            return
+
+        # Process only the links-dump channel
+        active_channels = [links_dump_channel]
+        logger.info(f"Summarizing links-dump channel: {links_dump_channel['channel_name']}")
 
         # Get messages for each channel
         messages_by_channel = database.get_messages_for_time_range(yesterday, now)
@@ -129,27 +147,28 @@ async def daily_channel_summarization():
 
 async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
     """
-    Post a summary to a designated reports channel if configured.
+    Post a summary to the links-dump channel if configured.
     """
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot post summary to reports channel.")
+        logger.error("Discord client not set in summarization_tasks. Cannot post summary to links-dump channel.")
         return
 
     try:
-        if not hasattr(config, 'reports_channel_id') or not config.reports_channel_id:
+        if not hasattr(config, 'links_dump_channel_id') or not config.links_dump_channel_id:
+            logger.warning("Links dump channel not configured. Cannot post summary.")
             return
 
-        reports_channel = discord_client.get_channel(int(config.reports_channel_id))
-        if not reports_channel:
-            logger.warning(f"Reports channel with ID {config.reports_channel_id} not found")
+        links_dump_channel = discord_client.get_channel(int(config.links_dump_channel_id))
+        if not links_dump_channel:
+            logger.warning(f"Links dump channel with ID {config.links_dump_channel_id} not found")
             return
 
         summary_parts = await split_long_message(summary_text)
         for part in summary_parts:
-            await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
-        logger.info(f"Posted summary for channel {channel_name} to reports channel")
+            await links_dump_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+        logger.info(f"Posted summary for channel {channel_name} to links-dump channel")
     except Exception as e:
-        logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
+        logger.error(f"Error posting summary to links-dump channel: {str(e)}", exc_info=True)
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
