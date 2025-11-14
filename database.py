@@ -620,7 +620,8 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
                 """
                 SELECT
                     id, author_id, author_name, channel_id, channel_name,
-                    guild_id, guild_name, content, created_at, is_bot, is_command
+                    guild_id, guild_name, content, created_at, is_bot, is_command,
+                    scraped_url, scraped_content_summary, scraped_content_key_points
                 FROM messages
                 WHERE created_at BETWEEN ? AND ?
                 ORDER BY channel_id, created_at ASC
@@ -649,7 +650,10 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
                     'content': row['content'],
                     'created_at': datetime.fromisoformat(row['created_at']),
                     'is_bot': bool(row['is_bot']),
-                    'is_command': bool(row['is_command'])
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points']
                 })
 
         total_messages = sum(len(channel_data['messages']) for channel_data in messages_by_channel.values())

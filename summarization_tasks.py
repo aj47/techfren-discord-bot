@@ -90,7 +90,10 @@ async def run_daily_summarization_once(now: datetime | None = None):
                         'is_bot': msg.get('is_bot', False),
                         'is_command': False,
                         'guild_id': guild_id,
-                        'channel_id': channel_id
+                        'channel_id': channel_id,
+                        'scraped_url': msg.get('scraped_url'),
+                        'scraped_content_summary': msg.get('scraped_content_summary'),
+                        'scraped_content_key_points': msg.get('scraped_content_key_points')
                     })
 
             if not formatted_messages:
