@@ -1,6 +1,6 @@
 from openai import AsyncOpenAI
 from logging_config import logger
-import config # Assuming config.py is in the same directory or accessible
+import config  # Assuming config.py is in the same directory or accessible
 import json
 from typing import Optional, Dict, Any
 import asyncio
@@ -8,6 +8,7 @@ import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
+from gif_utils import is_gif_url
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -166,6 +167,18 @@ async def call_llm_api(query, message_context=None):
         
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
+
+        # Skip GIF URLs entirely for scraping/analysis
+        if all_urls:
+            non_gif_urls = []
+            for url in all_urls:
+                if is_gif_url(url):
+                    logger.info(f"Skipping GIF URL in LLM URL scraping: {url}")
+                    continue
+                non_gif_urls.append(url)
+
+            all_urls = non_gif_urls
+
         if all_urls:
             scraped_content_parts = []
             for url in all_urls:
@@ -193,7 +206,7 @@ async def call_llm_api(query, message_context=None):
                             logger.warning(f"Failed to scrape content for URL: {url}")
                 except Exception as e:
                     logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
-            
+
             if scraped_content_parts:
                 scraped_content_text = "\n\n".join(scraped_content_parts)
                 if message_context:
