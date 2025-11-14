@@ -1,7 +1,8 @@
-# Summary of Changes: Removed Apify Dependency for X/Twitter Scraping
+# Summary of Recent Changes
 
-## Overview
-Refactored the Discord bot to use Perplexity's built-in web scraping capabilities instead of Apify for X/Twitter post summarization. This eliminates the need for an Apify API token while maintaining the same functionality.
+This file previously described an experimental refactor that removed the Apify dependency for X/Twitter scraping. The current codebase has since reintroduced Apify-based scraping via `apify_handler.py`, so that description is no longer accurate.
+
+The authoritative source of behavior is now the code itself (see `apify_handler.py`, `llm_handler.py`, and `config.py`). This summary is intentionally minimal to avoid drifting out of sync with the implementation.
 
 ## Key Changes
 

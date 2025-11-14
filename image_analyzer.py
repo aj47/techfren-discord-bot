@@ -1,9 +1,9 @@
 """
-Image analysis module using Claude Vision API.
+Image analysis module using Perplexity Sonar (multimodal) API.
 
-This module handles analyzing images from Discord attachments using Anthropic's
-Claude 3.5 Sonnet vision capabilities to generate descriptive text that can be
-included in message summaries.
+This module analyzes images from Discord attachments using Perplexity's
+Sonar models to generate descriptive text that can be included in
+message summaries.
 """
 
 import base64
@@ -12,19 +12,23 @@ from io import BytesIO
 from typing import Optional, List, Dict, Any
 
 import aiohttp
-import anthropic
+from openai import AsyncOpenAI
 import config
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Initialize Anthropic client if API key is configured
-anthropic_client = None
-if config.anthropic_api_key:
-    anthropic_client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
-    logger.info("Anthropic Claude Vision API initialized")
+# Initialize Perplexity client for image analysis if API key is configured
+perplexity_client: Optional[AsyncOpenAI] = None
+if getattr(config, "perplexity", None):
+    perplexity_client = AsyncOpenAI(
+        base_url=getattr(config, "perplexity_base_url", "https://api.perplexity.ai"),
+        api_key=config.perplexity,
+        timeout=60.0,
+    )
+    logger.info("Perplexity Sonar image analysis client initialized")
 else:
-    logger.warning("ANTHROPIC_API_KEY not configured - image analysis will be disabled")
+    logger.warning("Perplexity API key not configured - image analysis will be disabled")
 
 # Supported image formats
 SUPPORTED_IMAGE_TYPES = {
@@ -35,7 +39,7 @@ SUPPORTED_IMAGE_TYPES = {
     'image/webp': 'webp'
 }
 
-# Maximum image size (5MB for Claude API)
+# Maximum image size (bytes) to control cost and latency for image analysis
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB in bytes
 
 
@@ -91,7 +95,7 @@ def is_supported_image(content_type: str) -> bool:
 
 async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "image") -> Optional[str]:
     """
-    Analyze an image using Claude Vision API.
+    Analyze an image using Perplexity Sonar multimodal models.
 
     Args:
         image_bytes: The image data as bytes
@@ -101,8 +105,8 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
     Returns:
         Descriptive text about the image, or None if analysis failed
     """
-    if not anthropic_client:
-        logger.warning("Cannot analyze image: Anthropic API client not initialized")
+    if not perplexity_client:
+        logger.warning("Cannot analyze image: Perplexity API client not initialized")
         return None
 
     if not is_supported_image(content_type):
@@ -110,51 +114,66 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
         return None
 
     try:
-        # Convert to base64
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        # Convert to base64 and build a data URI for the Perplexity API
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        mime_type = content_type.lower()
+        if mime_type == "image/jpg":
+            mime_type = "image/jpeg"
+        data_uri = f"data:{mime_type};base64,{image_base64}"
 
-        # Get the media type format for Claude API
-        media_type = SUPPORTED_IMAGE_TYPES.get(content_type.lower(), 'jpeg')
+        prompt = (
+            "Please provide a clear, concise description of this image. "
+            "Focus on the main subject, key details, any visible text, and relevant context. "
+            "Keep it informative but brief (2-3 sentences)."
+        )
 
-        # Create the message with image
-        message = await anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=500,
+        # Choose a model for image analysis (defaults to sonar-pro if not configured)
+        model = getattr(config, "image_llm_model", getattr(config, "llm_model", "sonar-pro"))
+
+        completion = await perplexity_client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
+                "X-Title": getattr(config, "x_title", "TechFren Discord Bot"),
+            },
+            model=model,
             messages=[
                 {
                     "role": "user",
                     "content": [
+                        {"type": "text", "text": prompt},
                         {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": content_type.lower(),
-                                "data": image_base64,
-                            },
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
                         },
-                        {
-                            "type": "text",
-                            "text": "Please provide a clear, concise description of this image. Focus on the main subject, key details, any text visible, and relevant context. Keep it informative but brief (2-3 sentences)."
-                        }
                     ],
                 }
             ],
+            max_tokens=300,
+            temperature=0.2,
         )
 
-        # Extract the description from the response
-        if message.content and len(message.content) > 0:
-            description = message.content[0].text
-            logger.info(f"Successfully analyzed image: {filename}")
-            return description.strip()
-        else:
-            logger.warning(f"No content in Claude API response for {filename}")
+        description = completion.choices[0].message.content
+
+        # Perplexity responses are typically plain text, but handle list-of-parts just in case
+        if isinstance(description, list):
+            parts = []
+            for part in description:
+                part_type = getattr(part, "type", None) if not isinstance(part, dict) else part.get("type")
+                if part_type == "text":
+                    text_val = part.get("text") if isinstance(part, dict) else getattr(part, "text", "")
+                    if text_val:
+                        parts.append(text_val)
+            description = " ".join(parts)
+
+        if not description:
+            logger.warning(f"No content in Perplexity response for {filename}")
             return None
 
-    except anthropic.APIError as e:
-        logger.error(f"Anthropic API error analyzing image {filename}: {e}")
-        return None
+        logger.info(f"Successfully analyzed image with Perplexity: {filename}")
+        return str(description).strip()
+
     except Exception as e:
-        logger.error(f"Unexpected error analyzing image {filename}: {e}")
+        logger.error(f"Error analyzing image {filename} with Perplexity: {e}")
         return None
 
 
