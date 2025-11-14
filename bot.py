@@ -4,59 +4,27 @@ import discord
 from discord.ext import commands
 import asyncio
 import re
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 import os
 import json
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 import database
-from logging_config import logger # Import the logger from the new module
-from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity # Import LLM functions
-from message_utils import split_long_message, fetch_referenced_message # Import message utility functions
-from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
-from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
-from firecrawl_handler import scrape_url_content # Import Firecrawl handler
-from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from logging_config import logger  # Import the logger from the new module
+from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity  # Import LLM functions
+from message_utils import split_long_message, fetch_referenced_message  # Import message utility functions
+from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
+from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
+from config_validator import validate_config  # Import config validator
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
+from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
+from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
+from gif_utils import is_gif_url
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
-GIF_URL_PATTERN = re.compile(r"https?://\S+\.gif(?:\?\S*)?", re.IGNORECASE)
-GIFV_URL_PATTERN = re.compile(r"https?://\S+\.gifv(?:\?\S*)?", re.IGNORECASE)
-
-# Provider brands to detect regardless of TLD/subdomain (tenor.com, tenor.co, tenor.org, etc.)
-GIF_PROVIDER_BRANDS = ("tenor", "giphy", "gfycat", "redgifs")
-
-
-def _check_url_for_gif(url: str) -> bool:
-    """Check if a URL is a GIF link, handling percent-encoding and brand detection."""
-    if not url:
-        return False
-
-    # Decode percent-encoding (e.g., t%65nor.com -> tenor.com)
-    try:
-        decoded = unquote(url).lower()
-    except Exception:
-        decoded = url.lower()
-
-    # Check for .gif/.gifv extensions
-    if GIF_URL_PATTERN.search(decoded) or GIFV_URL_PATTERN.search(decoded):
-        return True
-
-    # Check hostname for provider brands (covers all TLDs/subdomains)
-    try:
-        hostname = urlparse(decoded).hostname or ""
-        if any(brand in hostname for brand in GIF_PROVIDER_BRANDS):
-            return True
-    except Exception:
-        # Fallback: check if brand appears anywhere in URL
-        if any(brand in decoded for brand in GIF_PROVIDER_BRANDS):
-            return True
-
-    return False
 
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
@@ -94,7 +62,7 @@ def message_contains_gif(message: discord.Message) -> bool:
     content = message.content or ""
     if re.search(r'https?://\S+', content):
         for match in re.finditer(r'https?://\S+', content):
-            if _check_url_for_gif(match.group(0)):
+            if is_gif_url(match.group(0)):
                 return True
 
     # Check embeds
@@ -110,7 +78,7 @@ def message_contains_gif(message: discord.Message) -> bool:
                 obj = getattr(obj, part, None)
                 if obj is None:
                     break
-            if obj and _check_url_for_gif(str(obj)):
+            if obj and is_gif_url(str(obj)):
                 return True
 
     return False
@@ -442,9 +410,14 @@ async def handle_link_summary(message: discord.Message) -> bool:
         if not urls:
             return False
 
-        # Filter out X/Twitter URLs and YouTube URLs (they have their own handlers)
+        # Filter out X/Twitter URLs, YouTube URLs, and GIF URLs (they have their own handling or are skipped)
         regular_urls = []
         for url in urls:
+            # Skip GIF URLs completely (no link summary or image analysis)
+            if is_gif_url(url):
+                logger.info(f"Skipping GIF URL from link summary: {url}")
+                continue
+
             is_x_url = await is_twitter_url(url)
             is_yt_url = await is_youtube_url(url)
 
