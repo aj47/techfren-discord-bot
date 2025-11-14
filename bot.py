@@ -343,9 +343,12 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 # Build the response message with header
                 response = f"📊 **X Post Summary:**\n\n{summary_text}"
 
-                # Split if too long (Discord thread messages have 4000 char limit)
-                if len(response) > 3900:
-                    response = response[:3900] + "..."
+                # Split into multiple messages if needed to respect Discord's 2000 character limit
+                if len(response) > 1900:
+                    logger.info(f"Splitting X post summary of {len(response)} chars into multiple parts")
+                    message_parts = await split_long_message(response, max_length=1900)
+                else:
+                    message_parts = [response]
 
                 # NOW create or get existing thread from the message (after Apify calls complete)
                 from apify_handler import extract_tweet_id
@@ -357,8 +360,12 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                     continue
 
                 # Post the summary directly to the thread (no "processing" message needed)
-                summary_msg = await thread.send(response)
-                logger.info(f"Posted summary ({len(response)} chars) to thread {thread.id} (thread name: {thread.name})")
+                for part in message_parts:
+                    await thread.send(part)
+                logger.info(
+                    f"Posted X post summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"to thread {thread.id} (thread name: {thread.name})"
+                )
 
                 # Store the scraped data in the database
                 # Store empty JSON array for key_points to maintain database compatibility
@@ -443,9 +450,12 @@ async def handle_link_summary(message: discord.Message) -> bool:
                 # Build the response message with header
                 response = f"🔗 **Link Summary:**\n\n{summary_text}"
 
-                # Split if too long (Discord thread messages have 4000 char limit)
-                if len(response) > 3900:
-                    response = response[:3900] + "..."
+                # Split into multiple messages if needed to respect Discord's 2000 character limit
+                if len(response) > 1900:
+                    logger.info(f"Splitting link summary of {len(response)} chars into multiple parts")
+                    message_parts = await split_long_message(response, max_length=1900)
+                else:
+                    message_parts = [response]
 
                 # Create or get existing thread from the message
                 # Extract domain from URL for thread name
@@ -458,8 +468,12 @@ async def handle_link_summary(message: discord.Message) -> bool:
                     continue
 
                 # Post the summary directly to the thread
-                summary_msg = await thread.send(response)
-                logger.info(f"Posted summary ({len(response)} chars) to thread {thread.id} (thread name: {thread.name})")
+                for part in message_parts:
+                    await thread.send(part)
+                logger.info(
+                    f"Posted link summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"to thread {thread.id} (thread name: {thread.name})"
+                )
 
                 # Store the scraped data in the database
                 # Store empty JSON array for key_points to maintain database compatibility
