@@ -16,14 +16,10 @@ def set_discord_client(client_instance):
     global discord_client
     discord_client = client_instance
 
-@tasks.loop(hours=24)
-async def daily_channel_summarization():
-    """
-    Task that runs once per day to:
-    1. Retrieve messages from the past 24 hours
-    2. Generate summaries for each active channel
-    3. Store the summaries in the database
-    4. Delete old messages
+async def run_daily_summarization_once(now: datetime | None = None):
+    """Run the daily channel summarization logic a single time.
+
+    This is used both by the scheduled daily task and by one-off scripts/tests.
     """
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Aborting daily summarization.")
@@ -33,7 +29,8 @@ async def daily_channel_summarization():
         logger.info("Starting daily automated channel summarization")
 
         # Get the current time and 24 hours ago (in UTC)
-        now = datetime.now(timezone.utc)
+        if now is None:
+            now = datetime.now(timezone.utc)
         yesterday = now - timedelta(hours=24)
 
         # Get active channels from the past 24 hours
@@ -42,6 +39,19 @@ async def daily_channel_summarization():
         if not active_channels:
             logger.info("No active channels found in the past 24 hours. Skipping summarization.")
             return
+
+        # If specific channels are configured, filter to just those
+        summary_channel_ids = getattr(config, 'summary_channel_ids', None)
+        if summary_channel_ids:
+            summary_channel_ids_set = {str(cid) for cid in summary_channel_ids}
+            active_channels = [
+                ch for ch in active_channels
+                if str(ch.get('channel_id')) in summary_channel_ids_set
+            ]
+
+            if not active_channels:
+                logger.info("No configured summary channels had activity in the past 24 hours. Skipping summarization.")
+                return
 
         logger.info(f"Found {len(active_channels)} active channels to summarize")
 
@@ -127,29 +137,32 @@ async def daily_channel_summarization():
     except Exception as e:
         logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
 
-async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
+
+@tasks.loop(hours=24)
+async def daily_channel_summarization():
+    """Scheduled task wrapper that runs the daily summarization once per day."""
+    await run_daily_summarization_once()
+
+async def post_summary_to_reports_channel(channel_id, channel_name, __, summary_text):
     """
-    Post a summary to a designated reports channel if configured.
+    Post a summary directly into the channel that was summarized.
     """
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot post summary to reports channel.")
+        logger.error("Discord client not set in summarization_tasks. Cannot post summary to channel.")
         return
 
     try:
-        if not hasattr(config, 'reports_channel_id') or not config.reports_channel_id:
-            return
-
-        reports_channel = discord_client.get_channel(int(config.reports_channel_id))
-        if not reports_channel:
-            logger.warning(f"Reports channel with ID {config.reports_channel_id} not found")
+        target_channel = discord_client.get_channel(int(channel_id))
+        if not target_channel:
+            logger.warning(f"Channel with ID {channel_id} not found; cannot post summary for {channel_name}")
             return
 
         summary_parts = await split_long_message(summary_text)
         for part in summary_parts:
-            await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
-        logger.info(f"Posted summary for channel {channel_name} to reports channel")
+            await target_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+        logger.info(f"Posted summary for channel {channel_name} into its own channel")
     except Exception as e:
-        logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
+        logger.error(f"Error posting summary to channel {channel_name}: {str(e)}", exc_info=True)
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
