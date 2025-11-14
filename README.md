@@ -71,7 +71,7 @@ A simple Discord bot built with discord.py.
    MAX_REQUESTS_PER_MINUTE=6  # Maximum requests per user per minute
    SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
    SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
-   REPORTS_CHANNEL_ID=channel_id  # Optional: Channel to post daily summaries
+   SUMMARY_CHANNEL_IDS=channel_id1,channel_id2  # Optional: restrict daily summaries to these channels (comma-separated)
    PERPLEXITY_BASE_URL=https://api.perplexity.ai  # Base URL for Perplexity API
    HTTP_REFERER=https://techfren.net  # HTTP Referer header for API requests
    X_TITLE=TechFren Discord Bot  # X-Title header for API requests
@@ -131,7 +131,7 @@ The bot automatically generates summaries for all active channels once per day:
   - Active users
   - Date
   - Summary text
-- Optionally posts summaries to a designated reports channel
+- Posts summaries directly into each summarized channel
 - Deletes messages older than 24 hours after successful summarization to manage database size
 
 To configure the automated summarization:
@@ -140,7 +140,7 @@ To configure the automated summarization:
 # In .env file or environment variables
 SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
 SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
-REPORTS_CHANNEL_ID=CHANNEL_ID  # Optional: Channel to post daily summaries
+SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict daily summaries to specific channels (comma-separated)
 ```
 
 ## Database

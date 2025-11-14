@@ -51,7 +51,8 @@ firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
 apify_api_token = "YOUR_APIFY_API_TOKEN"
 
 # Daily Summary Configuration (optional)
-# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID
+# Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS
 summary_hour = 0
 summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"
+summary_channel_ids = ["YOUR_CHANNEL_ID_1", "YOUR_CHANNEL_ID_2"]
