@@ -8,7 +8,6 @@ message summaries.
 
 import base64
 import logging
-from io import BytesIO
 from typing import Optional, List, Dict, Any
 
 import aiohttp
@@ -76,7 +75,7 @@ async def download_image(url: str) -> Optional[bytes]:
                 return image_bytes
 
     except Exception as e:
-        logger.error(f"Error downloading image from {url}: {e}")
+        logger.exception(f"Error downloading image from {url}: {e}")
         return None
 
 
@@ -173,7 +172,7 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
         return str(description).strip()
 
     except Exception as e:
-        logger.error(f"Error analyzing image {filename} with Perplexity: {e}")
+        logger.exception(f"Error analyzing image {filename} with Perplexity: {e}")
         return None
 
 
@@ -231,6 +230,10 @@ async def analyze_message_images(message) -> List[Dict[str, Any]]:
     Returns:
         List of analysis results for each image attachment
     """
+    # Skip processing if image analysis is not configured
+    if perplexity_client is None:
+        return []
+
     if not hasattr(message, 'attachments') or not message.attachments:
         return []
 
@@ -264,4 +267,4 @@ def format_image_descriptions(analyses: List[Dict[str, Any]]) -> str:
     for i, analysis in enumerate(analyses, 1):
         descriptions.append(f"  {i}. {analysis['description']}")
 
-    return f"\n[Images:\n" + "\n".join(descriptions) + "\n]"
+    return "\n[Images:\n" + "\n".join(descriptions) + "\n]"

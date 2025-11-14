@@ -888,8 +888,8 @@ async def on_message(message):
                 # Convert to JSON for database storage
                 image_descriptions_json = json.dumps(image_analyses)
                 logger.info(f"Analyzed {len(image_analyses)} image(s) in message {message.id}")
-    except Exception as e:
-        logger.error(f"Error analyzing images in message {message.id}: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Error analyzing images in message %s", message.id)
 
     # Store message in database
     try:
