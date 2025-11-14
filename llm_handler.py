@@ -421,6 +421,43 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
+async def summarize_url_with_perplexity(url: str) -> Optional[str]:
+    """Scrape a URL with Firecrawl and summarize its content with Perplexity.
+
+    This function no longer relies on Perplexity to fetch the URL directly.
+    Instead, it uses Firecrawl to retrieve the page content and then calls
+    :func:`summarize_scraped_content` to have Perplexity summarize that text.
+
+    Args:
+        url (str): The URL to scrape and summarize.
+
+    Returns:
+        Optional[str]: A formatted summary string with key points,
+        or None if scraping or summarization failed.
+    """
+    try:
+        # Import here to avoid circular imports
+        from firecrawl_handler import scrape_url_content
+
+        logger.info(f"Scraping URL with Firecrawl for Perplexity summarization: {url}")
+        markdown_content = await scrape_url_content(url)
+
+        if not markdown_content:
+            logger.warning(f"No content scraped for URL: {url}")
+            return None
+
+        # Summarize the scraped content using Perplexity as a pure text model
+        summary_text = await summarize_scraped_content(markdown_content, url)
+        if not summary_text:
+            logger.warning(f"Failed to summarize scraped content for URL: {url}")
+            return None
+
+        return summary_text
+
+    except Exception as e:
+        logger.error(f"Error scraping/summarizing URL {url} with Firecrawl + Perplexity: {str(e)}", exc_info=True)
+        return None
+
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
     """
     Call the LLM API to summarize scraped content from a URL.

@@ -1,21 +1,19 @@
-# Summary of Changes: Removed Apify Dependency for X/Twitter Scraping
+# Summary of Changes: Firecrawl + Perplexity URL Summarization and Thread Refactor
 
 ## Overview
-Refactored the Discord bot to use Perplexity's built-in web scraping capabilities instead of Apify for X/Twitter post summarization. This eliminates the need for an Apify API token while maintaining the same functionality.
+Refactored the Discord bot's URL summarization so that Perplexity is only used as a text summarizer. Firecrawl now fetches page content, which is then fed into Perplexity for summarization. X/Twitter handling still uses Apify where configured, with Firecrawl as a fallback.
 
 ## Key Changes
 
 ### 1. **llm_handler.py**
-- **Added `summarize_url_with_perplexity(url)`**: New function that uses Perplexity's web scraping to directly scrape and summarize URLs without needing pre-scraped content
-- **Added `_is_twitter_url(url)`**: Helper function to detect Twitter/X.com URLs
-- **Updated `summarize_scraped_content()`**: Now a backward-compatible wrapper that delegates to `summarize_url_with_perplexity()`
-- **Updated `scrape_url_on_demand()`**: For Twitter/X URLs, tries Perplexity first, then falls back to Firecrawl if Perplexity can't access the content
+- **Added / repurposed `summarize_url_with_perplexity(url)`**: Now scrapes URLs with Firecrawl first and then summarizes the scraped markdown with Perplexity (Perplexity no longer fetches URLs directly)
+- **Updated `summarize_scraped_content()`**: Remains the common wrapper that sends scraped markdown to Perplexity for summarization
+- **Updated `scrape_url_on_demand()`**: Continues to route X/Twitter and YouTube URLs through their dedicated scrapers, and other URLs through Firecrawl, all summarized via `summarize_scraped_content()`
 
 ### 2. **bot.py**
-- **Removed Apify imports**: No longer imports `scrape_twitter_content` or `is_twitter_url` from `apify_handler`
-- **Added `is_twitter_url()` function**: Simple local implementation to detect Twitter/X URLs
-- **Updated `handle_x_post_summary()`**: Simplified to use Perplexity directly via `summarize_url_with_perplexity()`
-- **Updated URL processing logic**: For Twitter/X URLs, uses Perplexity via `scrape_url_on_demand()` instead of Apify
+- **Thread handling**: Extracted shared thread-creation logic into `create_or_get_summary_thread()` and reused it from both `handle_x_post_summary()` and `handle_link_summary()` to reduce duplication
+- **X/Twitter handling**: Still uses `scrape_twitter_content()` (via Apify) where configured, then summarizes the scraped markdown with `summarize_scraped_content()`
+- **Regular link handling**: `handle_link_summary()` now calls `summarize_url_with_perplexity(url)`, which internally uses Firecrawl to scrape the URL and Perplexity to summarize the scraped markdown
 
 ### 3. **New Test File**
 - **Created `test_perplexity_x_scraping.py`**: Test script to verify Perplexity can scrape and summarize X posts
@@ -24,24 +22,30 @@ Refactored the Discord bot to use Perplexity's built-in web scraping capabilitie
 
 ### X/Twitter Post Auto-Summarization Flow:
 1. Bot detects X/Twitter URL in a message
-2. Calls `summarize_url_with_perplexity(url)` which:
-   - Sends the URL directly to Perplexity's API
-   - Perplexity scrapes the URL using its built-in web scraping
-   - Returns a JSON response with summary and key points
+2. If Apify is configured, it calls `scrape_twitter_content(url)` to scrape the post into markdown
+3. Calls `summarize_scraped_content(markdown, url)`, which uses Perplexity to summarize the scraped text
+4. Bot creates a thread with the summary
+5. Stores the summary in the database for `/sum` command
+
+### Regular Link Auto-Summarization Flow:
+1. Bot detects a non-X, non-YouTube URL in a message
+2. Calls `summarize_url_with_perplexity(url)`, which:
+   - Uses Firecrawl to scrape the URL into markdown
+   - Passes the markdown to `summarize_scraped_content()` so Perplexity can summarize it
 3. Bot creates a thread with the summary
 4. Stores the summary in the database for `/sum` command
 
 ### Fallback Strategy:
-- **Primary**: Perplexity API (built-in web scraping)
-- **Fallback**: Firecrawl (if Perplexity can't access the content)
-- **Note**: Apify is no longer used or required
+- **Primary**: Firecrawl + Perplexity for regular links; Apify + Perplexity for X/Twitter when configured
+- **Fallback**: Firecrawl for X/Twitter if Apify is not configured or fails (via `scrape_url_on_demand()`)
+- **Note**: Perplexity is never used to fetch URLs directly; it only summarizes scraped content
 
 ## Benefits
 
-1. **Simpler Architecture**: One less API dependency (Apify)
-2. **Cost Savings**: No need for Apify API token/subscription
-3. **Unified Approach**: Uses Perplexity for both scraping and summarization
-4. **Maintained Functionality**: Same user experience with threads and summaries
+1. **Clear Separation of Concerns**: Firecrawl handles URL scraping; Perplexity only summarizes text
+2. **Safer Perplexity Usage**: No reliance on Perplexity to fetch external URLs directly
+3. **Reused Summarization Path**: All flows (X/Twitter, YouTube, regular links) ultimately go through `summarize_scraped_content()`
+4. **Maintained Functionality**: Same user experience with threads and summaries, now with less duplicated thread logic
 
 ## Limitations
 
@@ -51,12 +55,12 @@ Refactored the Discord bot to use Perplexity's built-in web scraping capabilitie
 
 ## Configuration Changes
 
-### No Longer Required:
-- `APIFY_API_TOKEN` environment variable (can be removed from `.env`)
+### Optional / Conditional:
+- `APIFY_API_TOKEN` - Optional; if set, X/Twitter auto-summarization will use Apify for scraping before Perplexity summarization. If not set, X/Twitter auto-summarization via `handle_x_post_summary()` is effectively disabled, though other flows may still use Firecrawl.
 
-### Still Required:
-- `PERPLEXITY_API_KEY` - For web scraping and summarization
-- `FIRECRAWL_API_KEY` - For fallback URL scraping
+### Required:
+- `PERPLEXITY_API_KEY` - For summarization only (no direct URL fetching)
+- `FIRECRAWL_API_KEY` - For URL scraping (primary for regular links, fallback for some X/Twitter cases)
 
 ## Testing
 
@@ -74,25 +78,25 @@ python test_perplexity_x_scraping.py
 
 ## Files Modified
 
-1. `llm_handler.py` - Added Perplexity-based scraping functions
-2. `bot.py` - Removed Apify dependency, simplified X/Twitter handling
-3. `test_perplexity_x_scraping.py` - New test file (created)
+1. `llm_handler.py` - Updated URL summarization to use Firecrawl for scraping and Perplexity for text-only summarization; `summarize_url_with_perplexity()` now wraps `scrape_url_content()` + `summarize_scraped_content()`
+2. `bot.py` - Refactored thread creation into `create_or_get_summary_thread()` and updated `handle_link_summary()` to use the new Firecrawl+Perplexity URL summarization path
+3. `test_perplexity_x_scraping.py` - Existing manual test script (behavior may need adjustment to the new return type if used)
 
-## Files NOT Modified (Apify still referenced but not used)
+## Files NOT Modified
 
-- `apify_handler.py` - Still exists but not imported/used
-- `test_x_scraping.py` - Old Apify tests (can be removed if desired)
-- `test_apify.py` - Old Apify tests (can be removed if desired)
-- `test_twitter_url_processing.py` - Old test (can be removed if desired)
-- `README.md` - Still mentions Apify (should be updated)
-- `.env.sample` - Still mentions Apify (should be updated)
-- `config_validator.py` - Still checks for Apify token (can be removed)
+- `apify_handler.py` - Still exists and is used for X/Twitter scraping when configured
+- `test_x_scraping.py` - Legacy Apify tests (can be cleaned up or updated separately)
+- `test_apify.py` - Legacy Apify tests (can be cleaned up or updated separately)
+- `test_twitter_url_processing.py` - Legacy test (can be cleaned up or updated separately)
+- `README.md` - Still mentions Apify (may be updated in a follow-up to better describe current behavior)
+- `.env.sample` - Still mentions Apify (may be updated in a follow-up)
+- `config_validator.py` - Still checks for Apify token (may be adjusted once Apify usage is revisited)
 
 ## Recommended Next Steps
 
-1. **Update Documentation**: Update README.md to reflect that Apify is no longer used
-2. **Update .env.sample**: Remove APIFY_API_TOKEN reference
-3. **Clean Up**: Optionally remove `apify_handler.py` and related test files if not needed
-4. **Test Thoroughly**: Test with various X/Twitter URLs to ensure Perplexity works well
-5. **Monitor**: Watch for any issues with X/Twitter scraping and adjust fallback strategy if needed
+1. **Update Documentation**: Update README.md to describe the Firecrawl + Perplexity flow and current Apify usage for X/Twitter
+2. **Update .env.sample**: Clarify required keys for Firecrawl and Perplexity, and optional Apify configuration
+3. **Clean Up Legacy Tests**: Decide whether to modernize or remove old Apify-focused tests and scripts
+4. **Test Thoroughly**: Test with various X/Twitter and regular URLs to ensure Firecrawl + Perplexity behave as expected
+5. **Monitor**: Watch for any issues with Firecrawl scraping or Perplexity summarization and adjust fallback strategy if needed
 
