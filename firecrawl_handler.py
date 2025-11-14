@@ -57,14 +57,14 @@ async def scrape_url_content(url: str) -> Optional[str]:
         def _do_scrape():
             # Preferred: new Firecrawl client with .scrape (v2)
             if hasattr(client, "scrape"):
-                return client.scrape(url, formats=["markdown"])  # type: ignore[call-arg]
+                return client.scrape(url, formats=["markdown"], timeout=config.firecrawl_timeout_ms)  # type: ignore[call-arg]
             # Legacy clients: use .scrape_url (v1)
             if hasattr(client, "scrape_url"):
-                return client.scrape_url(url, formats=["markdown"])  # type: ignore[call-arg]
+                return client.scrape_url(url, formats=["markdown"], timeout=config.firecrawl_timeout_ms)  # type: ignore[call-arg]
             # v1 compatibility shim on newer client
             v1_client = getattr(client, "v1", None)
             if v1_client is not None and hasattr(v1_client, "scrape_url"):
-                return v1_client.scrape_url(url, formats=["markdown"])  # type: ignore[call-arg]
+                return v1_client.scrape_url(url, formats=["markdown"], timeout=config.firecrawl_timeout_ms)  # type: ignore[call-arg]
             raise RuntimeError("Firecrawl client does not support scrape APIs")
 
         scrape_result = await loop.run_in_executor(None, _do_scrape)
