@@ -41,6 +41,12 @@ firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
 if not firecrawl_api_key:
     raise ValueError("FIRECRAWL_API_KEY environment variable is required")
 
+# Firecrawl Timeout Configuration (optional)
+# Environment variable: FIRECRAWL_TIMEOUT_MS
+# Maximum duration in milliseconds before aborting a scrape request
+# Default: 900000ms (15 minutes) - maximum practical value
+firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
+
 # Apify API Token (optional, for x.com/twitter.com link scraping)
 # Environment variable: APIFY_API_TOKEN
 # If not provided, Twitter/X.com links will be processed using Firecrawl
