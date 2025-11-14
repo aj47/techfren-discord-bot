@@ -65,6 +65,15 @@ else:
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
+# Self-Assignable Roles Configuration
+# Define roles that users can self-assign through slash commands
+# Format: command_key: actual_role_name_in_discord
+# These roles must be created manually in Discord server settings
+SELF_ASSIGNABLE_ROLES = {
+    'voice-gang': 'voice gang',  # Role for users interested in voice chat
+    'live-gang': 'live gang'     # Role for users who want stream notifications
+}
+
 # LLM API Configuration (optional)
 # Environment variable: PERPLEXITY_BASE_URL
 # Base URL for Perplexity API (or compatible API)
