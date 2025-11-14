@@ -296,13 +296,14 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Prepare the messages for summarization
         formatted_messages_text = []
+        image_summaries = []  # Collected image descriptions for an explicit summary section
         for msg in filtered_messages:
             # Ensure created_at is a datetime object before calling strftime
             created_at_time = msg.get('created_at')
             if hasattr(created_at_time, 'strftime'):
                 time_str = created_at_time.strftime('%H:%M:%S')
             else:
-                time_str = "Unknown Time" # Fallback if created_at is not as expected
+                time_str = "Unknown Time"  # Fallback if created_at is not as expected
 
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
@@ -320,12 +321,45 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
+            # Check if this message has image descriptions
+            image_descriptions = msg.get('image_descriptions')
+
             # Format the message with the basic content and clickable Discord link
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
                 message_text = f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
             else:
                 message_text = f"[{time_str}] {author_name}: {content}"
+
+            images = None
+            # If there are image descriptions, add them to the message and collect them for a dedicated section
+            if image_descriptions:
+                try:
+                    images = json.loads(image_descriptions)
+                    if images and isinstance(images, list):
+                        if len(images) == 1:
+                            message_text += f"\n[Image: {images[0]['description']}]"
+                        else:
+                            message_text += "\n[Images:"
+                            for i, img in enumerate(images, 1):
+                                message_text += f"\n  {i}. {img['description']}"
+                            message_text += "\n]"
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse image descriptions JSON: {image_descriptions}")
+                    images = None
+
+            # Collect image descriptions for an explicit section in the final summary
+            if images:
+                for img in images:
+                    desc = img.get('description')
+                    if not desc:
+                        continue
+                    if message_link:
+                        image_summaries.append(
+                            f"{author_name} at {time_str}: {desc} [Source]({message_link})"
+                        )
+                    else:
+                        image_summaries.append(f"{author_name} at {time_str}: {desc}")
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
@@ -419,12 +453,19 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         # Apply Discord formatting enhancements to the summary
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
         formatted_summary = DiscordFormatter.format_llm_response(summary, citations)
-        
+
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
-        
+
+        # If there were any images, append a dedicated section so image context is always visible
+        if image_summaries:
+            images_section = "\n\n**Images shared in this period**\n"
+            for item in image_summaries:
+                images_section += f"- {item}\n"
+            formatted_summary += images_section
+
         logger.info(f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
-        
+
         return formatted_summary
 
     except asyncio.TimeoutError:

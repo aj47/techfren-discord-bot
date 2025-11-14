@@ -46,6 +46,7 @@ if not firecrawl_api_key:
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
+
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS
 # Default time: 00:00 UTC

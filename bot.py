@@ -22,6 +22,7 @@ from command_handler import handle_bot_command, handle_sum_day_command, handle_s
 from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
+from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
@@ -987,6 +988,18 @@ async def on_message(message):
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
     logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
+    # Analyze images if present
+    image_descriptions_json = None
+    try:
+        if message.attachments:
+            image_analyses = await analyze_message_images(message)
+            if image_analyses:
+                # Convert to JSON for database storage
+                image_descriptions_json = json.dumps(image_analyses)
+                logger.info(f"Analyzed {len(image_analyses)} image(s) in message {message.id}")
+    except Exception:
+        logger.exception("Error analyzing images in message %s", message.id)
+
     # Store message in database
     try:
         # Determine if this is a command and what type
@@ -1029,7 +1042,8 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type
+            command_type=command_type,
+            image_descriptions=image_descriptions_json
         )
 
         if not success:
@@ -1115,20 +1129,19 @@ async def _handle_slash_command_wrapper(
     try:
         if not interaction.response.is_done():
             await interaction.response.defer()
+    except discord.NotFound as e:
+        # 10062: Unknown interaction (typically expired or invalid token)
+        if e.code == 10062:
+            logger.error(f"Interaction expired or unknown for {command_name} - cannot defer response")
+            return  # Can't safely respond to this interaction anymore
+        # Re-raise other NotFound exceptions
+        raise
     except discord.HTTPException as e:
+        # 40060: Interaction has already been acknowledged
         if e.status == 400 and e.code == 40060:
-            # Interaction already acknowledged, continue without deferring
-            logger.warning(f"Interaction already acknowledged for {command_name}, continuing...")
+            logger.warning(f"Interaction already acknowledged for {command_name}, continuing without deferring...")
         else:
             # Re-raise other HTTP exceptions
-            raise
-    except discord.NotFound as e:
-        if e.code == 10062:
-            # Interaction expired (took too long to respond)
-            logger.error(f"Interaction expired for {command_name} - took too long to respond")
-            return  # Can't do anything with an expired interaction
-        else:
-            # Re-raise other NotFound exceptions
             raise
 
     if error_message is None:
