@@ -421,6 +421,95 @@ At the end, include a section with the top 3 most interesting or notable one-lin
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
+async def summarize_url_with_perplexity(url: str) -> Optional[str]:
+    """
+    Use Perplexity API directly to fetch and summarize a URL.
+    This leverages Perplexity's web search capability to get content and summarize it in one call.
+
+    Args:
+        url (str): The URL to fetch and summarize
+
+    Returns:
+        Optional[str]: A formatted summary string with key points, or None if summarization failed
+    """
+    try:
+        logger.info(f"Summarizing URL directly with Perplexity: {url}")
+
+        # Check if Perplexity API key exists
+        if not hasattr(config, 'perplexity') or not config.perplexity:
+            logger.error("Perplexity API key not found in config.py or is empty")
+            return None
+
+        # Initialize the OpenAI client with Perplexity base URL
+        openai_client = AsyncOpenAI(
+            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
+            api_key=config.perplexity,
+            timeout=60.0
+        )
+
+        # Get the model from config or use default (sonar for web search)
+        model = getattr(config, 'llm_model', "sonar")
+
+        # Create the prompt asking Perplexity to fetch and summarize the URL
+        prompt = f"""Please fetch and summarize the content from this URL: {url}
+
+Provide a concise summary (2-3 sentences) followed by 3-5 key points as bullet points.
+Format your response as plain text with bullet points (use - for bullets).
+Do not include an introductory paragraph or title.
+Keep the summary brief and focused on the most important information."""
+
+        # Make the API request - Perplexity will fetch the URL using its web search
+        completion = await openai_client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
+                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
+            },
+            model=model,  # Use sonar model for web search capability
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that fetches and summarizes web content concisely. When given a URL, access it and create brief summaries with bullet points. Do not use JSON format. Respond with plain text only. CRITICAL: Never wrap your response in a markdown code block (```). Use plain text with inline formatting only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=500,  # Enough for a concise summary with key points
+            temperature=0.3   # Lower temperature for more focused and consistent summaries
+        )
+
+        # Extract the response
+        response_text = completion.choices[0].message.content
+        logger.info(f"Perplexity direct URL summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+
+        # Clean up the response
+        cleaned_response = response_text.strip()
+
+        # Remove any markdown code block wrappers if present
+        if cleaned_response.startswith("```") and cleaned_response.endswith("```"):
+            # Remove the code block markers
+            lines = cleaned_response.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned_response = "\n".join(lines).strip()
+
+        # Apply Discord formatting enhancements
+        formatted_response = DiscordFormatter.format_llm_response(cleaned_response)
+
+        logger.info(f"Formatted Perplexity URL summary: {formatted_response[:50]}{'...' if len(formatted_response) > 50 else ''}")
+
+        return formatted_response
+
+    except asyncio.TimeoutError:
+        logger.error(f"Perplexity API request timed out while summarizing URL {url}")
+        return None
+    except Exception as e:
+        logger.error(f"Error summarizing URL with Perplexity {url}: {str(e)}", exc_info=True)
+        return None
+
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
     """
     Call the LLM API to summarize scraped content from a URL.

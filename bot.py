@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
@@ -391,6 +391,137 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
 
     except Exception as e:
         logger.error(f"Error in handle_x_post_summary: {str(e)}", exc_info=True)
+        return False
+
+async def handle_link_summary(message: discord.Message) -> bool:
+    """
+    Automatically detect non-X/Twitter URLs in messages, summarize them using Perplexity directly,
+    and reply to the message with the summary.
+
+    Args:
+        message: The Discord message to check for URLs
+
+    Returns:
+        bool: True if a link was found and processed, False otherwise
+    """
+    try:
+        # Skip bot messages
+        if message.author.bot:
+            return False
+
+        # Extract URLs from message content
+        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+        urls = re.findall(url_pattern, message.content)
+
+        if not urls:
+            return False
+
+        # Filter out X/Twitter URLs and YouTube URLs (they have their own handlers)
+        regular_urls = []
+        for url in urls:
+            is_x_url = await is_twitter_url(url)
+            is_yt_url = await is_youtube_url(url)
+
+            if not is_x_url and not is_yt_url:
+                regular_urls.append(url)
+
+        if not regular_urls:
+            return False
+
+        logger.info(f"Found {len(regular_urls)} regular URL(s) in message {message.id}")
+
+        # Process each URL
+        for url in regular_urls:
+            try:
+                # Summarize the URL directly using Perplexity
+                logger.info(f"Starting to summarize URL with Perplexity: {url}")
+                summary_text = await summarize_url_with_perplexity(url)
+
+                if not summary_text:
+                    logger.warning(f"Failed to summarize URL: {url}")
+                    continue
+
+                # Build the response message with header
+                response = f"🔗 **Link Summary:**\n\n{summary_text}"
+
+                # Split if too long (Discord thread messages have 4000 char limit)
+                if len(response) > 3900:
+                    response = response[:3900] + "..."
+
+                # Create or get existing thread from the message
+                thread = None
+                try:
+                    # Try to create a thread from the message
+                    # Extract domain from URL for thread name
+                    parsed_url = urlparse(url)
+                    domain = parsed_url.netloc or "Link"
+                    thread_name = f"Link Summary: {domain[:40]}"  # Limit length
+
+                    thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
+                    # Join the thread to ensure it's visible and active
+                    await thread.join()
+                    logger.info(f"Created and joined thread {thread.id} for message {message.id}")
+                except discord.errors.HTTPException as e:
+                    if e.code == 160004:  # Thread already exists
+                        logger.info(f"Thread already exists for message {message.id}, fetching it")
+                        # Get the existing thread
+                        if isinstance(message.channel, discord.TextChannel):
+                            # Search through active threads
+                            for active_thread in message.channel.threads:
+                                if active_thread.id == message.id or (hasattr(active_thread, 'starter_message') and active_thread.starter_message and active_thread.starter_message.id == message.id):
+                                    thread = active_thread
+                                    break
+
+                            # If not found in active threads, search archived threads
+                            if not thread:
+                                async for archived_thread in message.channel.archived_threads(limit=100):
+                                    if archived_thread.id == message.id or (hasattr(archived_thread, 'starter_message') and archived_thread.starter_message and archived_thread.starter_message.id == message.id):
+                                        thread = archived_thread
+                                        break
+                    else:
+                        raise
+
+                if not thread:
+                    logger.error(f"Could not create or find thread for message {message.id}")
+                    continue
+
+                # Ensure bot is a member of the thread (important for visibility)
+                try:
+                    if not thread.me:
+                        await thread.join()
+                        logger.info(f"Joined existing thread {thread.id}")
+                except Exception as e:
+                    logger.warning(f"Could not join thread {thread.id}: {e}")
+
+                # Post the summary directly to the thread
+                summary_msg = await thread.send(response)
+                logger.info(f"Posted summary ({len(response)} chars) to thread {thread.id} (thread name: {thread.name})")
+
+                # Store the scraped data in the database
+                # Store empty JSON array for key_points to maintain database compatibility
+                key_points_json = json.dumps([])
+                await database.update_message_with_scraped_data(
+                    str(message.id),
+                    url,
+                    summary_text,
+                    key_points_json
+                )
+
+                logger.info(f"Successfully processed URL: {url}")
+
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
+                # If thread was created before error, post error message to it
+                try:
+                    if 'thread' in locals() and thread:
+                        await thread.send(f"❌ Error processing link: {str(e)[:100]}")
+                except:
+                    pass
+
+        return len(regular_urls) > 0
+
+    except Exception as e:
+        logger.error(f"Error in handle_link_summary: {str(e)}", exc_info=True)
         return False
 
 async def handle_links_dump_channel(message: discord.Message) -> bool:
@@ -940,6 +1071,14 @@ async def on_message(message):
             logger.debug(f"X post summary handled for message {message.id}")
     except Exception as e:
         logger.error(f"Error in X post summary handler: {str(e)}", exc_info=True)
+
+    # Handle regular link summarization automatically (non-X.com, non-YouTube URLs)
+    try:
+        link_handled = await handle_link_summary(message)
+        if link_handled:
+            logger.debug(f"Link summary handled for message {message.id}")
+    except Exception as e:
+        logger.error(f"Error in link summary handler: {str(e)}", exc_info=True)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
