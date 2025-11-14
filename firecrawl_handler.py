@@ -54,20 +54,80 @@ async def scrape_url_content(url: str) -> Optional[str]:
         # Use a separate thread for the blocking API call
         loop = asyncio.get_event_loop()
 
+        # Firecrawl timeout / retry configuration
+        MAX_RETRIES = 3
+        FIRECRAWL_TIMEOUT_MS = 60000  # 60 seconds per attempt
+
+
         def _do_scrape():
+            """Perform the blocking Firecrawl scrape call.
+
+            We pass an explicit timeout where supported and keep backward
+            compatibility with older SDK variants.
+            """
             # Preferred: new Firecrawl client with .scrape (v2)
             if hasattr(client, "scrape"):
-                return client.scrape(url, formats=["markdown"])  # type: ignore[call-arg]
-            # Legacy clients: use .scrape_url (v1)
+                return client.scrape(  # type: ignore[call-arg]
+                    url,
+                    formats=["markdown"],
+                    timeout=FIRECRAWL_TIMEOUT_MS,
+                )
+            # Legacy clients: use .scrape_url (v1) with explicit timeout
             if hasattr(client, "scrape_url"):
-                return client.scrape_url(url, formats=["markdown"])  # type: ignore[call-arg]
+                return client.scrape_url(  # type: ignore[call-arg]
+                    url,
+                    formats=["markdown"],
+                    timeout=FIRECRAWL_TIMEOUT_MS,
+                )
             # v1 compatibility shim on newer client
             v1_client = getattr(client, "v1", None)
             if v1_client is not None and hasattr(v1_client, "scrape_url"):
-                return v1_client.scrape_url(url, formats=["markdown"])  # type: ignore[call-arg]
+                return v1_client.scrape_url(  # type: ignore[call-arg]
+                    url,
+                    formats=["markdown"],
+                    timeout=FIRECRAWL_TIMEOUT_MS,
+                )
             raise RuntimeError("Firecrawl client does not support scrape APIs")
 
-        scrape_result = await loop.run_in_executor(None, _do_scrape)
+        scrape_result = None
+        last_exception: Optional[Exception] = None
+
+        # Retry logic for transient timeouts
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                scrape_result = await loop.run_in_executor(None, _do_scrape)
+                break
+            except Exception as e:
+                last_exception = e
+                error_text = str(e)
+                lowered = error_text.lower()
+                is_timeout = (
+                    "request timeout" in lowered
+                    or "scrape timed out" in lowered
+                    or "timed out" in lowered
+                )
+
+                if is_timeout and attempt < MAX_RETRIES:
+                    logger.warning(
+                        "Firecrawl scrape timeout for URL %s on attempt %d/%d: %s - retrying...",
+                        url,
+                        attempt,
+                        MAX_RETRIES,
+                        error_text,
+                    )
+                    # Simple linear backoff between retries
+                    await asyncio.sleep(attempt * 2)
+                    continue
+
+                # Non-timeout error or final attempt: let outer handler log it
+                raise
+
+        if scrape_result is None:
+            # If all retries failed with an exception, bubble up the last one
+            if last_exception is not None:
+                raise last_exception
+            logger.warning(f"Failed to scrape URL: {url} - Empty response from Firecrawl")
+            return None
 
         # Extract markdown-like content from the response
         if not scrape_result:
@@ -136,7 +196,7 @@ async def scrape_url_content(url: str) -> Optional[str]:
         if hasattr(e, 'response') and e.response:
             status_code = getattr(e.response, 'status_code', 'unknown')
             error_message = f"HTTP Error {status_code}: {error_message}"
-            
+
             # Try to extract more details from the response if available
             try:
                 response_text = e.response.text
@@ -144,6 +204,6 @@ async def scrape_url_content(url: str) -> Optional[str]:
                     error_message += f" - Response: {response_text[:200]}"
             except:
                 pass
-                
+
         logger.error(f"Error scraping URL {url}: {error_message}", exc_info=True)
         return None
