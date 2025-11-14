@@ -1,6 +1,6 @@
 from openai import AsyncOpenAI
 from logging_config import logger
-import config # Assuming config.py is in the same directory or accessible
+import config  # Assuming config.py is in the same directory or accessible
 import json
 from typing import Optional, Dict, Any
 import asyncio
@@ -8,6 +8,7 @@ import re
 from message_utils import generate_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
+from gif_utils import is_gif_url
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -166,6 +167,18 @@ async def call_llm_api(query, message_context=None):
         
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
+
+        # Skip GIF URLs entirely for scraping/analysis
+        if all_urls:
+            non_gif_urls = []
+            for url in all_urls:
+                if is_gif_url(url):
+                    logger.info(f"Skipping GIF URL in LLM URL scraping: {url}")
+                    continue
+                non_gif_urls.append(url)
+
+            all_urls = non_gif_urls
+
         if all_urls:
             scraped_content_parts = []
             for url in all_urls:
@@ -193,7 +206,7 @@ async def call_llm_api(query, message_context=None):
                             logger.warning(f"Failed to scrape content for URL: {url}")
                 except Exception as e:
                     logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
-            
+
             if scraped_content_parts:
                 scraped_content_text = "\n\n".join(scraped_content_parts)
                 if message_context:
@@ -461,6 +474,43 @@ At the end, include a section with the top 3 most interesting or notable one-lin
     except Exception as e:
         logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
+
+async def summarize_url_with_perplexity(url: str) -> Optional[str]:
+    """Scrape a URL with Firecrawl and summarize its content with Perplexity.
+
+    This function no longer relies on Perplexity to fetch the URL directly.
+    Instead, it uses Firecrawl to retrieve the page content and then calls
+    :func:`summarize_scraped_content` to have Perplexity summarize that text.
+
+    Args:
+        url (str): The URL to scrape and summarize.
+
+    Returns:
+        Optional[str]: A formatted summary string with key points,
+        or None if scraping or summarization failed.
+    """
+    try:
+        # Import here to avoid circular imports
+        from firecrawl_handler import scrape_url_content
+
+        logger.info(f"Scraping URL with Firecrawl for Perplexity summarization: {url}")
+        markdown_content = await scrape_url_content(url)
+
+        if not markdown_content:
+            logger.warning(f"No content scraped for URL: {url}")
+            return None
+
+        # Summarize the scraped content using Perplexity as a pure text model
+        summary_text = await summarize_scraped_content(markdown_content, url)
+        if not summary_text:
+            logger.warning(f"Failed to summarize scraped content for URL: {url}")
+            return None
+
+        return summary_text
+
+    except Exception as e:
+        logger.error(f"Error scraping/summarizing URL {url} with Firecrawl + Perplexity: {str(e)}", exc_info=True)
+        return None
 
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
     """
