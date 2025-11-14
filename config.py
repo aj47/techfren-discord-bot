@@ -46,6 +46,11 @@ if not firecrawl_api_key:
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
+# Anthropic API Key (optional, for image analysis with Claude Vision)
+# Environment variable: ANTHROPIC_API_KEY
+# If not provided, image attachments will not be analyzed
+anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS
 # Default time: 00:00 UTC

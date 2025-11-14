@@ -22,6 +22,7 @@ from command_handler import handle_bot_command, handle_sum_day_command, handle_s
 from firecrawl_handler import scrape_url_content # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
+from image_analyzer import analyze_message_images # Import image analysis functions
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 GIF_URL_PATTERN = re.compile(r"https?://\S+\.gif(?:\?\S*)?", re.IGNORECASE)
@@ -878,6 +879,18 @@ async def on_message(message):
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
     logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
+    # Analyze images if present
+    image_descriptions_json = None
+    try:
+        if message.attachments:
+            image_analyses = await analyze_message_images(message)
+            if image_analyses:
+                # Convert to JSON for database storage
+                image_descriptions_json = json.dumps(image_analyses)
+                logger.info(f"Analyzed {len(image_analyses)} image(s) in message {message.id}")
+    except Exception as e:
+        logger.error(f"Error analyzing images in message {message.id}: {str(e)}", exc_info=True)
+
     # Store message in database
     try:
         # Determine if this is a command and what type
@@ -920,7 +933,8 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type
+            command_type=command_type,
+            image_descriptions=image_descriptions_json
         )
 
         if not success:

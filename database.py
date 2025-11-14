@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS messages (
     command_type TEXT,
     scraped_url TEXT,
     scraped_content_summary TEXT,
-    scraped_content_key_points TEXT
+    scraped_content_key_points TEXT,
+    image_descriptions TEXT
 );
 """
 
@@ -68,8 +69,8 @@ INSERT_MESSAGE = """
 INSERT INTO messages (
     id, author_id, author_name, channel_id, channel_name,
     guild_id, guild_name, content, created_at, is_bot, is_command, command_type,
-    scraped_url, scraped_content_summary, scraped_content_key_points
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    scraped_url, scraped_content_summary, scraped_content_key_points, image_descriptions
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 INSERT_CHANNEL_SUMMARY = """
@@ -79,6 +80,27 @@ INSERT INTO channel_summaries (
     created_at, metadata
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
+
+def migrate_database() -> None:
+    """
+    Run database migrations to update schema for existing databases.
+    """
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+
+            # Check if image_descriptions column exists
+            cursor.execute("PRAGMA table_info(messages)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'image_descriptions' not in columns:
+                logger.info("Adding image_descriptions column to messages table")
+                cursor.execute("ALTER TABLE messages ADD COLUMN image_descriptions TEXT")
+                conn.commit()
+                logger.info("Successfully added image_descriptions column")
+
+    except Exception as e:
+        logger.error(f"Error running database migrations: {str(e)}", exc_info=True)
 
 def init_database() -> None:
     """
@@ -135,7 +157,8 @@ def init_database() -> None:
                         None,
                         None,
                         None,
-                        None
+                        None,
+                        None  # image_descriptions
                     )
                 )
                 logger.info("Successfully inserted test message during database initialization")
@@ -146,6 +169,9 @@ def init_database() -> None:
                 logger.warning(f"Failed to insert test message during initialization: {str(e)}")
 
             conn.commit()
+
+        # Run migrations for existing databases
+        migrate_database()
 
         logger.info(f"Database initialized successfully at {DB_FILE}")
     except Exception as e:
@@ -234,7 +260,8 @@ def store_message(
     command_type: Optional[str] = None,
     scraped_url: Optional[str] = None,
     scraped_content_summary: Optional[str] = None,
-    scraped_content_key_points: Optional[str] = None
+    scraped_content_key_points: Optional[str] = None,
+    image_descriptions: Optional[str] = None
 ) -> bool:
     """
     Store a message in the database.
@@ -255,6 +282,7 @@ def store_message(
         scraped_url (Optional[str]): The URL that was scraped from the message (if any)
         scraped_content_summary (Optional[str]): Summary of the scraped content (if any)
         scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)
+        image_descriptions (Optional[str]): JSON string of image analysis results (if any)
 
     Returns:
         bool: True if the message was stored successfully, False otherwise
@@ -266,7 +294,7 @@ def store_message(
 
 # Ensure consistent datetime format for storage (always UTC, no timezone info for SQLite compatibility)
             created_at_str = created_at.replace(tzinfo=None).isoformat()
-            
+
             cursor.execute(
                 INSERT_MESSAGE,
                 (
@@ -284,7 +312,8 @@ def store_message(
                     command_type,
                     scraped_url,
                     scraped_content_summary,
-                    scraped_content_key_points
+                    scraped_content_key_points,
+                    image_descriptions
                 )
             )
 
@@ -341,7 +370,8 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
                             msg.get('command_type'),
                             msg.get('scraped_url'),
                             msg.get('scraped_content_summary'),
-                            msg.get('scraped_content_key_points')
+                            msg.get('scraped_content_key_points'),
+                            msg.get('image_descriptions')
                         )
                     )
                 
@@ -479,7 +509,7 @@ def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str
             cursor.execute(
                 """
                 SELECT author_name, content, created_at, is_bot, is_command,
-                       scraped_url, scraped_content_summary, scraped_content_key_points
+                       scraped_url, scraped_content_summary, scraped_content_key_points, image_descriptions
                 FROM messages
                 WHERE channel_id = ?
                 ORDER BY created_at DESC
@@ -499,7 +529,8 @@ def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str
                     'is_command': bool(row['is_command']),
                     'scraped_url': row['scraped_url'],
                     'scraped_content_summary': row['scraped_content_summary'],
-                    'scraped_content_key_points': row['scraped_content_key_points']
+                    'scraped_content_key_points': row['scraped_content_key_points'],
+                    'image_descriptions': row['image_descriptions']
                 })
 
         logger.info(f"Retrieved {len(messages)} messages from channel {channel_id} (all time)")
@@ -562,9 +593,9 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
                 """
                 SELECT id, author_name, content, created_at, is_bot, is_command,
                        scraped_url, scraped_content_summary, scraped_content_key_points,
-                       guild_id
+                       image_descriptions, guild_id
                 FROM messages
-                WHERE channel_id = ? 
+                WHERE channel_id = ?
                 AND (
                     datetime(created_at) BETWEEN datetime(?) AND datetime(?)
                     OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
@@ -587,6 +618,7 @@ def get_channel_messages_for_hours(channel_id: str, date: datetime, hours: int) 
                     'scraped_url': row['scraped_url'],
                     'scraped_content_summary': row['scraped_content_summary'],
                     'scraped_content_key_points': row['scraped_content_key_points'],
+                    'image_descriptions': row['image_descriptions'],
                     'guild_id': row['guild_id'],
                     'channel_id': channel_id
                 })
@@ -621,7 +653,7 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
                 SELECT
                     id, author_id, author_name, channel_id, channel_name,
                     guild_id, guild_name, content, created_at, is_bot, is_command,
-                    scraped_url, scraped_content_summary, scraped_content_key_points
+                    scraped_url, scraped_content_summary, scraped_content_key_points, image_descriptions
                 FROM messages
                 WHERE created_at BETWEEN ? AND ?
                 ORDER BY channel_id, created_at ASC
@@ -653,7 +685,8 @@ def get_messages_for_time_range(start_time: datetime, end_time: datetime) -> Dic
                     'is_command': bool(row['is_command']),
                     'scraped_url': row['scraped_url'],
                     'scraped_content_summary': row['scraped_content_summary'],
-                    'scraped_content_key_points': row['scraped_content_key_points']
+                    'scraped_content_key_points': row['scraped_content_key_points'],
+                    'image_descriptions': row['image_descriptions']
                 })
 
         total_messages = sum(len(channel_data['messages']) for channel_data in messages_by_channel.values())

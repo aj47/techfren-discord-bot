@@ -307,12 +307,30 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             scraped_summary = msg.get('scraped_content_summary')
             scraped_key_points = msg.get('scraped_content_key_points')
 
+            # Check if this message has image descriptions
+            image_descriptions = msg.get('image_descriptions')
+
             # Format the message with the basic content and clickable Discord link
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
                 message_text = f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
             else:
                 message_text = f"[{time_str}] {author_name}: {content}"
+
+            # If there are image descriptions, add them to the message
+            if image_descriptions:
+                try:
+                    images = json.loads(image_descriptions)
+                    if images and isinstance(images, list):
+                        if len(images) == 1:
+                            message_text += f"\n[Image: {images[0]['description']}]"
+                        else:
+                            message_text += "\n[Images:"
+                            for i, img in enumerate(images, 1):
+                                message_text += f"\n  {i}. {img['description']}"
+                            message_text += "\n]"
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse image descriptions JSON: {image_descriptions}")
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:

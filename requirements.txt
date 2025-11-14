@@ -7,5 +7,7 @@ apify-client
 pytest-asyncio
 python-dotenv
 youtube-transcript-api
+anthropic
+aiohttp
 
 # Python 3.9+ required for asyncio.to_thread functionality
