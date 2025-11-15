@@ -5,7 +5,7 @@ import json
 from typing import Optional, Dict, Any
 import asyncio
 import re
-from message_utils import generate_discord_message_link
+from message_utils import generate_discord_message_link, is_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
 from gif_utils import is_gif_url, is_discord_emoji_url
@@ -168,7 +168,8 @@ async def call_llm_api(query, message_context=None):
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
 
-        # Skip GIF URLs and Discord emoji/image URLs entirely for scraping/analysis
+        # Skip GIF URLs, Discord emoji/image URLs, and Discord message links entirely
+        # for scraping/analysis
         if all_urls:
             filtered_urls = []
             for url in all_urls:
@@ -178,6 +179,10 @@ async def call_llm_api(query, message_context=None):
 
                 if is_discord_emoji_url(url):
                     logger.info(f"Skipping Discord emoji/image URL in LLM URL scraping: {url}")
+                    continue
+
+                if is_discord_message_link(url):
+                    logger.info(f"Skipping Discord message link in LLM URL scraping: {url}")
                     continue
 
                 filtered_urls.append(url)

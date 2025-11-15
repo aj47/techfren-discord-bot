@@ -14,7 +14,7 @@ import database
 from logging_config import logger  # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity  # Import LLM functions
-from message_utils import split_long_message, fetch_referenced_message  # Import message utility functions
+from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
 from config_validator import validate_config  # Import config validator
@@ -430,6 +430,11 @@ async def handle_link_summary(message: discord.Message) -> bool:
             # Skip Discord CDN emoji/image URLs (e.g., cdn.discordapp.com/emojis/*.webp)
             if is_discord_emoji_url(url):
                 logger.info(f"Skipping Discord emoji/image URL from link summary: {url}")
+                continue
+
+            # Skip internal Discord message permalinks (discord.com/channels/...)
+            if is_discord_message_link(url):
+                logger.info(f"Skipping Discord message link from link summary: {url}")
                 continue
 
             is_x_url = await is_twitter_url(url)
