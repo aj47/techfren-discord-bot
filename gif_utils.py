@@ -47,3 +47,38 @@ def is_gif_url(url: str) -> bool:
 
     return False
 
+
+# Discord emoji/image URL detection
+DISCORD_CDN_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
+DISCORD_EMOJI_PATH_PREFIXES = ("/emojis/",)
+DISCORD_IMAGE_EXTENSIONS = (".webp", ".png", ".jpg", ".jpeg", ".gif")
+
+
+def is_discord_emoji_url(url: str) -> bool:
+    """Return True if the URL points to a Discord CDN emoji/image.
+
+    We treat these as non-text image assets that don't need link summaries.
+    """
+    if not url:
+        return False
+
+    try:
+        decoded = unquote(url)
+    except Exception:
+        decoded = str(url)
+
+    parsed = urlparse(decoded)
+    hostname = (parsed.hostname or "").lower()
+    path = (parsed.path or "").lower()
+
+    if hostname not in DISCORD_CDN_HOSTS:
+        return False
+
+    if not any(path.startswith(prefix) for prefix in DISCORD_EMOJI_PATH_PREFIXES):
+        return False
+
+    if not any(path.endswith(ext) for ext in DISCORD_IMAGE_EXTENSIONS):
+        return False
+
+    return True
+

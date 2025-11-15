@@ -23,7 +23,7 @@ from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
 from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
 from image_analyzer import analyze_message_images  # Import image analysis functions
-from gif_utils import is_gif_url
+from gif_utils import is_gif_url, is_discord_emoji_url
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -418,12 +418,18 @@ async def handle_link_summary(message: discord.Message) -> bool:
         if not urls:
             return False
 
-        # Filter out X/Twitter URLs, YouTube URLs, and GIF URLs (they have their own handling or are skipped)
+        # Filter out X/Twitter URLs, YouTube URLs, GIF URLs, and Discord emoji/image URLs
+        # (they have their own handling or are skipped entirely)
         regular_urls = []
         for url in urls:
             # Skip GIF URLs completely (no link summary or image analysis)
             if is_gif_url(url):
                 logger.info(f"Skipping GIF URL from link summary: {url}")
+                continue
+
+            # Skip Discord CDN emoji/image URLs (e.g., cdn.discordapp.com/emojis/*.webp)
+            if is_discord_emoji_url(url):
+                logger.info(f"Skipping Discord emoji/image URL from link summary: {url}")
                 continue
 
             is_x_url = await is_twitter_url(url)
