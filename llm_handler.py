@@ -407,10 +407,26 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
 {messages_text}
 
-Provide a concise summary with short bullet points for main topics. Do not include an introductory paragraph.
+Format your response with clear, scannable sections using markdown headers:
+
+## 📋 Overview
+Provide a 1-2 sentence high-level summary of the main activity.
+
+## 🔑 Key Topics
+List the main topics discussed as bullet points. Each bullet should be CONCISE and SNAPPY - get straight to the point.
+IMPORTANT FORMAT: Start each bullet point directly with the core topic/subject. NO filler words like "Discussion about" or "Conversation regarding".
+End each bullet with attribution: "- shared by `username` and `username2` [Source](discord_link)"
+Example: "AI coding tools and their impact on developer productivity - shared by `alice` and `bob` [Source](https://discord.com/channels/...)"
+Example: "New React 19 features and migration challenges - shared by `charlie` [Source](https://discord.com/channels/...)"
+
 Highlight all user names/aliases with backticks (e.g., `username`).
-IMPORTANT: Each message has a [Jump to message](discord_link) link. For each bullet point, preserve these Discord message links at the end in the format: [Source](https://discord.com/channels/...)
-At the end, include a section with the top 3 most interesting or notable one-liner quotes from the conversation, each with their source link in the same [Source](https://discord.com/channels/...) format.
+Each message has a [Jump to message](discord_link) link. Preserve these Discord message links at the end of each bullet in the format: [Source](https://discord.com/channels/...)
+
+## 💬 Notable Quotes
+Include the top 3 most interesting or notable one-liner quotes from the conversation.
+Format: "Quote text here" - `username` [Source](https://discord.com/channels/...)
+
+Do not include an introductory paragraph before the sections. Start directly with the ## Overview header.
 """
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
