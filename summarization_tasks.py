@@ -146,9 +146,10 @@ async def daily_channel_summarization():
     """Scheduled task wrapper that runs the daily summarization once per day."""
     await run_daily_summarization_once()
 
-async def post_summary_to_reports_channel(channel_id, channel_name, __, summary_text):
+async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text):
     """
-    Post a summary directly into the channel that was summarized.
+    Post a summary into a thread in the channel that was summarized.
+    Creates a master message and then posts the summary inside a thread.
     """
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Cannot post summary to channel.")
@@ -160,10 +161,40 @@ async def post_summary_to_reports_channel(channel_id, channel_name, __, summary_
             logger.warning(f"Channel with ID {channel_id} not found; cannot post summary for {channel_name}")
             return
 
-        summary_parts = await split_long_message(summary_text)
-        for part in summary_parts:
-            await target_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
-        logger.info(f"Posted summary for channel {channel_name} into its own channel")
+        # Format the date for the master message
+        date_str = date.strftime("%B %d, %Y") if date else "Recent Activity"
+
+        # Create a master message
+        master_message_content = f"📊 **Daily Summary for {date_str}**"
+        master_message = await target_channel.send(
+            master_message_content,
+            allowed_mentions=discord.AllowedMentions.none(),
+            suppress_embeds=True
+        )
+        logger.info(f"Created master message {master_message.id} for daily summary in {channel_name}")
+
+        # Create a thread from the master message
+        thread_name = f"Daily Summary - {date_str}"
+        try:
+            thread = await master_message.create_thread(
+                name=thread_name,
+                auto_archive_duration=1440  # 24 hours
+            )
+            logger.info(f"Created thread {thread.id} for daily summary in {channel_name}")
+
+            # Post the summary parts inside the thread
+            summary_parts = await split_long_message(summary_text)
+            for part in summary_parts:
+                await thread.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+
+            logger.info(f"Posted summary for channel {channel_name} in thread {thread.id}")
+        except discord.errors.HTTPException as e:
+            logger.error(f"Failed to create thread for summary in {channel_name}: {str(e)}", exc_info=True)
+            # Fallback: post summary parts directly in the channel
+            logger.info(f"Falling back to posting summary directly in channel {channel_name}")
+            summary_parts = await split_long_message(summary_text)
+            for part in summary_parts:
+                await target_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
     except Exception as e:
         logger.error(f"Error posting summary to channel {channel_name}: {str(e)}", exc_info=True)
 
