@@ -41,7 +41,7 @@ class DiscordFormatter:
         formatting_rules = [
             # Headers - Convert markdown headers to Discord formatting
             (r'^#{1}\s+(.+)$', r'__**\1**__', re.MULTILINE),  # # Header -> bold underline
-            (r'^#{2}\s+(.+)$', r'**\1**', re.MULTILINE),      # ## Header -> bold
+            (r'^#{2}\s+(.+)$', r'**\1**\n', re.MULTILINE),      # ## Header -> bold with newline for spacing
             (r'^#{3,}\s+(.+)$', r'__\1__', re.MULTILINE),     # ### Header -> underline
 
             # Lists - Enhance bullet points and numbered lists

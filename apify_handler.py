@@ -121,7 +121,7 @@ async def fetch_tweet_replies(url: str) -> Optional[List[Dict[str, Any]]]:
         # Prepare the input for the Twitter Replies Scraper actor
         input_data = {
             "postUrls": [formatted_url],
-            "resultsLimit": 30
+            "resultsLimit": 10
         }
 
         # Use a separate thread for the blocking API call

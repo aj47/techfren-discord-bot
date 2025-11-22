@@ -4,59 +4,28 @@ import discord
 from discord.ext import commands
 import asyncio
 import re
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 import os
 import json
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 import database
-from logging_config import logger # Import the logger from the new module
-from rate_limiter import check_rate_limit, update_rate_limit_config # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content # Import LLM functions
-from message_utils import split_long_message, fetch_referenced_message # Import message utility functions
-from youtube_handler import is_youtube_url, scrape_youtube_content # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization # Import summarization tasks
-from config_validator import validate_config # Import config validator
-from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command # Import command handlers
-from firecrawl_handler import scrape_url_content # Import Firecrawl handler
-from apify_handler import scrape_twitter_content, is_twitter_url # Import Apify handler
+from logging_config import logger  # Import the logger from the new module
+from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity  # Import LLM functions
+from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
+from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
+from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
+from config_validator import validate_config  # Import config validator
+from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
+from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
+from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
+from image_analyzer import analyze_message_images  # Import image analysis functions
+from gif_utils import is_gif_url, is_discord_emoji_url
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
-GIF_URL_PATTERN = re.compile(r"https?://\S+\.gif(?:\?\S*)?", re.IGNORECASE)
-GIFV_URL_PATTERN = re.compile(r"https?://\S+\.gifv(?:\?\S*)?", re.IGNORECASE)
-
-# Provider brands to detect regardless of TLD/subdomain (tenor.com, tenor.co, tenor.org, etc.)
-GIF_PROVIDER_BRANDS = ("tenor", "giphy", "gfycat", "redgifs")
-
-
-def _check_url_for_gif(url: str) -> bool:
-    """Check if a URL is a GIF link, handling percent-encoding and brand detection."""
-    if not url:
-        return False
-
-    # Decode percent-encoding (e.g., t%65nor.com -> tenor.com)
-    try:
-        decoded = unquote(url).lower()
-    except Exception:
-        decoded = url.lower()
-
-    # Check for .gif/.gifv extensions
-    if GIF_URL_PATTERN.search(decoded) or GIFV_URL_PATTERN.search(decoded):
-        return True
-
-    # Check hostname for provider brands (covers all TLDs/subdomains)
-    try:
-        hostname = urlparse(decoded).hostname or ""
-        if any(brand in hostname for brand in GIF_PROVIDER_BRANDS):
-            return True
-    except Exception:
-        # Fallback: check if brand appears anywhere in URL
-        if any(brand in decoded for brand in GIF_PROVIDER_BRANDS):
-            return True
-
-    return False
 
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
@@ -94,7 +63,7 @@ def message_contains_gif(message: discord.Message) -> bool:
     content = message.content or ""
     if re.search(r'https?://\S+', content):
         for match in re.finditer(r'https?://\S+', content):
-            if _check_url_for_gif(match.group(0)):
+            if is_gif_url(match.group(0)):
                 return True
 
     # Check embeds
@@ -110,7 +79,7 @@ def message_contains_gif(message: discord.Message) -> bool:
                 obj = getattr(obj, part, None)
                 if obj is None:
                     break
-            if obj and _check_url_for_gif(str(obj)):
+            if obj and is_gif_url(str(obj)):
                 return True
 
     return False
@@ -222,19 +191,20 @@ async def process_url(message_id: str, url: str):
                 return
 
         # Step 2: Summarize the scraped content
-        scraped_data = await summarize_scraped_content(markdown_content, url)
-        if not scraped_data:
+        summary_text = await summarize_scraped_content(markdown_content, url)
+        if not summary_text:
             logger.warning(f"Failed to summarize content from URL: {url}")
             return
 
-        # Step 3: Convert key points to JSON string
-        key_points_json = json.dumps(scraped_data.get('key_points', []))
+        # Step 3: Store the summary (no separate key points since it's now plain text)
+        # Store empty JSON array for key_points to maintain database compatibility
+        key_points_json = json.dumps([])
 
         # Step 4: Update the message in the database with the scraped data
         success = await database.update_message_with_scraped_data(
             message_id,
             url,
-            scraped_data.get('summary', ''),
+            summary_text,
             key_points_json
         )
 
@@ -245,6 +215,304 @@ async def process_url(message_id: str, url: str):
 
     except Exception as e:
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
+
+
+async def create_or_get_summary_thread(message: discord.Message, thread_name: str):
+    """Create or fetch a summary thread for a message and ensure the bot has joined it.
+
+    Args:
+        message: The Discord message to create the thread from.
+        thread_name: The name to use when creating the thread.
+
+    Returns:
+        The thread object if found or created successfully, otherwise None.
+    """
+    thread = None
+    try:
+        # Try to create a thread from the message
+        thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
+        # Join the thread to ensure it's visible and active
+        await thread.join()
+        logger.info(f"Created and joined thread {thread.id} for message {message.id}")
+    except discord.errors.HTTPException as e:
+        if e.code == 160004:  # Thread already exists
+            logger.info(f"Thread already exists for message {message.id}, fetching it")
+            # Get the existing thread
+            # Discord doesn't provide a direct way to get thread from message, so we need to search
+            if isinstance(message.channel, discord.TextChannel):
+                # Search through active threads
+                for active_thread in message.channel.threads:
+                    if active_thread.id == message.id or (
+                        hasattr(active_thread, 'starter_message')
+                        and active_thread.starter_message
+                        and active_thread.starter_message.id == message.id
+                    ):
+                        thread = active_thread
+                        break
+
+                # If not found in active threads, search archived threads
+                if not thread:
+                    async for archived_thread in message.channel.archived_threads(limit=100):
+                        if archived_thread.id == message.id or (
+                            hasattr(archived_thread, 'starter_message')
+                            and archived_thread.starter_message
+                            and archived_thread.starter_message.id == message.id
+                        ):
+                            thread = archived_thread
+                            break
+        else:
+            raise
+
+    if not thread:
+        logger.error(f"Could not create or find thread for message {message.id}")
+        return None
+
+    # Ensure bot is a member of the thread (important for visibility)
+    try:
+        if not thread.me:
+            await thread.join()
+            logger.info(f"Joined existing thread {thread.id}")
+    except Exception as e:
+        logger.warning(f"Could not join thread {thread.id}: {e}")
+
+    return thread
+
+async def handle_x_post_summary(message: discord.Message) -> bool:
+    """
+    Automatically detect X/Twitter links in messages, scrape and summarize them,
+    and reply to the message with the summary.
+
+    Args:
+        message: The Discord message to check for X/Twitter links
+
+    Returns:
+        bool: True if an X post was found and processed, False otherwise
+    """
+    try:
+        # Skip bot messages
+        if message.author.bot:
+            return False
+
+        # Extract URLs from message content
+        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+        urls = re.findall(url_pattern, message.content)
+
+        if not urls:
+            return False
+
+        # Check each URL to find X/Twitter links
+        x_urls = []
+        for url in urls:
+            if await is_twitter_url(url):
+                from apify_handler import extract_tweet_id
+                tweet_id = extract_tweet_id(url)
+                if tweet_id:  # Only process URLs with valid tweet IDs
+                    x_urls.append(url)
+
+        if not x_urls:
+            return False
+
+        logger.info(f"Found {len(x_urls)} X/Twitter URL(s) in message {message.id}")
+
+        # Process each X URL
+        for url in x_urls:
+            try:
+                # Check if Apify API token is configured
+                import config
+                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+                    logger.warning("Apify API token not configured, skipping X post summarization")
+                    continue
+
+                # Scrape the X/Twitter content FIRST (before creating thread)
+                logger.info(f"Starting to scrape X post: {url}")
+                scraped_result = await scrape_twitter_content(url)
+
+                if not scraped_result or 'markdown' not in scraped_result:
+                    logger.warning(f"Failed to scrape X post: {url}")
+                    continue
+
+                markdown_content = scraped_result.get('markdown', '')
+
+                # Summarize the content BEFORE creating thread
+                logger.info(f"Summarizing scraped content for: {url}")
+                summary_text = await summarize_scraped_content(markdown_content, url)
+
+                if not summary_text:
+                    logger.warning(f"Failed to summarize X post: {url}")
+                    continue
+
+                # Build the response message with header
+                response = f"📊 **X Post Summary:**\n\n{summary_text}"
+
+                # Split into multiple messages if needed to respect Discord's 2000 character limit
+                if len(response) > 1900:
+                    logger.info(f"Splitting X post summary of {len(response)} chars into multiple parts")
+                    message_parts = await split_long_message(response, max_length=1900)
+                else:
+                    message_parts = [response]
+
+                # NOW create or get existing thread from the message (after Apify calls complete)
+                from apify_handler import extract_tweet_id
+                tweet_id = extract_tweet_id(url)
+                thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
+
+                thread = await create_or_get_summary_thread(message, thread_name)
+                if not thread:
+                    continue
+
+                # Post the summary directly to the thread (no "processing" message needed)
+                for part in message_parts:
+                    await thread.send(part)
+                logger.info(
+                    f"Posted X post summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"to thread {thread.id} (thread name: {thread.name})"
+                )
+
+                # Store the scraped data in the database
+                # Store empty JSON array for key_points to maintain database compatibility
+                key_points_json = json.dumps([])
+                await database.update_message_with_scraped_data(
+                    str(message.id),
+                    url,
+                    summary_text,
+                    key_points_json
+                )
+
+                logger.info(f"Successfully processed X post: {url}")
+
+            except Exception as e:
+                logger.error(f"Error processing X URL {url}: {str(e)}", exc_info=True)
+                # If thread was created before error, post error message to it
+                try:
+                    if 'thread' in locals() and thread:
+                        await thread.send(f"❌ Error processing X post: {str(e)[:100]}")
+                except:
+                    pass
+
+        return len(x_urls) > 0
+
+    except Exception as e:
+        logger.error(f"Error in handle_x_post_summary: {str(e)}", exc_info=True)
+        return False
+
+async def handle_link_summary(message: discord.Message) -> bool:
+    """
+    Automatically detect non-X/Twitter URLs in messages, summarize them using Perplexity directly,
+    and reply to the message with the summary.
+
+    Args:
+        message: The Discord message to check for URLs
+
+    Returns:
+        bool: True if a link was found and processed, False otherwise
+    """
+    try:
+        # Skip bot messages
+        if message.author.bot:
+            return False
+
+        # Extract URLs from message content
+        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+        urls = re.findall(url_pattern, message.content)
+
+        if not urls:
+            return False
+
+        # Filter out X/Twitter URLs, YouTube URLs, GIF URLs, and Discord emoji/image URLs
+        # (they have their own handling or are skipped entirely)
+        regular_urls = []
+        for url in urls:
+            # Skip GIF URLs completely (no link summary or image analysis)
+            if is_gif_url(url):
+                logger.info(f"Skipping GIF URL from link summary: {url}")
+                continue
+
+            # Skip Discord CDN emoji/image URLs (e.g., cdn.discordapp.com/emojis/*.webp)
+            if is_discord_emoji_url(url):
+                logger.info(f"Skipping Discord emoji/image URL from link summary: {url}")
+                continue
+
+            # Skip internal Discord message permalinks (discord.com/channels/...)
+            if is_discord_message_link(url):
+                logger.info(f"Skipping Discord message link from link summary: {url}")
+                continue
+
+            is_x_url = await is_twitter_url(url)
+            is_yt_url = await is_youtube_url(url)
+
+            if not is_x_url and not is_yt_url:
+                regular_urls.append(url)
+
+        if not regular_urls:
+            return False
+
+        logger.info(f"Found {len(regular_urls)} regular URL(s) in message {message.id}")
+
+        # Process each URL
+        for url in regular_urls:
+            try:
+                # Summarize the URL directly using Perplexity
+                logger.info(f"Starting to summarize URL with Perplexity: {url}")
+                summary_text = await summarize_url_with_perplexity(url)
+
+                if not summary_text:
+                    logger.warning(f"Failed to summarize URL: {url}")
+                    continue
+
+                # Build the response message with header
+                response = f"🔗 **Link Summary:**\n\n{summary_text}"
+
+                # Split into multiple messages if needed to respect Discord's 2000 character limit
+                if len(response) > 1900:
+                    logger.info(f"Splitting link summary of {len(response)} chars into multiple parts")
+                    message_parts = await split_long_message(response, max_length=1900)
+                else:
+                    message_parts = [response]
+
+                # Create or get existing thread from the message
+                # Extract domain from URL for thread name
+                parsed_url = urlparse(url)
+                domain = parsed_url.netloc or "Link"
+                thread_name = f"Link Summary: {domain[:40]}"  # Limit length
+
+                thread = await create_or_get_summary_thread(message, thread_name)
+                if not thread:
+                    continue
+
+                # Post the summary directly to the thread
+                for part in message_parts:
+                    await thread.send(part)
+                logger.info(
+                    f"Posted link summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"to thread {thread.id} (thread name: {thread.name})"
+                )
+
+                # Store the scraped data in the database
+                # Store empty JSON array for key_points to maintain database compatibility
+                key_points_json = json.dumps([])
+                await database.update_message_with_scraped_data(
+                    str(message.id),
+                    url,
+                    summary_text,
+                    key_points_json
+                )
+
+                logger.info(f"Successfully processed URL: {url}")
+
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
+                # If thread was created before error, post error message to it
+                try:
+                    if 'thread' in locals() and thread:
+                        await thread.send(f"❌ Error processing link: {str(e)[:100]}")
+                except:
+                    pass
+
+        return len(regular_urls) > 0
+
+    except Exception as e:
+        logger.error(f"Error in handle_link_summary: {str(e)}", exc_info=True)
+        return False
 
 async def handle_links_dump_channel(message: discord.Message) -> bool:
     """
@@ -428,7 +696,7 @@ async def on_message(message):
         return  # Message was handled (deleted), stop processing
 
     # Helper function to recursively check reference chain for GIFs
-    async def check_reference_chain_for_gif(msg, depth=0, max_depth=5):
+    async def check_reference_chain_for_gif(msg, depth=0, max_depth=25):
         """
         Recursively follow message references to check if any message in the chain contains a GIF.
         Returns (has_gif, chain_depth, is_external) tuple.
@@ -436,16 +704,16 @@ async def on_message(message):
         """
         if depth >= max_depth:
             logger.warning(f"Reference chain depth limit reached ({max_depth})")
-            # Fail closed: treat unresolved depth as an external GIF to avoid bypasses
-            return True, depth, True
-        
+            # Allow deep chains - fail open to avoid blocking legitimate conversations
+            return False, depth, False
+
         if not msg.reference or not msg.reference.message_id:
             return False, depth, False
-        
+
         try:
             # Use existing utility to fetch referenced message (handles caching, cross-channel refs)
             ref_msg = await fetch_referenced_message(msg)
-            
+
             if ref_msg is None:
                 # Determine why we couldn't fetch: external server or deleted message
                 ref_channel = bot.get_channel(msg.reference.channel_id) if msg.reference.channel_id else msg.channel
@@ -459,7 +727,7 @@ async def on_message(message):
                     # Channel exists but message couldn't be fetched (likely deleted or no permission)
                     logger.info(f"Chain[{depth}] Message {msg.reference.message_id} not accessible")
                     return False, depth, False  # Allow if just deleted
-            
+
             # Successfully fetched message
             has_gif = message_contains_gif(ref_msg)
             logger.info(
@@ -468,27 +736,27 @@ async def on_message(message):
                 f"Embeds: {len(ref_msg.embeds)} | "
                 f"Has ref: {ref_msg.reference is not None}"
             )
-            
+
             if has_gif:
                 return True, depth, False
-            
+
             # Continue following the chain
             if ref_msg.reference:
                 return await check_reference_chain_for_gif(ref_msg, depth + 1, max_depth)
-            
+
             return False, depth, False
         except Exception as e:
             logger.error(f"Error checking chain at depth {depth}: {e}")
             return False, depth, False
-        
+
         return False, depth, False
-    
+
     # Check if this message references another message (reply or forward)
     # This must happen BEFORE the GIF check because forwards might not have GIF content loaded yet
     if not message.author.bot and message.reference and message.reference.message_id:
         try:
             logger.info(f"Reference detected - User: {message.author.id} | Ref: {message.reference.message_id}")
-            
+
             # Log embed details of current message if present
             if message.embeds:
                 for i, embed in enumerate(message.embeds):
@@ -497,23 +765,23 @@ async def on_message(message):
                         f"type={getattr(embed, 'type', None)} | "
                         f"url={getattr(embed, 'url', None)}"
                     )
-            
+
             # Check if the CURRENT message (the forward) contains a GIF
             current_has_gif = message_contains_gif(message)
-            
+
             # Check the entire reference chain for GIFs
             chain_has_gif, chain_depth, is_external = await check_reference_chain_for_gif(message)
             logger.info(
                 f"Chain check complete - GIF: {chain_has_gif} | "
                 f"Depth: {chain_depth} | External: {is_external}"
             )
-            
+
             if chain_has_gif or current_has_gif:
                 # Check if user can post a GIF (read-only check, will record later)
                 can_post_gif, seconds_remaining = await check_gif_rate_limit(
                     str(message.author.id), message.created_at
                 )
-                
+
                 if can_post_gif:
                     # User is allowed to post - record it and let the forward through
                     logger.info(
@@ -568,7 +836,7 @@ async def on_message(message):
                         f"Blocking forward/reply (rate limited) - User: {message.author.id} | "
                         f"Wait: {seconds_remaining}s"
                     )
-                    
+
                     # Delete the forward/reply
                     try:
                         await message.delete()
@@ -578,7 +846,7 @@ async def on_message(message):
                         logger.warning(f"No permission to delete message {message.id}")
                     except Exception as delete_error:
                         logger.error(f"Error deleting message: {delete_error}", exc_info=True)
-                    
+
                     # Send rate limit warning with wait time
                     wait_text = _format_gif_cooldown(seconds_remaining)
                     warning_message = (
@@ -586,13 +854,13 @@ async def on_message(message):
                         f"Please wait {wait_text} before posting another GIF. "
                         f"This message will be deleted in 30 seconds."
                     )
-                    
+
                     warning_msg = None
                     try:
                         warning_msg = await message.channel.send(warning_message)
                     except Exception as send_error:
                         logger.error(f"Error sending rate limit warning: {send_error}", exc_info=True)
-                    
+
                     if warning_msg:
                         async def delete_warning_after_delay():
                             await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
@@ -600,9 +868,9 @@ async def on_message(message):
                                 await warning_msg.delete()
                             except Exception:
                                 pass
-                        
+
                         asyncio.create_task(delete_warning_after_delay())
-                    
+
                     return  # Stop processing this message
         except discord.NotFound:
             pass  # Referenced message not found
@@ -610,14 +878,14 @@ async def on_message(message):
             logger.warning(f"No permission to fetch referenced message {message.reference.message_id}")
         except Exception as ref_error:
             logger.error(f"Error fetching referenced message: {ref_error}", exc_info=True)
-    
+
     # Check if message contains GIF (for all non-bot messages)
     has_gif = False
     if not message.author.bot:
         has_gif = message_contains_gif(message)
         if has_gif:
             logger.info(f"Direct GIF detected - User: {message.author.id} | Embeds: {len(message.embeds)}")
-            
+
             # Log embed details
             if message.embeds:
                 for i, embed in enumerate(message.embeds):
@@ -626,7 +894,7 @@ async def on_message(message):
                         f"type={getattr(embed, 'type', None)} | "
                         f"url={getattr(embed, 'url', None)}"
                     )
-    
+
     # Enforce GIF posting limits for regular users (rate limiting only, forwards already handled above)
     if not message.author.bot and has_gif:
         # Check rate limit for direct GIF posts (forwards already blocked above)
@@ -731,6 +999,18 @@ async def on_message(message):
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
     logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
 
+    # Analyze images if present
+    image_descriptions_json = None
+    try:
+        if message.attachments:
+            image_analyses = await analyze_message_images(message)
+            if image_analyses:
+                # Convert to JSON for database storage
+                image_descriptions_json = json.dumps(image_analyses)
+                logger.info(f"Analyzed {len(image_analyses)} image(s) in message {message.id}")
+    except Exception:
+        logger.exception("Error analyzing images in message %s", message.id)
+
     # Store message in database
     try:
         # Determine if this is a command and what type
@@ -773,7 +1053,8 @@ async def on_message(message):
             guild_name=guild_name,
             is_bot=message.author.bot,
             is_command=is_command,
-            command_type=command_type
+            command_type=command_type,
+            image_descriptions=image_descriptions_json
         )
 
         if not success:
@@ -782,8 +1063,25 @@ async def on_message(message):
 
         # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
         # This saves resources and avoids processing URLs that nobody asks about
+        # Exception: X/Twitter posts are auto-summarized (see handle_x_post_summary below)
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+
+    # Handle X/Twitter post summarization automatically
+    try:
+        x_post_handled = await handle_x_post_summary(message)
+        if x_post_handled:
+            logger.debug(f"X post summary handled for message {message.id}")
+    except Exception as e:
+        logger.error(f"Error in X post summary handler: {str(e)}", exc_info=True)
+
+    # Handle regular link summarization automatically (non-X.com, non-YouTube URLs)
+    try:
+        link_handled = await handle_link_summary(message)
+        if link_handled:
+            logger.debug(f"Link summary handled for message {message.id}")
+    except Exception as e:
+        logger.error(f"Error in link summary handler: {str(e)}", exc_info=True)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
@@ -824,7 +1122,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     # Only enforce if the message NOW contains a GIF that wasn't there before
     before_has_gif = message_contains_gif(before)
     after_has_gif = message_contains_gif(after)
-    
+
     if after_has_gif and not before_has_gif:
         logger.info(f"New GIF detected in edited message - User: {after.author.id}")
         # Reuse the same enforcement logic by treating it as a new message check
@@ -842,20 +1140,19 @@ async def _handle_slash_command_wrapper(
     try:
         if not interaction.response.is_done():
             await interaction.response.defer()
+    except discord.NotFound as e:
+        # 10062: Unknown interaction (typically expired or invalid token)
+        if e.code == 10062:
+            logger.error(f"Interaction expired or unknown for {command_name} - cannot defer response")
+            return  # Can't safely respond to this interaction anymore
+        # Re-raise other NotFound exceptions
+        raise
     except discord.HTTPException as e:
+        # 40060: Interaction has already been acknowledged
         if e.status == 400 and e.code == 40060:
-            # Interaction already acknowledged, continue without deferring
-            logger.warning(f"Interaction already acknowledged for {command_name}, continuing...")
+            logger.warning(f"Interaction already acknowledged for {command_name}, continuing without deferring...")
         else:
             # Re-raise other HTTP exceptions
-            raise
-    except discord.NotFound as e:
-        if e.code == 10062:
-            # Interaction expired (took too long to respond)
-            logger.error(f"Interaction expired for {command_name} - took too long to respond")
-            return  # Can't do anything with an expired interaction
-        else:
-            # Re-raise other NotFound exceptions
             raise
 
     if error_message is None:

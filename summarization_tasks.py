@@ -16,14 +16,10 @@ def set_discord_client(client_instance):
     global discord_client
     discord_client = client_instance
 
-@tasks.loop(hours=24)
-async def daily_channel_summarization():
-    """
-    Task that runs once per day to:
-    1. Retrieve messages from the past 24 hours
-    2. Generate summaries for each active channel
-    3. Store the summaries in the database
-    4. Delete old messages
+async def run_daily_summarization_once(now: datetime | None = None):
+    """Run the daily channel summarization logic a single time.
+
+    This is used both by the scheduled daily task and by one-off scripts/tests.
     """
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Aborting daily summarization.")
@@ -33,7 +29,8 @@ async def daily_channel_summarization():
         logger.info("Starting daily automated channel summarization")
 
         # Get the current time and 24 hours ago (in UTC)
-        now = datetime.now(timezone.utc)
+        if now is None:
+            now = datetime.now(timezone.utc)
         yesterday = now - timedelta(hours=24)
 
         # Get active channels from the past 24 hours
@@ -42,6 +39,19 @@ async def daily_channel_summarization():
         if not active_channels:
             logger.info("No active channels found in the past 24 hours. Skipping summarization.")
             return
+
+        # If specific channels are configured, filter to just those
+        summary_channel_ids = getattr(config, 'summary_channel_ids', None)
+        if summary_channel_ids:
+            summary_channel_ids_set = {str(cid) for cid in summary_channel_ids}
+            active_channels = [
+                ch for ch in active_channels
+                if str(ch.get('channel_id')) in summary_channel_ids_set
+            ]
+
+            if not active_channels:
+                logger.info("No configured summary channels had activity in the past 24 hours. Skipping summarization.")
+                return
 
         logger.info(f"Found {len(active_channels)} active channels to summarize")
 
@@ -84,7 +94,10 @@ async def daily_channel_summarization():
                         'is_bot': msg.get('is_bot', False),
                         'is_command': False,
                         'guild_id': guild_id,
-                        'channel_id': channel_id
+                        'channel_id': channel_id,
+                        'scraped_url': msg.get('scraped_url'),
+                        'scraped_content_summary': msg.get('scraped_content_summary'),
+                        'scraped_content_key_points': msg.get('scraped_content_key_points')
                     }
                     formatted_messages.append(formatted_msg)
 
@@ -150,33 +163,32 @@ async def daily_channel_summarization():
                         existing_awards = database.get_daily_point_awards(guild_id, yesterday)
                         if existing_awards:
                             logger.warning(f"Points already awarded for {yesterday.strftime('%Y-%m-%d')} in guild {guild_id}. Skipping duplicate processing.")
-                            return
+                        else:
+                            for award in point_awards_result['awards']:
+                                author_id = award.get('author_id')
+                                author_name = award.get('author_name')
+                                points = award.get('points', 0)
+                                reason = award.get('reason', 'Contribution to the community')
 
-                        for award in point_awards_result['awards']:
-                            author_id = award.get('author_id')
-                            author_name = award.get('author_name')
-                            points = award.get('points', 0)
-                            reason = award.get('reason', 'Contribution to the community')
+                                # Award points to user
+                                success = database.award_points_to_user(author_id, author_name, guild_id, points)
 
-                            # Award points to user
-                            success = database.award_points_to_user(author_id, author_name, guild_id, points)
+                                if success:
+                                    # Store the daily award record
+                                    database.store_daily_point_award(
+                                        author_id=author_id,
+                                        author_name=author_name,
+                                        guild_id=guild_id,
+                                        date=yesterday,
+                                        points=points,
+                                        reason=reason
+                                    )
+                                    logger.info(f"Awarded {points} points to {author_name} for: {reason}")
 
-                            if success:
-                                # Store the daily award record
-                                database.store_daily_point_award(
-                                    author_id=author_id,
-                                    author_name=author_name,
-                                    guild_id=guild_id,
-                                    date=yesterday,
-                                    points=points,
-                                    reason=reason
-                                )
-                                logger.info(f"Awarded {points} points to {author_name} for: {reason}")
+                            # Post the point awards summary to general channel
+                            await post_daily_summary_with_points(yesterday, point_awards_result, max_points_per_day)
 
-                        # Post the point awards summary to general channel
-                        await post_daily_summary_with_points(yesterday, point_awards_result, max_points_per_day)
-
-                    logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
+                        logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
                 else:
                     logger.info("No points were awarded today.")
             except Exception as e:
@@ -194,29 +206,63 @@ async def daily_channel_summarization():
     except Exception as e:
         logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
 
-async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
+
+@tasks.loop(hours=24)
+async def daily_channel_summarization():
+    """Scheduled task wrapper that runs the daily summarization once per day."""
+    await run_daily_summarization_once()
+
+async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text):
     """
-    Post a summary to a designated reports channel if configured.
+    Post a summary into a thread in the channel that was summarized.
+    Creates a master message and then posts the summary inside a thread.
     """
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot post summary to reports channel.")
+        logger.error("Discord client not set in summarization_tasks. Cannot post summary to channel.")
         return
 
     try:
-        if not hasattr(config, 'reports_channel_id') or not config.reports_channel_id:
+        target_channel = discord_client.get_channel(int(channel_id))
+        if not target_channel:
+            logger.warning(f"Channel with ID {channel_id} not found; cannot post summary for {channel_name}")
             return
 
-        reports_channel = discord_client.get_channel(int(config.reports_channel_id))
-        if not reports_channel:
-            logger.warning(f"Reports channel with ID {config.reports_channel_id} not found")
-            return
+        # Format the date for the master message
+        date_str = date.strftime("%B %d, %Y") if date else "Recent Activity"
 
-        summary_parts = await split_long_message(summary_text)
-        for part in summary_parts:
-            await reports_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
-        logger.info(f"Posted summary for channel {channel_name} to reports channel")
+        # Create a master message
+        master_message_content = f"📊 **Daily Summary for {date_str}**"
+        master_message = await target_channel.send(
+            master_message_content,
+            allowed_mentions=discord.AllowedMentions.none(),
+            suppress_embeds=True
+        )
+        logger.info(f"Created master message {master_message.id} for daily summary in {channel_name}")
+
+        # Create a thread from the master message
+        thread_name = f"Daily Summary - {date_str}"
+        try:
+            thread = await master_message.create_thread(
+                name=thread_name,
+                auto_archive_duration=1440  # 24 hours
+            )
+            logger.info(f"Created thread {thread.id} for daily summary in {channel_name}")
+
+            # Post the summary parts inside the thread
+            summary_parts = await split_long_message(summary_text)
+            for part in summary_parts:
+                await thread.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+
+            logger.info(f"Posted summary for channel {channel_name} in thread {thread.id}")
+        except discord.errors.HTTPException as e:
+            logger.error(f"Failed to create thread for summary in {channel_name}: {str(e)}", exc_info=True)
+            # Fallback: post summary parts directly in the channel
+            logger.info(f"Falling back to posting summary directly in channel {channel_name}")
+            summary_parts = await split_long_message(summary_text)
+            for part in summary_parts:
+                await target_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
     except Exception as e:
-        logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
+        logger.error(f"Error posting summary to channel {channel_name}: {str(e)}", exc_info=True)
 
 async def post_daily_summary_with_points(date, point_awards_result, max_points=50):
     """
@@ -228,54 +274,46 @@ async def post_daily_summary_with_points(date, point_awards_result, max_points=5
         max_points: Maximum points available per day (default: 50)
     """
     if not discord_client:
-        logger.error("Discord client not set in summarization_tasks. Cannot post daily summary.")
+        logger.error("Discord client not set in summarization_tasks. Cannot post point summary.")
         return
 
     try:
-        # Check for general_channel_id, fallback to reports_channel_id
-        channel_id = getattr(config, 'general_channel_id', None) or getattr(config, 'reports_channel_id', None)
-
-        if not channel_id:
-            logger.warning("No general_channel_id or reports_channel_id configured. Skipping daily summary post.")
+        # Get the general channel ID from config
+        general_channel_id = getattr(config, 'general_channel_id', None)
+        if not general_channel_id:
+            logger.warning("GENERAL_CHANNEL_ID not configured. Skipping point summary post.")
             return
 
-        general_channel = discord_client.get_channel(int(channel_id))
+        general_channel = discord_client.get_channel(int(general_channel_id))
         if not general_channel:
-            logger.warning(f"General channel with ID {channel_id} not found")
+            logger.warning(f"General channel with ID {general_channel_id} not found; cannot post point summary")
             return
 
-        # Build the summary message
-        date_str = date.strftime('%Y-%m-%d')
+        # Format the date
+        date_str = date.strftime("%B %d, %Y") if date else "Recent Activity"
+
+        # Build the message
         awards = point_awards_result.get('awards', [])
-        total_awarded = point_awards_result.get('total_awarded', 0)
-        summary_text = point_awards_result.get('summary', 'Daily point awards have been distributed.')
+        summary_text = point_awards_result.get('summary', 'Daily point awards based on community contributions.')
 
-        if not awards:
-            message = f"**Daily Community Points - {date_str}**\n\nNo points were awarded today."
-        else:
-            message = f"**Daily Community Points - {date_str}**\n\n{summary_text}\n\n**Point Awards ({total_awarded}/{max_points} points distributed):**\n\n"
+        total_awarded = sum(award.get('points', 0) for award in awards)
 
-            # Sort awards by points (highest first)
-            sorted_awards = sorted(awards, key=lambda x: x.get('points', 0), reverse=True)
+        message = f"**Daily Community Points - {date_str}**\n\n{summary_text}\n\n**Point Awards ({total_awarded}/{max_points} points distributed):**\n\n"
 
-            for award in sorted_awards:
-                author_name = award.get('author_name', 'Unknown')
-                points = award.get('points', 0)
-                reason = award.get('reason', 'Contribution to the community')
+        for award in awards:
+            author_name = award.get('author_name', 'Unknown')
+            points = award.get('points', 0)
+            reason = award.get('reason', 'Contribution to the community')
+            message += f"• **{author_name}**: +{points} points - {reason}\n"
 
-                message += f"• **{author_name}**: +{points} points\n  _{reason}_\n\n"
-
-            # Add leaderboard teaser
-            message += "\n_Type `/leaderboard` to see the all-time top contributors!_"
-
-        # Split if too long and send
+        # Split and send if message is too long
         message_parts = await split_long_message(message)
         for part in message_parts:
-            await general_channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+            await general_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
 
-        logger.info("Posted daily summary with points to general channel")
+        logger.info(f"Posted daily point summary to general channel")
     except Exception as e:
-        logger.error(f"Error posting daily summary with points: {str(e)}", exc_info=True)
+        logger.error(f"Error posting daily point summary: {str(e)}", exc_info=True)
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
