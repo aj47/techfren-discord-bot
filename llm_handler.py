@@ -714,6 +714,13 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
                 points = award.get("points", 0)
                 reason = award.get("reason", "")
 
+                # Validate points is an integer
+                try:
+                    points = int(points)
+                except (TypeError, ValueError):
+                    logger.warning(f"Dropping award with non-integer points for {author_name}: {points}")
+                    continue
+
                 # Skip awards with missing/empty author_id
                 if not author_id:
                     logger.warning(f"Skipping award with missing author_id: {award}")
@@ -740,39 +747,30 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
             total_awarded = sum(award["points"] for award in sanitized_awards)
 
             # Enforce max_points pool cap
-            if total_awarded > max_points:
+            if total_awarded > max_points and total_awarded > 0:
                 logger.warning(f"Total points ({total_awarded}) exceeds pool ({max_points}). Applying strict scaling.")
 
                 # Sort by points descending to prioritize top contributors
                 sanitized_awards.sort(key=lambda x: x["points"], reverse=True)
 
-                # Scale down proportionally, but enforce minimum of 1 point per award
+                # Scale down proportionally without enforcing minimum
                 scale_factor = max_points / total_awarded
-                running_total = 0
-                final_awards = []
+                scaled_awards = []
 
                 for award in sanitized_awards:
                     scaled_points = int(award["points"] * scale_factor)
-                    # Ensure at least 1 point, but stop if we'd exceed the pool
-                    scaled_points = max(1, scaled_points)
 
-                    if running_total + scaled_points <= max_points:
-                        award["points"] = scaled_points
-                        running_total += scaled_points
-                        final_awards.append(award)
-                    elif running_total < max_points:
-                        # Award remaining points to this user
-                        award["points"] = max_points - running_total
-                        running_total = max_points
-                        final_awards.append(award)
-                        break
-                    else:
-                        # Pool exhausted, skip remaining users
-                        logger.warning(f"Pool exhausted, skipping award for {award['author_name']}")
-                        break
+                    # Skip awards that scale to 0
+                    if scaled_points == 0:
+                        logger.info(f"Dropping award for {award['author_name']} (scaled to 0 points)")
+                        continue
 
-                sanitized_awards = final_awards
-                total_awarded = running_total
+                    award["points"] = scaled_points
+                    scaled_awards.append(award)
+
+                sanitized_awards = scaled_awards
+                # Recalculate total after scaling
+                total_awarded = sum(award["points"] for award in sanitized_awards)
 
             result["awards"] = sanitized_awards
             result["total_awarded"] = total_awarded

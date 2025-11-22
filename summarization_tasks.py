@@ -125,22 +125,33 @@ async def daily_channel_summarization():
                 logger.error(f"Error generating summary for channel {channel_name}: {str(e)}", exc_info=True)
 
         # Award points based on contributions from the past 24 hours
+        # Define max points per day (configurable)
+        max_points_per_day = 50
         point_awards_result = None
         if all_messages_for_points:
             try:
                 logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards")
-                point_awards_result = await analyze_messages_for_points(all_messages_for_points, max_points=50)
+                point_awards_result = await analyze_messages_for_points(all_messages_for_points, max_points=max_points_per_day)
 
                 if point_awards_result and point_awards_result.get('awards'):
-                    # Get a representative guild_id (use the first message with a valid guild_id)
-                    guild_id = None
-                    for msg in all_messages_for_points:
-                        msg_guild_id = msg.get('guild_id')
-                        if msg_guild_id:
-                            guild_id = msg_guild_id
-                            break
+                    # Get guild_id and validate all messages are from the same guild
+                    guild_ids = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
 
-                    if guild_id:
+                    if not guild_ids:
+                        logger.warning("No valid guild_id found in messages. Skipping point awards.")
+                    elif len(guild_ids) > 1:
+                        logger.warning(f"Messages from multiple guilds detected: {guild_ids}. Point awards should be processed per-guild. Using first guild for now.")
+                        guild_id = next(iter(guild_ids))
+                    else:
+                        guild_id = next(iter(guild_ids))
+
+                    if guild_ids:
+                        # Check if points have already been awarded for this day
+                        existing_awards = database.get_daily_point_awards(guild_id, yesterday)
+                        if existing_awards:
+                            logger.warning(f"Points already awarded for {yesterday.strftime('%Y-%m-%d')} in guild {guild_id}. Skipping duplicate processing.")
+                            return
+
                         for award in point_awards_result['awards']:
                             author_id = award.get('author_id')
                             author_name = award.get('author_name')
@@ -163,7 +174,7 @@ async def daily_channel_summarization():
                                 logger.info(f"Awarded {points} points to {author_name} for: {reason}")
 
                         # Post the point awards summary to general channel
-                        await post_daily_summary_with_points(yesterday, point_awards_result)
+                        await post_daily_summary_with_points(yesterday, point_awards_result, max_points_per_day)
 
                     logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
                 else:
@@ -207,9 +218,14 @@ async def post_summary_to_reports_channel(_, channel_name, __, summary_text):
     except Exception as e:
         logger.error(f"Error posting summary to reports channel: {str(e)}", exc_info=True)
 
-async def post_daily_summary_with_points(date, point_awards_result):
+async def post_daily_summary_with_points(date, point_awards_result, max_points=50):
     """
     Post the daily point awards summary to the general channel (or configured channel).
+
+    Args:
+        date: The date for the summary
+        point_awards_result: Dictionary containing awards and summary
+        max_points: Maximum points available per day (default: 50)
     """
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Cannot post daily summary.")
@@ -237,7 +253,7 @@ async def post_daily_summary_with_points(date, point_awards_result):
         if not awards:
             message = f"**Daily Community Points - {date_str}**\n\nNo points were awarded today."
         else:
-            message = f"**Daily Community Points - {date_str}**\n\n{summary_text}\n\n**Point Awards ({total_awarded}/50 points distributed):**\n\n"
+            message = f"**Daily Community Points - {date_str}**\n\n{summary_text}\n\n**Point Awards ({total_awarded}/{max_points} points distributed):**\n\n"
 
             # Sort awards by points (highest first)
             sorted_awards = sorted(awards, key=lambda x: x.get('points', 0), reverse=True)
