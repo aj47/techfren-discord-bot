@@ -57,6 +57,32 @@ CREATE TABLE IF NOT EXISTS channel_summaries (
 );
 """
 
+CREATE_USER_POINTS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    total_points INTEGER DEFAULT 0,
+    last_updated TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id)
+);
+"""
+
+CREATE_DAILY_POINT_AWARDS_TABLE = """
+CREATE TABLE IF NOT EXISTS daily_point_awards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    points_awarded INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id, date)
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -64,6 +90,10 @@ CREATE_INDEX_CREATED = "CREATE INDEX IF NOT EXISTS idx_created_at ON messages (c
 CREATE_INDEX_COMMAND = "CREATE INDEX IF NOT EXISTS idx_is_command ON messages (is_command);"
 CREATE_INDEX_SUMMARY_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_summary_channel_id ON channel_summaries (channel_id);"
 CREATE_INDEX_SUMMARY_DATE = "CREATE INDEX IF NOT EXISTS idx_summary_date ON channel_summaries (date);"
+CREATE_INDEX_USER_POINTS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_user_points_author_id ON user_points (author_id);"
+CREATE_INDEX_USER_POINTS_GUILD = "CREATE INDEX IF NOT EXISTS idx_user_points_guild_id ON user_points (guild_id);"
+CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_date ON daily_point_awards (date);"
+CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -125,6 +155,8 @@ def init_database() -> None:
             # Create tables and indexes
             cursor.execute(CREATE_MESSAGES_TABLE)
             cursor.execute(CREATE_CHANNEL_SUMMARIES_TABLE)
+            cursor.execute(CREATE_USER_POINTS_TABLE)
+            cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -136,6 +168,14 @@ def init_database() -> None:
             # Create indexes for channel_summaries table
             cursor.execute(CREATE_INDEX_SUMMARY_CHANNEL)
             cursor.execute(CREATE_INDEX_SUMMARY_DATE)
+
+            # Create indexes for user_points table
+            cursor.execute(CREATE_INDEX_USER_POINTS_AUTHOR)
+            cursor.execute(CREATE_INDEX_USER_POINTS_GUILD)
+
+            # Create indexes for daily_point_awards table
+            cursor.execute(CREATE_INDEX_DAILY_AWARDS_DATE)
+            cursor.execute(CREATE_INDEX_DAILY_AWARDS_AUTHOR)
 
             # Insert a test message to ensure the database is working
             try:
@@ -856,38 +896,38 @@ def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
 def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
     """
     Retrieve scraped content for a specific URL from the database.
-    
+
     Args:
         url (str): The URL to search for
-        
+
     Returns:
         Optional[Dict[str, Any]]: Dictionary containing scraped content if found, None otherwise
     """
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Query for messages with scraped content for this URL
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     scraped_url,
                     scraped_content_summary,
                     scraped_content_key_points,
                     created_at
-                FROM messages 
+                FROM messages
                 WHERE scraped_url = ? AND scraped_content_summary IS NOT NULL
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
                 (url,)
             )
-            
+
             row = cursor.fetchone()
             if not row:
                 logger.debug(f"No scraped content found for URL: {url}")
                 return None
-            
+
             # Parse key points JSON
             key_points = []
             if row['scraped_content_key_points']:
@@ -895,17 +935,281 @@ def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
                     key_points = json.loads(row['scraped_content_key_points'])
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in scraped_content_key_points for URL {url}")
-            
+
             result = {
                 'url': row['scraped_url'],
                 'summary': row['scraped_content_summary'],
                 'key_points': key_points,
                 'created_at': row['created_at']
             }
-            
+
             logger.debug(f"Retrieved scraped content for URL: {url}")
             return result
-            
+
     except Exception as e:
         logger.error(f"Error retrieving scraped content for URL {url}: {str(e)}", exc_info=True)
         return None
+
+def award_points_to_user(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    points: int
+) -> bool:
+    """
+    Award points to a user, updating their total points.
+
+    Args:
+        author_id (str): The Discord user ID
+        author_name (str): The username
+        guild_id (str): The Discord guild ID
+        points (int): Number of points to award (must be 1-20)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Validate author_id is present
+        if not author_id or not author_id.strip():
+            logger.error("Cannot award points: author_id is empty or None")
+            return False
+
+        # Validate points are positive (reject zero or negative)
+        if points <= 0:
+            logger.warning(f"Skipping point award for {author_name}: points={points} (must be > 0)")
+            return False
+
+        # Clamp points to maximum of 20 per award
+        if points > 20:
+            logger.warning(f"Clamping points for {author_name} from {points} to 20 (max per user per day)")
+            points = 20
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Insert or update user points
+            cursor.execute(
+                """
+                INSERT INTO user_points (author_id, author_name, guild_id, total_points, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(author_id, guild_id) DO UPDATE SET
+                    total_points = total_points + ?,
+                    author_name = ?,
+                    last_updated = ?
+                """,
+                (
+                    author_id,
+                    author_name,
+                    guild_id,
+                    points,
+                    datetime.now().isoformat(),
+                    points,
+                    author_name,
+                    datetime.now().isoformat()
+                )
+            )
+
+            conn.commit()
+
+        logger.info(f"Awarded {points} points to user {author_name} ({author_id}) in guild {guild_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error awarding points to user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+def get_user_points(author_id: str, guild_id: str) -> int:
+    """
+    Get the total points for a specific user in a guild.
+
+    Args:
+        author_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        int: Total points for the user
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT total_points FROM user_points WHERE author_id = ? AND guild_id = ?",
+                (author_id, guild_id)
+            )
+
+            row = cursor.fetchone()
+            if row:
+                return row['total_points']
+            return 0
+    except Exception as e:
+        logger.error(f"Error getting points for user {author_id}: {str(e)}", exc_info=True)
+        return 0
+
+def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Get the top users by points in a guild.
+
+    Args:
+        guild_id (str): The Discord guild ID
+        limit (int): Maximum number of users to return
+
+    Returns:
+        List[Dict[str, Any]]: List of users with their points
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT author_id, author_name, total_points, last_updated
+                FROM user_points
+                WHERE guild_id = ?
+                ORDER BY total_points DESC
+                LIMIT ?
+                """,
+                (guild_id, limit)
+            )
+
+            leaderboard = []
+            for row in cursor.fetchall():
+                leaderboard.append({
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'total_points': row['total_points'],
+                    'last_updated': row['last_updated']
+                })
+
+        logger.info(f"Retrieved leaderboard for guild {guild_id} with {len(leaderboard)} users")
+        return leaderboard
+    except Exception as e:
+        logger.error(f"Error getting leaderboard for guild {guild_id}: {str(e)}", exc_info=True)
+        return []
+
+def store_daily_point_award(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    date: datetime,
+    points: int,
+    reason: str
+) -> bool:
+    """
+    Store a record of points awarded to a user on a specific date.
+
+    Args:
+        author_id (str): The Discord user ID
+        author_name (str): The username
+        guild_id (str): The Discord guild ID
+        date (datetime): The date of the award
+        points (int): Number of points awarded (must be 1-20)
+        reason (str): Reason for the award
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Validate author_id is present
+        if not author_id or not author_id.strip():
+            logger.error("Cannot store daily point award: author_id is empty or None")
+            return False
+
+        # Validate points are within acceptable range (1-20)
+        if points <= 0:
+            logger.warning(f"Skipping award for {author_name}: points={points} (must be > 0)")
+            return False
+
+        if points > 20:
+            logger.warning(f"Clamping points for {author_name} from {points} to 20 (max per user)")
+            points = 20
+
+        date_str = date.strftime('%Y-%m-%d')
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if award already exists for this user/guild/date
+            cursor.execute(
+                """
+                SELECT points_awarded FROM daily_point_awards
+                WHERE author_id = ? AND guild_id = ? AND date = ?
+                """,
+                (author_id, guild_id, date_str)
+            )
+
+            existing = cursor.fetchone()
+            if existing:
+                logger.warning(f"Points already awarded to {author_name} ({author_id}) on {date_str}. Skipping duplicate.")
+                return False
+
+            cursor.execute(
+                """
+                INSERT INTO daily_point_awards (
+                    author_id, author_name, guild_id, date, points_awarded, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    author_id,
+                    author_name,
+                    guild_id,
+                    date_str,
+                    points,
+                    reason,
+                    datetime.now().isoformat()
+                )
+            )
+
+            conn.commit()
+
+        logger.info(f"Stored daily point award for {author_name} ({author_id}): {points} points for {reason}")
+        return True
+    except sqlite3.IntegrityError as e:
+        # This handles the UNIQUE constraint violation as a backup
+        logger.warning(f"Duplicate daily point award prevented for {author_name} ({author_id}) on {date.strftime('%Y-%m-%d')}: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Error storing daily point award: {str(e)}", exc_info=True)
+        return False
+
+def get_daily_point_awards(guild_id: str, date: datetime) -> List[Dict[str, Any]]:
+    """
+    Get all point awards for a specific date in a guild.
+
+    Args:
+        guild_id (str): The Discord guild ID
+        date (datetime): The date to retrieve awards for
+
+    Returns:
+        List[Dict[str, Any]]: List of point awards for that date
+    """
+    try:
+        date_str = date.strftime('%Y-%m-%d')
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT author_id, author_name, points_awarded, reason, created_at
+                FROM daily_point_awards
+                WHERE guild_id = ? AND date = ?
+                ORDER BY points_awarded DESC
+                """,
+                (guild_id, date_str)
+            )
+
+            awards = []
+            for row in cursor.fetchall():
+                awards.append({
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'points_awarded': row['points_awarded'],
+                    'reason': row['reason'],
+                    'created_at': row['created_at']
+                })
+
+        logger.info(f"Retrieved {len(awards)} point awards for guild {guild_id} on {date_str}")
+        return awards
+    except Exception as e:
+        logger.error(f"Error getting daily point awards: {str(e)}", exc_info=True)
+        return []

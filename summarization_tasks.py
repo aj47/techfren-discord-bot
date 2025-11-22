@@ -4,7 +4,7 @@ import discord
 from discord.ext import tasks
 import database
 from logging_config import logger
-from llm_handler import call_llm_for_summary
+from llm_handler import call_llm_for_summary, analyze_messages_for_points
 from message_utils import split_long_message
 import config # Assuming config.py is accessible
 
@@ -62,6 +62,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
         successful_summaries = 0
         total_messages_processed = 0
 
+        # Collect all messages across all channels for point analysis
+        all_messages_for_points = []
+
         # Process each active channel
         for channel_data in active_channels:
             channel_id = channel_data['channel_id']
@@ -82,8 +85,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
             formatted_messages = []
             for msg in channel_messages:
                 if not msg.get('is_command', False):
-                    formatted_messages.append({
+                    formatted_msg = {
                         'id': msg.get('id', ''),
+                        'author_id': msg.get('author_id', ''),
                         'author_name': msg['author_name'],
                         'content': msg['content'],
                         'created_at': msg['created_at'],
@@ -94,7 +98,12 @@ async def run_daily_summarization_once(now: datetime | None = None):
                         'scraped_url': msg.get('scraped_url'),
                         'scraped_content_summary': msg.get('scraped_content_summary'),
                         'scraped_content_key_points': msg.get('scraped_content_key_points')
-                    })
+                    }
+                    formatted_messages.append(formatted_msg)
+
+                    # Add to global message collection for point analysis (exclude bot messages)
+                    if not msg.get('is_bot', False):
+                        all_messages_for_points.append(formatted_msg)
 
             if not formatted_messages:
                 logger.info(f"No non-command messages found for channel {channel_name}. Skipping summarization.")
@@ -127,6 +136,63 @@ async def run_daily_summarization_once(now: datetime | None = None):
                     await post_summary_to_reports_channel(channel_id, channel_name, yesterday, summary_text)
             except Exception as e:
                 logger.error(f"Error generating summary for channel {channel_name}: {str(e)}", exc_info=True)
+
+        # Award points based on contributions from the past 24 hours
+        # Define max points per day (configurable)
+        max_points_per_day = 50
+        point_awards_result = None
+        if all_messages_for_points:
+            try:
+                logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards")
+                point_awards_result = await analyze_messages_for_points(all_messages_for_points, max_points=max_points_per_day)
+
+                if point_awards_result and point_awards_result.get('awards'):
+                    # Get guild_id and validate all messages are from the same guild
+                    guild_ids = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
+
+                    if not guild_ids:
+                        logger.warning("No valid guild_id found in messages. Skipping point awards.")
+                    elif len(guild_ids) > 1:
+                        logger.warning(f"Messages from multiple guilds detected: {guild_ids}. Point awards should be processed per-guild. Using first guild for now.")
+                        guild_id = next(iter(guild_ids))
+                    else:
+                        guild_id = next(iter(guild_ids))
+
+                    if guild_ids:
+                        # Check if points have already been awarded for this day
+                        existing_awards = database.get_daily_point_awards(guild_id, yesterday)
+                        if existing_awards:
+                            logger.warning(f"Points already awarded for {yesterday.strftime('%Y-%m-%d')} in guild {guild_id}. Skipping duplicate processing.")
+                        else:
+                            for award in point_awards_result['awards']:
+                                author_id = award.get('author_id')
+                                author_name = award.get('author_name')
+                                points = award.get('points', 0)
+                                reason = award.get('reason', 'Contribution to the community')
+
+                                # Award points to user
+                                success = database.award_points_to_user(author_id, author_name, guild_id, points)
+
+                                if success:
+                                    # Store the daily award record
+                                    database.store_daily_point_award(
+                                        author_id=author_id,
+                                        author_name=author_name,
+                                        guild_id=guild_id,
+                                        date=yesterday,
+                                        points=points,
+                                        reason=reason
+                                    )
+                                    logger.info(f"Awarded {points} points to {author_name} for: {reason}")
+
+                            # Post the point awards summary to general channel
+                            await post_daily_summary_with_points(yesterday, point_awards_result, max_points_per_day)
+
+                        logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
+                else:
+                    logger.info("No points were awarded today.")
+            except Exception as e:
+                logger.error(f"Error awarding points: {str(e)}", exc_info=True)
 
         if successful_summaries > 0:
             try:
@@ -197,6 +263,57 @@ async def post_summary_to_reports_channel(channel_id, channel_name, date, summar
                 await target_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
     except Exception as e:
         logger.error(f"Error posting summary to channel {channel_name}: {str(e)}", exc_info=True)
+
+async def post_daily_summary_with_points(date, point_awards_result, max_points=50):
+    """
+    Post the daily point awards summary to the general channel (or configured channel).
+
+    Args:
+        date: The date for the summary
+        point_awards_result: Dictionary containing awards and summary
+        max_points: Maximum points available per day (default: 50)
+    """
+    if not discord_client:
+        logger.error("Discord client not set in summarization_tasks. Cannot post point summary.")
+        return
+
+    try:
+        # Get the general channel ID from config
+        general_channel_id = getattr(config, 'general_channel_id', None)
+        if not general_channel_id:
+            logger.warning("GENERAL_CHANNEL_ID not configured. Skipping point summary post.")
+            return
+
+        general_channel = discord_client.get_channel(int(general_channel_id))
+        if not general_channel:
+            logger.warning(f"General channel with ID {general_channel_id} not found; cannot post point summary")
+            return
+
+        # Format the date
+        date_str = date.strftime("%B %d, %Y") if date else "Recent Activity"
+
+        # Build the message
+        awards = point_awards_result.get('awards', [])
+        summary_text = point_awards_result.get('summary', 'Daily point awards based on community contributions.')
+
+        total_awarded = sum(award.get('points', 0) for award in awards)
+
+        message = f"**Daily Community Points - {date_str}**\n\n{summary_text}\n\n**Point Awards ({total_awarded}/{max_points} points distributed):**\n\n"
+
+        for award in awards:
+            author_name = award.get('author_name', 'Unknown')
+            points = award.get('points', 0)
+            reason = award.get('reason', 'Contribution to the community')
+            message += f"• **{author_name}**: +{points} points - {reason}\n"
+
+        # Split and send if message is too long
+        message_parts = await split_long_message(message)
+        for part in message_parts:
+            await general_channel.send(part, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+
+        logger.info(f"Posted daily point summary to general channel")
+    except Exception as e:
+        logger.error(f"Error posting daily point summary: {str(e)}", exc_info=True)
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
