@@ -1210,6 +1210,123 @@ async def sum_hr_slash(interaction: discord.Interaction, hours: int):
     # Immediately defer to avoid timeout, then do validation in wrapper
     await _handle_slash_command_wrapper(interaction, "sum-hr", hours=hours)
 
+@bot.tree.command(name="points", description="Check your points or another user's points")
+async def points_slash(interaction: discord.Interaction, user: discord.User = None):
+    """
+    Slash command to check points for yourself or another user.
+
+    Args:
+        interaction: The Discord interaction
+        user: Optional user to check points for (defaults to command user)
+    """
+    try:
+        # Determine which user to check
+        target_user = user if user else interaction.user
+
+        # Get guild ID
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        user_id = str(target_user.id)
+
+        # Get points from database
+        points = database.get_user_points(user_id, guild_id)
+
+        # Format response
+        if target_user.id == interaction.user.id:
+            message = f"🏆 **Your Points**: {points}"
+        else:
+            message = f"🏆 **{target_user.display_name}'s Points**: {points}"
+
+        await interaction.response.send_message(message, ephemeral=True)
+        logger.info(f"User {interaction.user.name} checked points for {target_user.name}: {points}")
+
+    except Exception as e:
+        logger.error(f"Error in /points command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "❌ An error occurred while retrieving points. Please try again later.",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="leaderboard", description="View the top users by points")
+async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
+    """
+    Slash command to display the points leaderboard.
+
+    Args:
+        interaction: The Discord interaction
+        limit: Number of top users to display (default: 10, max: 25)
+    """
+    try:
+        # Validate limit
+        if limit < 1:
+            await interaction.response.send_message(
+                "❌ Limit must be at least 1.",
+                ephemeral=True
+            )
+            return
+
+        if limit > 25:
+            await interaction.response.send_message(
+                "❌ Limit cannot exceed 25 users.",
+                ephemeral=True
+            )
+            return
+
+        # Get guild ID
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+
+        # Get leaderboard from database
+        leaderboard = database.get_leaderboard(guild_id, limit)
+
+        if not leaderboard:
+            await interaction.response.send_message(
+                "📊 No points have been awarded yet. Start contributing to the community!",
+                ephemeral=True
+            )
+            return
+
+        # Format leaderboard message
+        message = f"🏆 **Top {len(leaderboard)} Contributors**\n\n"
+
+        for idx, entry in enumerate(leaderboard, 1):
+            author_name = entry['author_name']
+            total_points = entry['total_points']
+
+            # Add medal emojis for top 3
+            if idx == 1:
+                medal = "🥇"
+            elif idx == 2:
+                medal = "🥈"
+            elif idx == 3:
+                medal = "🥉"
+            else:
+                medal = f"{idx}."
+
+            message += f"{medal} **{author_name}**: {total_points} points\n"
+
+        await interaction.response.send_message(message, ephemeral=False)
+        logger.info(f"User {interaction.user.name} requested leaderboard (top {limit})")
+
+    except Exception as e:
+        logger.error(f"Error in /leaderboard command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "❌ An error occurred while retrieving the leaderboard. Please try again later.",
+            ephemeral=True
+        )
+
 try:
     logger.info("Starting bot...")
     import config # Assuming config.py is in the same directory or accessible
