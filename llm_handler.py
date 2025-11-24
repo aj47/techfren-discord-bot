@@ -661,8 +661,30 @@ async def analyze_messages_for_points(messages, max_points=50):
             content = msg.get('content', '')
             author_id = msg.get('author_id', '')
 
+            # Check if this message has scraped content from a URL
+            scraped_url = msg.get('scraped_url')
+            scraped_summary = msg.get('scraped_content_summary')
+            scraped_key_points = msg.get('scraped_content_key_points')
+
             # Include author_id for tracking
             message_text = f"[User: {author_name} (ID: {author_id})] {content}"
+
+            # If there's scraped content, add it to the message so LLM can evaluate link quality
+            if scraped_url and scraped_summary:
+                link_content = f"\n[Link Content from {scraped_url}]:\n{scraped_summary}"
+                message_text += link_content
+
+                # If there are key points, add them too
+                if scraped_key_points:
+                    try:
+                        key_points = json.loads(scraped_key_points)
+                        if key_points and isinstance(key_points, list):
+                            message_text += "\nKey points:"
+                            for point in key_points:
+                                message_text += f"\n- {point}"
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse key points JSON for point analysis: {scraped_key_points}")
+
             formatted_messages_text.append(message_text)
 
         # Join messages
@@ -679,9 +701,15 @@ async def analyze_messages_for_points(messages, max_points=50):
 Award points based on:
 - Being supportive and helpful to other members
 - Providing technical help or answering questions
-- Being the first to share relevant tech news or interesting links
+- Being the first to share relevant tech news or interesting links (now with full link content visible)
 - Contributing valuable insights or starting meaningful discussions
 - Creating a positive, welcoming community atmosphere
+- Posting content that generates engagement from other users (replies, threads, discussions)
+
+IMPORTANT - ENGAGEMENT VALUE:
+- If a user's post or link sparked replies, questions, or thread discussions from other members, this indicates the content was valuable to the community
+- Original posters who share content that generates meaningful engagement should be rewarded
+- Look for posts that started conversations, not just isolated messages
 
 IMPORTANT GUIDELINES:
 - You do NOT have to award all {max_points} points if contributions don't warrant it
@@ -709,6 +737,7 @@ EVALUATION CRITERIA:
 2. Uniqueness: Is it repetitive or does it add new value?
 3. Impact: Did it actually help someone or advance the discussion?
 4. Authenticity: Does it feel genuine or like point-farming?
+5. Engagement: Did the post generate replies, questions, or meaningful follow-up discussion from others?
 
 Messages to analyze:
 {messages_text}
