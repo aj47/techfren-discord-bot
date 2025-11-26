@@ -1219,40 +1219,34 @@ def search_messages_by_keywords(
     keywords: List[str],
     guild_id: Optional[str] = None,
     channel_id: Optional[str] = None,
-    hours: int = 168,
+    hours: Optional[int] = None,
     limit: int = 50
 ) -> List[Dict[str, Any]]:
     """
-    Search messages by keywords within a time range.
+    Search messages by keywords, optionally within a time range.
 
     Args:
         keywords: List of keywords to search for (uses OR matching)
         guild_id: Optional guild ID to filter by
         channel_id: Optional channel ID to filter by
-        hours: Number of hours to look back (default: 168 = 7 days)
+        hours: Optional number of hours to look back (if None, no time filter applied)
         limit: Maximum number of messages to return (default: 50)
 
     Returns:
         List of messages matching the search criteria
     """
     try:
-        # Calculate time range
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=hours)
-        start_time_str = start_time.replace(tzinfo=None).isoformat()
-        end_time_str = end_time.replace(tzinfo=None).isoformat()
-
         with get_connection() as conn:
             cursor = conn.cursor()
 
             # Build the query with keyword matching
             # Use LIKE for each keyword with OR logic
             keyword_conditions = []
-            params = []
+            keyword_params = []
 
             for keyword in keywords:
                 keyword_conditions.append("LOWER(content) LIKE ?")
-                params.append(f"%{keyword.lower()}%")
+                keyword_params.append(f"%{keyword.lower()}%")
 
             keyword_clause = " OR ".join(keyword_conditions)
 
@@ -1264,17 +1258,28 @@ def search_messages_by_keywords(
                     scraped_url, scraped_content_summary, scraped_content_key_points,
                     image_descriptions
                 FROM messages
-                WHERE (
+                WHERE is_command = 0
+                AND is_bot = 0
+            """
+            params = []
+
+            # Add time filter only if hours is specified
+            if hours is not None:
+                end_time = datetime.now(timezone.utc)
+                start_time = end_time - timedelta(hours=hours)
+                start_time_str = start_time.replace(tzinfo=None).isoformat()
+                end_time_str = end_time.replace(tzinfo=None).isoformat()
+                query += """
+                AND (
                     datetime(created_at) BETWEEN datetime(?) AND datetime(?)
                     OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
                 )
-                AND is_command = 0
-                AND is_bot = 0
-            """
-            params = [start_time_str, end_time_str, start_time_str, end_time_str] + params
+                """
+                params.extend([start_time_str, end_time_str, start_time_str, end_time_str])
 
             # Add keyword filter
             query += f" AND ({keyword_clause})"
+            params.extend(keyword_params)
 
             # Add optional filters
             if guild_id:
@@ -1322,7 +1327,7 @@ def search_messages_by_keywords(
 def get_recent_messages_for_context(
     guild_id: str,
     channel_id: Optional[str] = None,
-    hours: int = 24,
+    hours: Optional[int] = None,
     limit: int = 100
 ) -> List[Dict[str, Any]]:
     """
@@ -1331,18 +1336,13 @@ def get_recent_messages_for_context(
     Args:
         guild_id: The guild ID to get messages from
         channel_id: Optional channel ID to filter by (if None, gets from all channels)
-        hours: Number of hours to look back (default: 24)
+        hours: Optional number of hours to look back (if None, no time filter applied)
         limit: Maximum number of messages to return (default: 100)
 
     Returns:
         List of recent messages sorted by time (oldest first for conversation flow)
     """
     try:
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=hours)
-        start_time_str = start_time.replace(tzinfo=None).isoformat()
-        end_time_str = end_time.replace(tzinfo=None).isoformat()
-
         with get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1354,13 +1354,23 @@ def get_recent_messages_for_context(
                     image_descriptions
                 FROM messages
                 WHERE guild_id = ?
+                AND is_command = 0
+            """
+            params = [guild_id]
+
+            # Add time filter only if hours is specified
+            if hours is not None:
+                end_time = datetime.now(timezone.utc)
+                start_time = end_time - timedelta(hours=hours)
+                start_time_str = start_time.replace(tzinfo=None).isoformat()
+                end_time_str = end_time.replace(tzinfo=None).isoformat()
+                query += """
                 AND (
                     datetime(created_at) BETWEEN datetime(?) AND datetime(?)
                     OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
                 )
-                AND is_command = 0
-            """
-            params = [guild_id, start_time_str, end_time_str, start_time_str, end_time_str]
+                """
+                params.extend([start_time_str, end_time_str, start_time_str, end_time_str])
 
             if channel_id:
                 query += " AND channel_id = ?"

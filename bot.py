@@ -1329,26 +1329,27 @@ async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
 
 
 @bot.tree.command(name="ask", description="Ask a question using context from past conversations in this server")
-async def ask_slash(interaction: discord.Interaction, question: str, hours: int = 24):
+async def ask_slash(interaction: discord.Interaction, question: str, hours: int = None):
     """
     Slash command to ask questions based on database conversation history.
 
     Args:
         interaction: The Discord interaction
         question: The question to ask
-        hours: Number of hours of history to search (default: 24, max: 168)
+        hours: Optional number of hours to filter history (if not set, uses last 100 messages)
     """
     try:
-        # Validate hours
-        if hours < 1:
-            await interaction.response.send_message(
-                "Hours must be at least 1.",
-                ephemeral=True
-            )
-            return
+        # Validate hours if provided
+        if hours is not None:
+            if hours < 1:
+                await interaction.response.send_message(
+                    "Hours must be at least 1.",
+                    ephemeral=True
+                )
+                return
 
-        if hours > 168:
-            hours = 168  # Cap at 7 days
+            if hours > 168:
+                hours = 168  # Cap at 7 days
 
         # Get guild ID
         if not interaction.guild:
@@ -1376,6 +1377,7 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
         keywords = [w for w in keywords if w not in stop_words]
 
         # Get messages - either by keyword search or recent messages
+        # Default: fetch last 100 messages (no time filter unless hours is specified)
         messages = []
         if keywords:
             # Search by keywords
@@ -1383,7 +1385,7 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
                 database.search_messages_by_keywords,
                 keywords=keywords[:5],  # Limit to 5 keywords
                 guild_id=guild_id,
-                hours=hours,
+                hours=hours,  # None means no time filter
                 limit=75
             )
 
@@ -1392,7 +1394,7 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
             recent_messages = await asyncio.to_thread(
                 database.get_recent_messages_for_context,
                 guild_id=guild_id,
-                hours=hours,
+                hours=hours,  # None means no time filter, just get last N messages
                 limit=100 - len(messages)
             )
             # Merge, avoiding duplicates
