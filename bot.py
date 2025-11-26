@@ -1362,8 +1362,9 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
         channel_id = str(interaction.channel.id) if interaction.channel else None
         channel_name = interaction.channel.name if hasattr(interaction.channel, 'name') else "general"
 
-        # Defer the response since this might take a while
-        await interaction.response.defer()
+        # Send initial message with processing indicator
+        await interaction.response.send_message("🔍 Processing your question, please wait...")
+        initial_message = await interaction.original_response()
 
         # Extract keywords from the question for search
         # Simple keyword extraction: split by spaces, filter short words
@@ -1410,27 +1411,31 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
             channel_name=channel_name
         )
 
-        # Create a thread for the response
+        # Create a thread attached to the initial message
         thread_name = f"Q: {question[:50]}{'...' if len(question) > 50 else ''}"
 
-        # Create thread attached to a message
-        thread = await interaction.channel.create_thread(
-            name=thread_name,
-            type=discord.ChannelType.public_thread,
-            auto_archive_duration=1440  # 24 hours
-        )
+        try:
+            thread = await initial_message.create_thread(
+                name=thread_name,
+                auto_archive_duration=1440  # 24 hours
+            )
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to create thread from message: {e}, falling back to channel thread")
+            thread = await interaction.channel.create_thread(
+                name=thread_name,
+                type=discord.ChannelType.public_thread,
+                auto_archive_duration=1440
+            )
 
         # Send response in the thread
         response_parts = await split_long_message(response, max_length=1900)
         for part in response_parts:
             await thread.send(part)
 
-        # Send a followup message pointing to the thread
+        # Edit the initial message to show the question
         time_desc = "24 hours" if hours == 24 else f"{hours} hours"
-        await interaction.followup.send(
-            f"I've answered your question in the thread: {thread.mention}\n"
-            f"*Searched {len(messages)} messages from the past {time_desc}*",
-            ephemeral=False
+        await initial_message.edit(
+            content=f"❓ **Question:** {question}\n*Searched {len(messages)} messages from the past {time_desc}*"
         )
 
         logger.info(f"User {interaction.user.name} used /ask: '{question[:50]}...' - found {len(messages)} messages")
