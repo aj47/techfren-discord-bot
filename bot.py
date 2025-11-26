@@ -1362,8 +1362,8 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
         channel_id = str(interaction.channel.id) if interaction.channel else None
         channel_name = interaction.channel.name if hasattr(interaction.channel, 'name') else "general"
 
-        # Send initial message with processing indicator
-        await interaction.response.send_message("🔍 Processing your question, please wait...")
+        # Send initial message with processing indicator and question
+        await interaction.response.send_message(f"❓ **Question:** {question}\n\n🔍 *Processing, please wait...*")
         initial_message = await interaction.original_response()
 
         # Extract keywords from the question for search
