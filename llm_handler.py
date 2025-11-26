@@ -404,12 +404,12 @@ Format (be CONCISE - aim for brevity):
 
 ## 🔥 Highlights
 5-8 bullet points MAX. One line each. Start with the topic, not filler words.
-Format: **Topic** - brief context - `username` [→]({discord_link})
+Format: **Topic** - brief context - `username` [→](discord_message_link)
 Include image descriptions inline if relevant to tech content.
 
 ## 💡 Links Worth Checking
 List any valuable shared links with one-line descriptions.
-Format: [Title]({url}) - why it matters - `username`
+Format: [Title](link) - why it matters - `username`
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
