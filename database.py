@@ -1213,3 +1213,189 @@ def get_daily_point_awards(guild_id: str, date: datetime) -> List[Dict[str, Any]
     except Exception as e:
         logger.error(f"Error getting daily point awards: {str(e)}", exc_info=True)
         return []
+
+
+def search_messages_by_keywords(
+    keywords: List[str],
+    guild_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
+    hours: int = 168,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Search messages by keywords within a time range.
+
+    Args:
+        keywords: List of keywords to search for (uses OR matching)
+        guild_id: Optional guild ID to filter by
+        channel_id: Optional channel ID to filter by
+        hours: Number of hours to look back (default: 168 = 7 days)
+        limit: Maximum number of messages to return (default: 50)
+
+    Returns:
+        List of messages matching the search criteria
+    """
+    try:
+        # Calculate time range
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+        start_time_str = start_time.replace(tzinfo=None).isoformat()
+        end_time_str = end_time.replace(tzinfo=None).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build the query with keyword matching
+            # Use LIKE for each keyword with OR logic
+            keyword_conditions = []
+            params = []
+
+            for keyword in keywords:
+                keyword_conditions.append("LOWER(content) LIKE ?")
+                params.append(f"%{keyword.lower()}%")
+
+            keyword_clause = " OR ".join(keyword_conditions)
+
+            # Build the full query
+            query = """
+                SELECT
+                    id, author_id, author_name, channel_id, channel_name,
+                    guild_id, guild_name, content, created_at, is_bot, is_command,
+                    scraped_url, scraped_content_summary, scraped_content_key_points,
+                    image_descriptions
+                FROM messages
+                WHERE (
+                    datetime(created_at) BETWEEN datetime(?) AND datetime(?)
+                    OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
+                )
+                AND is_command = 0
+                AND is_bot = 0
+            """
+            params = [start_time_str, end_time_str, start_time_str, end_time_str] + params
+
+            # Add keyword filter
+            query += f" AND ({keyword_clause})"
+
+            # Add optional filters
+            if guild_id:
+                query += " AND guild_id = ?"
+                params.append(guild_id)
+
+            if channel_id:
+                query += " AND channel_id = ?"
+                params.append(channel_id)
+
+            # Order by relevance (more recent first) and limit
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    'id': row['id'],
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'channel_id': row['channel_id'],
+                    'channel_name': row['channel_name'],
+                    'guild_id': row['guild_id'],
+                    'guild_name': row['guild_name'],
+                    'content': row['content'],
+                    'created_at': datetime.fromisoformat(row['created_at']),
+                    'is_bot': bool(row['is_bot']),
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points'],
+                    'image_descriptions': row['image_descriptions']
+                })
+
+        logger.info(f"Found {len(messages)} messages matching keywords: {keywords}")
+        return messages
+
+    except Exception as e:
+        logger.error(f"Error searching messages by keywords: {str(e)}", exc_info=True)
+        return []
+
+
+def get_recent_messages_for_context(
+    guild_id: str,
+    channel_id: Optional[str] = None,
+    hours: int = 24,
+    limit: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Get recent messages for providing context to the LLM.
+
+    Args:
+        guild_id: The guild ID to get messages from
+        channel_id: Optional channel ID to filter by (if None, gets from all channels)
+        hours: Number of hours to look back (default: 24)
+        limit: Maximum number of messages to return (default: 100)
+
+    Returns:
+        List of recent messages sorted by time (oldest first for conversation flow)
+    """
+    try:
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+        start_time_str = start_time.replace(tzinfo=None).isoformat()
+        end_time_str = end_time.replace(tzinfo=None).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    id, author_id, author_name, channel_id, channel_name,
+                    guild_id, guild_name, content, created_at, is_bot, is_command,
+                    scraped_url, scraped_content_summary, scraped_content_key_points,
+                    image_descriptions
+                FROM messages
+                WHERE guild_id = ?
+                AND (
+                    datetime(created_at) BETWEEN datetime(?) AND datetime(?)
+                    OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
+                )
+                AND is_command = 0
+            """
+            params = [guild_id, start_time_str, end_time_str, start_time_str, end_time_str]
+
+            if channel_id:
+                query += " AND channel_id = ?"
+                params.append(channel_id)
+
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    'id': row['id'],
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'channel_id': row['channel_id'],
+                    'channel_name': row['channel_name'],
+                    'guild_id': row['guild_id'],
+                    'guild_name': row['guild_name'],
+                    'content': row['content'],
+                    'created_at': datetime.fromisoformat(row['created_at']),
+                    'is_bot': bool(row['is_bot']),
+                    'is_command': bool(row['is_command']),
+                    'scraped_url': row['scraped_url'],
+                    'scraped_content_summary': row['scraped_content_summary'],
+                    'scraped_content_key_points': row['scraped_content_key_points'],
+                    'image_descriptions': row['image_descriptions']
+                })
+
+        # Reverse to get chronological order (oldest first)
+        messages.reverse()
+        logger.info(f"Retrieved {len(messages)} recent messages for context in guild {guild_id}")
+        return messages
+
+    except Exception as e:
+        logger.error(f"Error getting recent messages for context: {str(e)}", exc_info=True)
+        return []

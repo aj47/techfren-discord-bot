@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger  # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity  # Import LLM functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
@@ -1326,6 +1326,142 @@ async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
             "❌ An error occurred while retrieving the leaderboard. Please try again later.",
             ephemeral=True
         )
+
+
+@bot.tree.command(name="ask", description="Ask a question using context from past conversations in this server")
+async def ask_slash(interaction: discord.Interaction, question: str, hours: int = 24):
+    """
+    Slash command to ask questions based on database conversation history.
+
+    Args:
+        interaction: The Discord interaction
+        question: The question to ask
+        hours: Number of hours of history to search (default: 24, max: 168)
+    """
+    try:
+        # Validate hours
+        if hours < 1:
+            await interaction.response.send_message(
+                "Hours must be at least 1.",
+                ephemeral=True
+            )
+            return
+
+        if hours > 168:
+            hours = 168  # Cap at 7 days
+
+        # Get guild ID
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel.id) if interaction.channel else None
+        channel_name = interaction.channel.name if hasattr(interaction.channel, 'name') else "general"
+
+        # Defer the response since this might take a while
+        await interaction.response.defer()
+
+        # Extract keywords from the question for search
+        # Simple keyword extraction: split by spaces, filter short words
+        words = question.lower().split()
+        keywords = [w.strip('?.,!:;') for w in words if len(w) > 3]
+
+        # Remove common stop words
+        stop_words = {'what', 'when', 'where', 'which', 'that', 'this', 'with', 'from', 'have', 'been', 'were', 'they', 'their', 'about', 'could', 'would', 'should', 'there', 'here', 'does', 'more', 'some', 'into', 'just', 'also', 'than', 'then', 'only'}
+        keywords = [w for w in keywords if w not in stop_words]
+
+        # Get messages - either by keyword search or recent messages
+        messages = []
+        if keywords:
+            # Search by keywords
+            messages = await asyncio.to_thread(
+                database.search_messages_by_keywords,
+                keywords=keywords[:5],  # Limit to 5 keywords
+                guild_id=guild_id,
+                hours=hours,
+                limit=75
+            )
+
+        # If keyword search found few results, supplement with recent messages
+        if len(messages) < 20:
+            recent_messages = await asyncio.to_thread(
+                database.get_recent_messages_for_context,
+                guild_id=guild_id,
+                hours=hours,
+                limit=100 - len(messages)
+            )
+            # Merge, avoiding duplicates
+            existing_ids = {m['id'] for m in messages}
+            for msg in recent_messages:
+                if msg['id'] not in existing_ids:
+                    messages.append(msg)
+
+        # Sort by time (oldest first for conversation flow)
+        messages.sort(key=lambda x: x.get('created_at', datetime.min))
+
+        # Call the LLM with database context
+        response = await call_llm_with_database_context(
+            query=question,
+            messages=messages,
+            channel_name=channel_name
+        )
+
+        # Create a thread for the response
+        thread_name = f"Q: {question[:50]}{'...' if len(question) > 50 else ''}"
+
+        # Create thread attached to a message
+        thread = await interaction.channel.create_thread(
+            name=thread_name,
+            type=discord.ChannelType.public_thread,
+            auto_archive_duration=1440  # 24 hours
+        )
+
+        # Send response in the thread
+        response_parts = split_long_message(response, max_length=1900)
+        for part in response_parts:
+            await thread.send(part)
+
+        # Send a followup message pointing to the thread
+        time_desc = "24 hours" if hours == 24 else f"{hours} hours"
+        await interaction.followup.send(
+            f"I've answered your question in the thread: {thread.mention}\n"
+            f"*Searched {len(messages)} messages from the past {time_desc}*",
+            ephemeral=False
+        )
+
+        logger.info(f"User {interaction.user.name} used /ask: '{question[:50]}...' - found {len(messages)} messages")
+
+        # Store the question as a command in the database
+        await asyncio.to_thread(
+            database.store_message,
+            message_id=str(interaction.id),
+            author_id=str(interaction.user.id),
+            author_name=str(interaction.user),
+            channel_id=channel_id or "",
+            channel_name=channel_name,
+            guild_id=guild_id,
+            guild_name=interaction.guild.name if interaction.guild else "",
+            content=f"/ask {question}",
+            created_at=datetime.now(timezone.utc),
+            is_bot=False,
+            is_command=True,
+            command_type="ask"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /ask command: {str(e)}", exc_info=True)
+        try:
+            await interaction.followup.send(
+                "An error occurred while processing your question. Please try again later.",
+                ephemeral=True
+            )
+        except Exception:
+            pass
+
 
 try:
     logger.info("Starting bot...")

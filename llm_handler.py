@@ -885,3 +885,132 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
     except Exception as e:
         logger.error(f"Error analyzing messages for points: {str(e)}", exc_info=True)
         return None
+
+
+async def call_llm_with_database_context(
+    query: str,
+    messages: list,
+    channel_name: str = "general"
+) -> str:
+    """
+    Answer a question using context from database messages.
+
+    Args:
+        query: The user's question
+        messages: List of message dicts from the database
+        channel_name: Name of the channel for context
+
+    Returns:
+        str: The LLM's response
+    """
+    try:
+        logger.info(f"Calling LLM with database context for query: {query[:50]}...")
+
+        if not hasattr(config, 'perplexity') or not config.perplexity:
+            logger.error("Perplexity API key not found")
+            return "Error: API key is missing. Please contact the bot administrator."
+
+        # Format the messages as context
+        if not messages:
+            context_text = "No relevant messages found in the database for the specified time range."
+        else:
+            formatted_messages = []
+            for msg in messages:
+                created_at = msg.get('created_at')
+                if hasattr(created_at, 'strftime'):
+                    time_str = created_at.strftime('%Y-%m-%d %H:%M')
+                else:
+                    time_str = "Unknown"
+
+                author = msg.get('author_name', 'Unknown')
+                content = msg.get('content', '')
+                channel = msg.get('channel_name', channel_name)
+
+                message_text = f"[{time_str}] #{channel} | {author}: {content}"
+
+                # Include scraped content if available
+                if msg.get('scraped_url') and msg.get('scraped_content_summary'):
+                    message_text += f"\n  [Link: {msg['scraped_url']}]\n  Summary: {msg['scraped_content_summary']}"
+
+                # Include image descriptions if available
+                if msg.get('image_descriptions'):
+                    try:
+                        images = json.loads(msg['image_descriptions'])
+                        if images:
+                            for img in images:
+                                message_text += f"\n  [Image: {img.get('description', 'No description')}]"
+                    except json.JSONDecodeError:
+                        pass
+
+                formatted_messages.append(message_text)
+
+            context_text = "\n".join(formatted_messages)
+
+        # Truncate if too long
+        max_context_length = 50000
+        if len(context_text) > max_context_length:
+            context_text = context_text[:max_context_length] + "\n\n[Context truncated due to length...]"
+
+        # Initialize the client
+        openai_client = AsyncOpenAI(
+            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
+            api_key=config.perplexity,
+            timeout=60.0
+        )
+
+        model = getattr(config, 'llm_model', "sonar")
+
+        # Build the prompt
+        user_prompt = f"""Based on the following Discord conversation history from our tech community, please answer this question:
+
+**Question:** {query}
+
+**Conversation History:**
+{context_text}
+
+Instructions:
+- Answer based on what was discussed in the conversation history above
+- If the answer isn't in the conversation history, say so clearly
+- Quote relevant messages when helpful (use the username)
+- Be concise and direct
+- If multiple people discussed the topic, summarize their different perspectives"""
+
+        completion = await openai_client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
+                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
+            },
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an assistant for the TechFren Discord community. You help users find information from past conversations. Be direct and concise. When referencing messages, include the username. CRITICAL: Never use markdown code blocks (```). Use plain text with inline formatting."
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            max_tokens=1500,
+            temperature=0.5
+        )
+
+        response = completion.choices[0].message.content
+
+        # Handle citations if available
+        citations = None
+        if hasattr(completion, 'citations') and completion.citations:
+            logger.info(f"Found {len(completion.citations)} citations")
+            citations = completion.citations
+
+        formatted_response = DiscordFormatter.format_llm_response(response, citations)
+        logger.info(f"Database context query answered successfully")
+
+        return formatted_response
+
+    except asyncio.TimeoutError:
+        logger.error("LLM API request timed out during database context query")
+        return "Sorry, the request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Error answering query with database context: {str(e)}", exc_info=True)
+        return "Sorry, an error occurred while processing your question."
