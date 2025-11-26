@@ -306,7 +306,6 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Prepare the messages for summarization
         formatted_messages_text = []
-        image_summaries = []  # Collected image descriptions for an explicit summary section
         for msg in filtered_messages:
             # Ensure created_at is a datetime object before calling strftime
             created_at_time = msg.get('created_at')
@@ -341,35 +340,20 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             else:
                 message_text = f"[{time_str}] {author_name}: {content}"
 
-            images = None
-            # If there are image descriptions, add them to the message and collect them for a dedicated section
+            # If there are image descriptions, add them inline to the message
             if image_descriptions:
                 try:
                     images = json.loads(image_descriptions)
                     if images and isinstance(images, list):
                         if len(images) == 1:
-                            message_text += f"\n[Image: {images[0]['description']}]"
+                            message_text += f" [Image: {images[0]['description']}]"
                         else:
-                            message_text += "\n[Images:"
+                            message_text += " [Images:"
                             for i, img in enumerate(images, 1):
-                                message_text += f"\n  {i}. {img['description']}"
-                            message_text += "\n]"
+                                message_text += f" {i}. {img['description']}"
+                            message_text += "]"
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse image descriptions JSON: {image_descriptions}")
-                    images = None
-
-            # Collect image descriptions for an explicit section in the final summary
-            if images:
-                for img in images:
-                    desc = img.get('description')
-                    if not desc:
-                        continue
-                    if message_link:
-                        image_summaries.append(
-                            f"{author_name} at {time_str}: {desc} [Source]({message_link})"
-                        )
-                    else:
-                        image_summaries.append(f"{author_name} at {time_str}: {desc}")
 
             # If there's scraped content, add it to the message
             if scraped_url and scraped_summary:
@@ -403,31 +387,31 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        prompt = f"""Please summarize the following conversation from the #{channel_name} channel for the past {time_period}:
+        prompt = f"""Summarize the #{channel_name} channel for the past {time_period}. Extract SIGNAL from noise.
+
+PRIORITIZE (in order):
+1. New tech news, product launches, announcements
+2. AI/ML developments, coding tips, dev tools
+3. Tutorials, hacks, tricks, insights
+4. Interesting shared links with context
+5. Technical discussions and problem-solving
+
+SKIP/MINIMIZE: greetings, small talk, personal updates, social chatter, off-topic banter
 
 {messages_text}
 
-Format your response with clear, scannable sections using markdown headers:
+Format (be CONCISE - aim for brevity):
 
-## 📋 Overview
-Provide a 1-2 sentence high-level summary of the main activity.
+## 🔥 Highlights
+5-8 bullet points MAX. One line each. Start with the topic, not filler words.
+Format: **Topic** - brief context - `username` [→]({discord_link})
+Include image descriptions inline if relevant to tech content.
 
-## 🔑 Key Topics
-List the main topics discussed as bullet points. Each bullet should be CONCISE and SNAPPY - get straight to the point.
-IMPORTANT FORMAT: Start each bullet point directly with the core topic/subject. NO filler words like "Discussion about" or "Conversation regarding".
-End each bullet with attribution: "- shared by `username` and `username2` [Source](discord_link)"
-Example: "AI coding tools and their impact on developer productivity - shared by `alice` and `bob` [Source](https://discord.com/channels/...)"
-Example: "New React 19 features and migration challenges - shared by `charlie` [Source](https://discord.com/channels/...)"
+## 💡 Links Worth Checking
+List any valuable shared links with one-line descriptions.
+Format: [Title]({url}) - why it matters - `username`
 
-Highlight all user names/aliases with backticks (e.g., `username`).
-Each message has a [Jump to message](discord_link) link. Preserve these Discord message links at the end of each bullet in the format: [Source](https://discord.com/channels/...)
-
-## 💬 Notable Quotes
-Include the top 3 most interesting or notable one-liner quotes from the conversation.
-Format: "Quote text here" - `username` [Source](https://discord.com/channels/...)
-
-Do not include an introductory paragraph before the sections. Start directly with the ## Overview header.
-"""
+Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
         logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
@@ -456,7 +440,7 @@ Do not include an introductory paragraph before the sections. Start directly wit
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that summarizes Discord conversations. IMPORTANT: For each link or topic mentioned, search the web for relevant context and incorporate that information. When users share GitHub repos, YouTube videos, or documentation, search for and include relevant information about those resources. Create concise summaries with short bullet points that combine the Discord messages with web-sourced context. Highlight all user names with backticks. For each bullet point, include both the Discord message source [Source](link) and cite any web sources you found. End with the top 3 most interesting quotes from the conversation, each with their source link. Always search the web to provide additional context about shared links and topics. If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. Keep tables simple with 2-3 columns max. For complex comparisons, use a list format instead of tables. CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting. Bold, h2, etc is good"
+                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). Search the web for context on shared links when helpful. CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
                 },
                 {
                     "role": "user",
@@ -482,13 +466,6 @@ Do not include an introductory paragraph before the sections. Start directly wit
 
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
-
-        # If there were any images, append a dedicated section so image context is always visible
-        if image_summaries:
-            images_section = "\n\n**Images shared in this period**\n"
-            for item in image_summaries:
-                images_section += f"- {item}\n"
-            formatted_summary += images_section
 
         logger.info(f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
 
