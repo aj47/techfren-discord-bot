@@ -1421,7 +1421,7 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
         )
 
         # Send response in the thread
-        response_parts = split_long_message(response, max_length=1900)
+        response_parts = await split_long_message(response, max_length=1900)
         for part in response_parts:
             await thread.send(part)
 
