@@ -926,7 +926,19 @@ async def call_llm_with_database_context(
                 content = msg.get('content', '')
                 channel = msg.get('channel_name', channel_name)
 
-                message_text = f"[{time_str}] #{channel} | {author}: {content}"
+                # Generate Discord message link
+                message_id = msg.get('id', '')
+                guild_id = msg.get('guild_id', '')
+                channel_id = msg.get('channel_id', '')
+                message_link = ""
+                if message_id and channel_id:
+                    message_link = generate_discord_message_link(guild_id, channel_id, message_id)
+
+                # Format with clickable Discord link
+                if message_link:
+                    message_text = f"[{time_str}] #{channel} | {author}: {content} [Source]({message_link})"
+                else:
+                    message_text = f"[{time_str}] #{channel} | {author}: {content}"
 
                 # Include scraped content if available
                 if msg.get('scraped_url') and msg.get('scraped_content_summary'):
@@ -971,6 +983,7 @@ async def call_llm_with_database_context(
 Instructions:
 - Answer based on what was discussed in the conversation history above
 - If the answer isn't in the conversation history, say so clearly
+- When referencing a specific message, include the [Source](link) from that message so users can jump to it
 - Quote relevant messages when helpful (use the username)
 - Be concise and direct
 - If multiple people discussed the topic, summarize their different perspectives"""
@@ -984,7 +997,7 @@ Instructions:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an assistant for the TechFren Discord community. You help users find information from past conversations. Be direct and concise. When referencing messages, include the username. CRITICAL: Never use markdown code blocks (```). Use plain text with inline formatting."
+                    "content": "You are an assistant for the TechFren Discord community. You help users find information from past conversations. Be direct and concise. When referencing messages, include the username and the [Source](link) markdown link provided with each message so users can click to see the original. CRITICAL: Never use markdown code blocks (```). Use plain text with inline formatting."
                 },
                 {
                     "role": "user",
