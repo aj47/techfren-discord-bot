@@ -5,6 +5,7 @@ import json
 from typing import Optional, Dict, Any
 import asyncio
 import re
+from datetime import timezone
 from message_utils import generate_discord_message_link, is_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
@@ -311,8 +312,16 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             created_at_time = msg.get('created_at')
             if hasattr(created_at_time, 'strftime'):
                 time_str = created_at_time.strftime('%H:%M:%S')
+                # Convert to Unix timestamp for Discord timestamp formatting
+                # Database stores naive UTC datetimes, so add UTC timezone before converting
+                if created_at_time.tzinfo is None:
+                    created_at_time = created_at_time.replace(tzinfo=timezone.utc)
+                unix_timestamp = int(created_at_time.timestamp())
+                # Create Discord timestamp format that shows short time in reader's timezone
+                discord_timestamp = f"<t:{unix_timestamp}:t>"  # Short time format
             else:
                 time_str = "Unknown Time"  # Fallback if created_at is not as expected
+                discord_timestamp = ""
 
             author_name = msg.get('author_name', 'Unknown Author')
             content = msg.get('content', '')
@@ -333,12 +342,15 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             # Check if this message has image descriptions
             image_descriptions = msg.get('image_descriptions')
 
-            # Format the message with the basic content and clickable Discord link
+            # Format the message with the basic content, Discord timestamp and clickable Discord link
+            # Include both time_str (for LLM context) and discord_timestamp (for output formatting)
+            # Only include TIMESTAMP marker when timestamp is available
+            timestamp_marker = f" [TIMESTAMP:{discord_timestamp}]" if discord_timestamp else ""
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
-                message_text = f"[{time_str}] {author_name}: {content} [Jump to message]({message_link})"
+                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content} [Jump to message]({message_link})"
             else:
-                message_text = f"[{time_str}] {author_name}: {content}"
+                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content}"
 
             # If there are image descriptions, add them inline to the message
             if image_descriptions:
@@ -404,12 +416,15 @@ Format (be CONCISE - aim for brevity):
 
 ## 🔥 Highlights
 5-8 bullet points MAX. One line each. Start with the topic, not filler words.
-Format: **Topic** - brief context - `username` [→](discord_message_link)
+Format: **Topic** - brief context - `username` TIMESTAMP [→](discord_message_link)
+- Messages with timestamps have a [TIMESTAMP:<t:unix:t>] marker. Copy the <t:unix:t> part EXACTLY as the TIMESTAMP in your output when available.
+- These timestamps automatically display in the reader's local timezone. Omit TIMESTAMP if not available.
 Include image descriptions inline if relevant to tech content.
 
 ## 💡 Links Worth Checking
 List any valuable shared links with one-line descriptions.
-Format: [Title](link) - why it matters - `username`
+Format: [Title](link) - why it matters - `username` TIMESTAMP
+- Use the <t:unix:t> timestamp format from the messages when available.
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
