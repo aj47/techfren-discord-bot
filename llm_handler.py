@@ -344,11 +344,13 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
             # Format the message with the basic content, Discord timestamp and clickable Discord link
             # Include both time_str (for LLM context) and discord_timestamp (for output formatting)
+            # Only include TIMESTAMP marker when timestamp is available
+            timestamp_marker = f" [TIMESTAMP:{discord_timestamp}]" if discord_timestamp else ""
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
-                message_text = f"[{time_str}] [TIMESTAMP:{discord_timestamp}] {author_name}: {content} [Jump to message]({message_link})"
+                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content} [Jump to message]({message_link})"
             else:
-                message_text = f"[{time_str}] [TIMESTAMP:{discord_timestamp}] {author_name}: {content}"
+                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content}"
 
             # If there are image descriptions, add them inline to the message
             if image_descriptions:
@@ -415,14 +417,14 @@ Format (be CONCISE - aim for brevity):
 ## 🔥 Highlights
 5-8 bullet points MAX. One line each. Start with the topic, not filler words.
 Format: **Topic** - brief context - `username` TIMESTAMP [→](discord_message_link)
-- Each message has a [TIMESTAMP:<t:unix:t>] marker. Copy the <t:unix:t> part EXACTLY as the TIMESTAMP in your output.
-- This timestamp will automatically display in the reader's local timezone.
+- Messages with timestamps have a [TIMESTAMP:<t:unix:t>] marker. Copy the <t:unix:t> part EXACTLY as the TIMESTAMP in your output when available.
+- These timestamps automatically display in the reader's local timezone. Omit TIMESTAMP if not available.
 Include image descriptions inline if relevant to tech content.
 
 ## 💡 Links Worth Checking
 List any valuable shared links with one-line descriptions.
 Format: [Title](link) - why it matters - `username` TIMESTAMP
-- Use the same <t:unix:t> timestamp format from the messages.
+- Use the <t:unix:t> timestamp format from the messages when available.
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
