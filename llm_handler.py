@@ -5,6 +5,7 @@ import json
 from typing import Optional, Dict, Any
 import asyncio
 import re
+from datetime import timezone
 from message_utils import generate_discord_message_link, is_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
@@ -312,8 +313,11 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             if hasattr(created_at_time, 'strftime'):
                 time_str = created_at_time.strftime('%H:%M:%S')
                 # Convert to Unix timestamp for Discord timestamp formatting
+                # Database stores naive UTC datetimes, so add UTC timezone before converting
+                if created_at_time.tzinfo is None:
+                    created_at_time = created_at_time.replace(tzinfo=timezone.utc)
                 unix_timestamp = int(created_at_time.timestamp())
-                # Create Discord timestamp format that shows relative time in reader's timezone
+                # Create Discord timestamp format that shows short time in reader's timezone
                 discord_timestamp = f"<t:{unix_timestamp}:t>"  # Short time format
             else:
                 time_str = "Unknown Time"  # Fallback if created_at is not as expected
