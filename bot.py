@@ -217,17 +217,52 @@ async def process_url(message_id: str, url: str):
         logger.error(f"Error processing URL {url} from message {message_id}: {str(e)}", exc_info=True)
 
 
-async def create_or_get_summary_thread(message: discord.Message, thread_name: str):
+async def create_or_get_summary_thread(message: discord.Message, thread_name: str, header_text: str = None):
     """Create or fetch a summary thread for a message and ensure the bot has joined it.
 
+    To avoid notifying users when they post links, this function creates a reply to
+    the original message first, then creates the thread from the bot's reply message.
+    This way the thread notification goes to the bot, not the user.
+
     Args:
-        message: The Discord message to create the thread from.
+        message: The Discord message to create the thread from (user's original message).
         thread_name: The name to use when creating the thread.
+        header_text: Optional header text for the bot's reply message. If provided,
+                     a reply is sent first and the thread is created from that reply.
+                     This prevents the original message author from being notified.
 
     Returns:
-        The thread object if found or created successfully, otherwise None.
+        A tuple of (thread, header_already_sent) where:
+        - thread: The thread object if found or created successfully, otherwise None.
+        - header_already_sent: True if header_text was sent as the reply message.
     """
     thread = None
+    header_already_sent = False
+
+    # If header_text is provided, send a reply first and create thread from that
+    # This prevents the original poster from getting notified
+    if header_text:
+        try:
+            # Send a reply to the user's message - this becomes the thread starter
+            reply_message = await message.reply(header_text, mention_author=False)
+            header_already_sent = True
+
+            # Create thread from the bot's reply instead of the user's message
+            thread = await reply_message.create_thread(name=thread_name, auto_archive_duration=1440)
+            await thread.join()
+            logger.info(f"Created thread {thread.id} from bot reply to avoid notifying user {message.author.id}")
+            return thread, header_already_sent
+        except discord.errors.HTTPException as e:
+            if e.code == 160004:  # Thread already exists on reply
+                logger.info(f"Thread already exists for reply message, fetching it")
+                # Fall through to search logic below
+            else:
+                logger.error(f"Failed to create thread from reply: {e}")
+                # Fall back to original behavior
+                header_already_sent = False
+
+    # Original behavior: create thread directly from user's message
+    # (used as fallback or when header_text is not provided)
     try:
         # Try to create a thread from the message
         thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
@@ -265,7 +300,7 @@ async def create_or_get_summary_thread(message: discord.Message, thread_name: st
 
     if not thread:
         logger.error(f"Could not create or find thread for message {message.id}")
-        return None
+        return None, header_already_sent
 
     # Ensure bot is a member of the thread (important for visibility)
     try:
@@ -275,7 +310,7 @@ async def create_or_get_summary_thread(message: discord.Message, thread_name: st
     except Exception as e:
         logger.warning(f"Could not join thread {thread.id}: {e}")
 
-    return thread
+    return thread, header_already_sent
 
 async def handle_x_post_summary(message: discord.Message) -> bool:
     """
@@ -341,8 +376,24 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                     logger.warning(f"Failed to summarize X post: {url}")
                     continue
 
-                # Build the response message with header
-                response = f"📊 **X Post Summary:**\n\n{summary_text}"
+                # NOW create or get existing thread from the message (after Apify calls complete)
+                # Pass header text to create thread from bot's reply (avoids notifying the user)
+                from apify_handler import extract_tweet_id
+                tweet_id = extract_tweet_id(url)
+                thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
+                header_text = "📊 **X Post Summary:**"
+
+                thread, header_already_sent = await create_or_get_summary_thread(
+                    message, thread_name, header_text=header_text
+                )
+                if not thread:
+                    continue
+
+                # Build the response message - include header only if not already sent as reply
+                if header_already_sent:
+                    response = summary_text
+                else:
+                    response = f"{header_text}\n\n{summary_text}"
 
                 # Split into multiple messages if needed to respect Discord's 2000 character limit
                 if len(response) > 1900:
@@ -351,16 +402,7 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 else:
                     message_parts = [response]
 
-                # NOW create or get existing thread from the message (after Apify calls complete)
-                from apify_handler import extract_tweet_id
-                tweet_id = extract_tweet_id(url)
-                thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
-
-                thread = await create_or_get_summary_thread(message, thread_name)
-                if not thread:
-                    continue
-
-                # Post the summary directly to the thread (no "processing" message needed)
+                # Post the summary directly to the thread
                 for part in message_parts:
                     await thread.send(part)
                 logger.info(
@@ -459,8 +501,24 @@ async def handle_link_summary(message: discord.Message) -> bool:
                     logger.warning(f"Failed to summarize URL: {url}")
                     continue
 
-                # Build the response message with header
-                response = f"🔗 **Link Summary:**\n\n{summary_text}"
+                # Create or get existing thread from the message
+                # Pass header text to create thread from bot's reply (avoids notifying the user)
+                parsed_url = urlparse(url)
+                domain = parsed_url.netloc or "Link"
+                thread_name = f"Link Summary: {domain[:40]}"  # Limit length
+                header_text = "🔗 **Link Summary:**"
+
+                thread, header_already_sent = await create_or_get_summary_thread(
+                    message, thread_name, header_text=header_text
+                )
+                if not thread:
+                    continue
+
+                # Build the response message - include header only if not already sent as reply
+                if header_already_sent:
+                    response = summary_text
+                else:
+                    response = f"{header_text}\n\n{summary_text}"
 
                 # Split into multiple messages if needed to respect Discord's 2000 character limit
                 if len(response) > 1900:
@@ -468,16 +526,6 @@ async def handle_link_summary(message: discord.Message) -> bool:
                     message_parts = await split_long_message(response, max_length=1900)
                 else:
                     message_parts = [response]
-
-                # Create or get existing thread from the message
-                # Extract domain from URL for thread name
-                parsed_url = urlparse(url)
-                domain = parsed_url.netloc or "Link"
-                thread_name = f"Link Summary: {domain[:40]}"  # Limit length
-
-                thread = await create_or_get_summary_thread(message, thread_name)
-                if not thread:
-                    continue
 
                 # Post the summary directly to the thread
                 for part in message_parts:
