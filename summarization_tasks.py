@@ -538,13 +538,11 @@ async def before_daily_role_color_charging():
         return
 
     try:
-        # Run role color charging 1 hour after the summarization
-        # This gives time for point awards to be processed first
+        # Run role color charging at the same time as the summarization
         summary_hour = getattr(config, 'summary_hour', 0)
         summary_minute = getattr(config, 'summary_minute', 0)
 
-        # Add 1 hour to the summary time for color charging
-        charge_hour = (summary_hour + 1) % 24
+        charge_hour = summary_hour
         charge_minute = summary_minute
 
         logger.info(f"Daily role color charging scheduled for {charge_hour:02d}:{charge_minute:02d} UTC")
