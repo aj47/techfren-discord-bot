@@ -1799,7 +1799,11 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             if old_role_id != str(role.id):
                 old_role = interaction.guild.get_role(int(old_role_id))
                 if old_role and old_role in member.roles:
-                    await member.remove_roles(old_role, reason="Switched to new color")
+                    try:
+                        await member.remove_roles(old_role, reason="Switched to new color")
+                    except discord.Forbidden:
+                        # Can't remove old role (may be higher than bot's role), but new color is set
+                        logger.warning(f"Could not remove old color role {old_role.name} from {user_name} - insufficient permissions")
 
         remaining_points = current_points - points_per_day
         await interaction.followup.send(
