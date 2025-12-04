@@ -1637,10 +1637,31 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         bot_top_role = bot_member.top_role if bot_member else None
 
         if existing_role:
-            # Ensure the color is correct (in case it was changed)
+            # Security check: ensure color roles have no permissions
+            # This prevents privilege escalation if someone manually edits the role
+            needs_update = False
+            update_kwargs = {"reason": "Security: ensuring color role has no permissions"}
+
             if existing_role.color != discord_color:
-                await existing_role.edit(color=discord_color, reason=f"Correcting color for {color_name}")
-                logger.info(f"Updated existing role {role_name} color")
+                update_kwargs["color"] = discord_color
+                needs_update = True
+
+            if existing_role.permissions != discord.Permissions.none():
+                update_kwargs["permissions"] = discord.Permissions.none()
+                needs_update = True
+                logger.warning(f"Role {role_name} had permissions, resetting to none for security")
+
+            if existing_role.hoist:
+                update_kwargs["hoist"] = False
+                needs_update = True
+
+            if existing_role.mentionable:
+                update_kwargs["mentionable"] = False
+                needs_update = True
+
+            if needs_update:
+                await existing_role.edit(**update_kwargs)
+                logger.info(f"Updated existing role {role_name} settings")
 
             # Move the role to just below the bot's top role for visibility
             # Use edit_role_positions for reliable positioning
@@ -1648,10 +1669,13 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
 
             return existing_role
 
-        # Create a new role
+        # Create a new role with NO permissions (color-only role for security)
         new_role = await guild.create_role(
             name=role_name,
             color=discord_color,
+            permissions=discord.Permissions.none(),  # Explicitly no permissions for security
+            hoist=False,  # Don't display separately in member list
+            mentionable=False,  # Can't be mentioned (prevents ping abuse)
             reason=f"Shared color role for {color_name}"
         )
 
