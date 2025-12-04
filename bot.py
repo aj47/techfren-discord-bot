@@ -1553,6 +1553,62 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
 
 # ==================== Role Color Commands ====================
 
+async def _ensure_color_role_position(guild: discord.Guild, color_role: discord.Role, bot_top_role: Optional[discord.Role]) -> bool:
+    """
+    Ensure a color role is positioned high enough in the hierarchy to be visible.
+
+    Discord shows the color of the highest positioned role. Color roles need to be
+    above other colored roles for users to see their custom color.
+
+    Args:
+        guild: The Discord guild
+        color_role: The color role to position
+        bot_top_role: The bot's highest role (used as upper limit)
+
+    Returns:
+        True if positioning succeeded, False otherwise
+    """
+    try:
+        if not bot_top_role:
+            logger.warning("Bot has no roles, cannot position color role")
+            return False
+
+        # Calculate target position: just below the bot's highest role
+        # This ensures color roles are above most user roles but below admin/mod roles
+        target_position = max(1, bot_top_role.position - 1)
+
+        # Only move if the role is currently lower than target
+        if color_role.position >= target_position:
+            logger.debug(f"Role {color_role.name} already at position {color_role.position}, target was {target_position}")
+            return True
+
+        # Use edit_role_positions for atomic, reliable positioning
+        # This is more reliable than role.edit(position=X)
+        positions = {color_role: target_position}
+
+        try:
+            await guild.edit_role_positions(positions=positions, reason="Positioning color role for visibility")
+            logger.info(f"Moved role {color_role.name} to position {target_position} (was {color_role.position})")
+            return True
+        except discord.Forbidden:
+            logger.warning(f"Could not move role {color_role.name} - insufficient permissions")
+            return False
+        except discord.HTTPException as e:
+            # Fallback: try using role.edit() if edit_role_positions fails
+            logger.warning(f"edit_role_positions failed ({e}), trying role.edit fallback")
+            try:
+                await color_role.edit(position=target_position, reason="Positioning color role for visibility")
+                logger.info(f"Moved role {color_role.name} to position {target_position} using fallback")
+                return True
+            except discord.Forbidden:
+                logger.warning(f"Fallback also failed for role {color_role.name}")
+                return False
+
+    except Exception as e:
+        logger.error(f"Error positioning color role {color_role.name}: {str(e)}", exc_info=True)
+        return False
+
+
 async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_hex: str) -> Optional[discord.Role]:
     """
     Get or create a shared color role.
@@ -1576,11 +1632,9 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         color_int = int(color_hex.lstrip('#'), 16)
         discord_color = discord.Color(color_int)
 
-        # Get the bot's highest role position to place color roles just below it
+        # Get the bot's highest role to use as reference for positioning
         bot_member = guild.me
-        bot_top_role_position = bot_member.top_role.position if bot_member else 1
-        # Place color roles at position 1 below the bot's top role (or at least position 1)
-        target_position = max(1, bot_top_role_position - 1)
+        bot_top_role = bot_member.top_role if bot_member else None
 
         if existing_role:
             # Ensure the color is correct (in case it was changed)
@@ -1588,13 +1642,9 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
                 await existing_role.edit(color=discord_color, reason=f"Correcting color for {color_name}")
                 logger.info(f"Updated existing role {role_name} color")
 
-            # Ensure the role is positioned high enough to show the color
-            if existing_role.position < target_position:
-                try:
-                    await existing_role.edit(position=target_position, reason="Moving color role higher in hierarchy")
-                    logger.info(f"Moved existing role {role_name} to position {target_position}")
-                except discord.Forbidden:
-                    logger.warning(f"Could not move role {role_name} - may lack permissions")
+            # Move the role to just below the bot's top role for visibility
+            # Use edit_role_positions for reliable positioning
+            await _ensure_color_role_position(guild, existing_role, bot_top_role)
 
             return existing_role
 
@@ -1606,11 +1656,8 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         )
 
         # Move the new role higher in the hierarchy so the color is visible
-        try:
-            await new_role.edit(position=target_position, reason="Positioning color role for visibility")
-            logger.info(f"Created new color role {role_name} at position {target_position}")
-        except discord.Forbidden:
-            logger.warning(f"Created role {role_name} but could not move it - color may not show")
+        await _ensure_color_role_position(guild, new_role, bot_top_role)
+        logger.info(f"Created new color role {role_name}")
 
         return new_role
 
