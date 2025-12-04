@@ -1781,6 +1781,13 @@ async def color_remove_slash(interaction: discord.Interaction):
         if not isinstance(member, discord.Member):
             member = interaction.guild.get_member(interaction.user.id)
 
+        if not member:
+            await interaction.followup.send(
+                "Could not find you in this server.",
+                ephemeral=True
+            )
+            return
+
         # Remove the role from user (role is shared, so don't delete it)
         role_id = color_info['role_id']
         await remove_color_role_from_user(interaction.guild, member, role_id)
