@@ -104,3 +104,66 @@ ERROR_MESSAGES = {
     'database_error': "Sorry, a database connection error occurred. Please try again later.",
     'no_messages_found': "No messages found in this channel for the past {hours} hours."
 }
+
+# Role Color Configuration
+# Points cost per day to maintain a custom role color
+try:
+    ROLE_COLOR_POINTS_PER_DAY = int(os.getenv('ROLE_COLOR_POINTS_PER_DAY', '1'))
+    if ROLE_COLOR_POINTS_PER_DAY < 1:
+        ROLE_COLOR_POINTS_PER_DAY = 1  # Minimum 1 point per day
+except (ValueError, TypeError):
+    ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
+
+# Available colors for role customization
+# Format: {color_name: hex_value}
+# Each color has a light and dark variant
+AVAILABLE_ROLE_COLORS = {
+    # Reds
+    'red': '#FF0000',
+    'red-light': '#FF6B6B',
+    'red-dark': '#8B0000',
+    # Oranges
+    'orange': '#FF8C00',
+    'orange-light': '#FFB347',
+    'orange-dark': '#CC5500',
+    # Yellows
+    'yellow': '#FFD700',
+    'yellow-light': '#FFEC8B',
+    'yellow-dark': '#DAA520',
+    # Greens
+    'green': '#00FF00',
+    'green-light': '#90EE90',
+    'green-dark': '#006400',
+    # Blues
+    'blue': '#0000FF',
+    'blue-light': '#87CEEB',
+    'blue-dark': '#00008B',
+    # Purples
+    'purple': '#800080',
+    'purple-light': '#DDA0DD',
+    'purple-dark': '#4B0082',
+    # Pinks
+    'pink': '#FF69B4',
+    'pink-light': '#FFB6C1',
+    'pink-dark': '#C71585',
+    # Cyans
+    'cyan': '#00FFFF',
+    'cyan-light': '#E0FFFF',
+    'cyan-dark': '#008B8B',
+    # Teals
+    'teal': '#008080',
+    'teal-light': '#40E0D0',
+    'teal-dark': '#004D4D',
+    # Magentas
+    'magenta': '#FF00FF',
+    'magenta-light': '#FF77FF',
+    'magenta-dark': '#8B008B',
+    # Corals
+    'coral': '#FF7F50',
+    'coral-light': '#FFA07A',
+    'coral-dark': '#CD5B45',
+    # Golds
+    'gold': '#FFD700',
+    'gold-light': '#FFEC8B',
+    'gold-dark': '#B8860B',
+}
