@@ -1666,13 +1666,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             )
             return
 
-        # Check if user already has an active color and remove old role first
+        # Check if user already has an active color (will remove old role after success)
         existing_color = database.get_user_role_color(user_id, guild_id)
-        if existing_color:
-            old_role_id = existing_color['role_id']
-            old_role = interaction.guild.get_role(int(old_role_id))
-            if old_role and old_role in member.roles:
-                await member.remove_roles(old_role, reason="Switching to new color")
 
         role = await get_or_create_color_role(interaction.guild, color_lower, color_hex)
 
@@ -1721,6 +1716,13 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
                 ephemeral=True
             )
             return
+
+        # After all steps succeed, remove old role if user had one
+        if existing_color:
+            old_role_id = existing_color['role_id']
+            old_role = interaction.guild.get_role(int(old_role_id))
+            if old_role and old_role in member.roles:
+                await member.remove_roles(old_role, reason="Switched to new color")
 
         remaining_points = current_points - points_per_day
         await interaction.followup.send(

@@ -1462,7 +1462,7 @@ def set_user_role_color(
         bool: True if successful, False otherwise
     """
     try:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         today_str = now.strftime('%Y-%m-%d')
 
         with get_connection() as conn:
