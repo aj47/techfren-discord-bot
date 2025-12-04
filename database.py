@@ -83,6 +83,23 @@ CREATE TABLE IF NOT EXISTS daily_point_awards (
 );
 """
 
+CREATE_USER_ROLE_COLORS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_role_colors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    role_id TEXT NOT NULL,
+    color_hex TEXT NOT NULL,
+    color_name TEXT NOT NULL,
+    points_per_day INTEGER NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    last_charged_date TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id)
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -94,6 +111,8 @@ CREATE_INDEX_USER_POINTS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_user_points_au
 CREATE_INDEX_USER_POINTS_GUILD = "CREATE INDEX IF NOT EXISTS idx_user_points_guild_id ON user_points (guild_id);"
 CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_date ON daily_point_awards (date);"
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
+CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
+CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -157,6 +176,7 @@ def init_database() -> None:
             cursor.execute(CREATE_CHANNEL_SUMMARIES_TABLE)
             cursor.execute(CREATE_USER_POINTS_TABLE)
             cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
+            cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -176,6 +196,10 @@ def init_database() -> None:
             # Create indexes for daily_point_awards table
             cursor.execute(CREATE_INDEX_DAILY_AWARDS_DATE)
             cursor.execute(CREATE_INDEX_DAILY_AWARDS_AUTHOR)
+
+            # Create indexes for user_role_colors table
+            cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
+            cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
 
             # Insert a test message to ensure the database is working
             try:
@@ -1408,4 +1432,299 @@ def get_recent_messages_for_context(
 
     except Exception as e:
         logger.error(f"Error getting recent messages for context: {str(e)}", exc_info=True)
+        return []
+
+
+# ==================== User Role Colors Functions ====================
+
+def set_user_role_color(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    role_id: str,
+    color_hex: str,
+    color_name: str,
+    points_per_day: int
+) -> bool:
+    """
+    Set or update a user's active role color.
+
+    Args:
+        author_id: The Discord user ID
+        author_name: The username
+        guild_id: The Discord guild ID
+        role_id: The Discord role ID assigned to the user
+        color_hex: The hex color code (e.g., "#FF5733")
+        color_name: Human-readable color name
+        points_per_day: Points to deduct per day
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        now = datetime.now()
+        today_str = now.strftime('%Y-%m-%d')
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO user_role_colors (
+                    author_id, author_name, guild_id, role_id, color_hex,
+                    color_name, points_per_day, started_at, last_charged_date, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(author_id, guild_id) DO UPDATE SET
+                    author_name = ?,
+                    role_id = ?,
+                    color_hex = ?,
+                    color_name = ?,
+                    points_per_day = ?,
+                    started_at = ?,
+                    last_charged_date = ?
+                """,
+                (
+                    author_id, author_name, guild_id, role_id, color_hex,
+                    color_name, points_per_day, now.isoformat(), today_str, now.isoformat(),
+                    author_name, role_id, color_hex, color_name, points_per_day,
+                    now.isoformat(), today_str
+                )
+            )
+
+            conn.commit()
+
+        logger.info(f"Set role color {color_name} ({color_hex}) for user {author_name} ({author_id})")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting role color for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_user_role_color(author_id: str, guild_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a user's active role color.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+
+    Returns:
+        Dict with role color info or None if not found
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT author_id, author_name, guild_id, role_id, color_hex,
+                       color_name, points_per_day, started_at, last_charged_date, created_at
+                FROM user_role_colors
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (author_id, guild_id)
+            )
+
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'guild_id': row['guild_id'],
+                    'role_id': row['role_id'],
+                    'color_hex': row['color_hex'],
+                    'color_name': row['color_name'],
+                    'points_per_day': row['points_per_day'],
+                    'started_at': row['started_at'],
+                    'last_charged_date': row['last_charged_date'],
+                    'created_at': row['created_at']
+                }
+            return None
+    except Exception as e:
+        logger.error(f"Error getting role color for user {author_id}: {str(e)}", exc_info=True)
+        return None
+
+
+def remove_user_role_color(author_id: str, guild_id: str) -> bool:
+    """
+    Remove a user's active role color.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+
+    Returns:
+        bool: True if removed, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "DELETE FROM user_role_colors WHERE author_id = ? AND guild_id = ?",
+                (author_id, guild_id)
+            )
+
+            rows_affected = cursor.rowcount
+            conn.commit()
+
+        if rows_affected > 0:
+            logger.info(f"Removed role color for user {author_id} in guild {guild_id}")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error removing role color for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_all_active_role_colors(guild_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all active role colors for a guild.
+
+    Args:
+        guild_id: The Discord guild ID
+
+    Returns:
+        List of role color records
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT author_id, author_name, guild_id, role_id, color_hex,
+                       color_name, points_per_day, started_at, last_charged_date, created_at
+                FROM user_role_colors
+                WHERE guild_id = ?
+                """,
+                (guild_id,)
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                    'guild_id': row['guild_id'],
+                    'role_id': row['role_id'],
+                    'color_hex': row['color_hex'],
+                    'color_name': row['color_name'],
+                    'points_per_day': row['points_per_day'],
+                    'started_at': row['started_at'],
+                    'last_charged_date': row['last_charged_date'],
+                    'created_at': row['created_at']
+                })
+
+        logger.info(f"Retrieved {len(results)} active role colors for guild {guild_id}")
+        return results
+    except Exception as e:
+        logger.error(f"Error getting active role colors for guild {guild_id}: {str(e)}", exc_info=True)
+        return []
+
+
+def update_role_color_last_charged(author_id: str, guild_id: str, date_str: str) -> bool:
+    """
+    Update the last charged date for a user's role color.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+        date_str: The date string (YYYY-MM-DD format)
+
+    Returns:
+        bool: True if updated, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                UPDATE user_role_colors
+                SET last_charged_date = ?
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (date_str, author_id, guild_id)
+            )
+
+            rows_affected = cursor.rowcount
+            conn.commit()
+
+        return rows_affected > 0
+    except Exception as e:
+        logger.error(f"Error updating last charged date for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def deduct_user_points(author_id: str, guild_id: str, points: int) -> bool:
+    """
+    Deduct points from a user's total.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+        points: Number of points to deduct
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # First check if user has enough points
+            cursor.execute(
+                "SELECT total_points FROM user_points WHERE author_id = ? AND guild_id = ?",
+                (author_id, guild_id)
+            )
+
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(f"User {author_id} has no points record in guild {guild_id}")
+                return False
+
+            current_points = row['total_points']
+            if current_points < points:
+                logger.warning(f"User {author_id} has insufficient points ({current_points} < {points})")
+                return False
+
+            # Deduct points
+            cursor.execute(
+                """
+                UPDATE user_points
+                SET total_points = total_points - ?,
+                    last_updated = ?
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (points, datetime.now().isoformat(), author_id, guild_id)
+            )
+
+            conn.commit()
+
+        logger.info(f"Deducted {points} points from user {author_id} in guild {guild_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error deducting points from user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_all_guilds_with_role_colors() -> List[str]:
+    """
+    Get all guild IDs that have active role colors.
+
+    Returns:
+        List of guild IDs
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT DISTINCT guild_id FROM user_role_colors"
+            )
+
+            return [row['guild_id'] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting guilds with role colors: {str(e)}", exc_info=True)
         return []

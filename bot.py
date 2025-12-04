@@ -16,7 +16,7 @@ from rate_limiter import check_rate_limit, update_rate_limit_config  # Import ra
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
+from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging  # Import summarization tasks
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
 from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
@@ -706,6 +706,11 @@ async def on_ready():
     if not daily_channel_summarization.is_running():
         daily_channel_summarization.start()
         logger.info("Started daily channel summarization task")
+
+    # Start the daily role color charging task if not already running
+    if not daily_role_color_charging.is_running():
+        daily_role_color_charging.start()
+        logger.info("Started daily role color charging task")
 
     # Log details about each connected guild
     for guild in bot.guilds:
@@ -1516,6 +1521,382 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
             )
         except Exception:
             pass
+
+
+# ==================== Role Color Commands ====================
+
+async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_hex: str, user: discord.Member) -> Optional[discord.Role]:
+    """
+    Get or create a personal color role for a user.
+
+    Args:
+        guild: The Discord guild
+        color_name: Name of the color
+        color_hex: Hex color code
+        user: The user to create the role for
+
+    Returns:
+        The created/found role, or None on failure
+    """
+    try:
+        # Role name format: "color-username" to make it unique per user
+        role_name = f"color-{user.name}"
+
+        # Check if user already has a color role
+        existing_role = discord.utils.get(guild.roles, name=role_name)
+
+        # Convert hex to discord.Color
+        color_int = int(color_hex.lstrip('#'), 16)
+        discord_color = discord.Color(color_int)
+
+        if existing_role:
+            # Update the existing role's color
+            await existing_role.edit(color=discord_color, reason=f"Color changed to {color_name} by {user.name}")
+            logger.info(f"Updated existing role {role_name} to color {color_name}")
+            return existing_role
+
+        # Create a new role
+        # Position it just above @everyone but below other roles
+        new_role = await guild.create_role(
+            name=role_name,
+            color=discord_color,
+            reason=f"Custom color role for {user.name}"
+        )
+
+        logger.info(f"Created new color role {role_name} with color {color_name}")
+        return new_role
+
+    except discord.Forbidden:
+        logger.error(f"Bot lacks permission to create/edit roles in guild {guild.id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating color role: {str(e)}", exc_info=True)
+        return None
+
+
+async def remove_color_role_from_user(guild: discord.Guild, user: discord.Member) -> bool:
+    """
+    Remove a user's color role and delete it.
+
+    Args:
+        guild: The Discord guild
+        user: The user to remove the role from
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        role_name = f"color-{user.name}"
+        role = discord.utils.get(guild.roles, name=role_name)
+
+        if role:
+            await role.delete(reason=f"Color role removed by {user.name}")
+            logger.info(f"Deleted color role {role_name}")
+            return True
+        return False
+
+    except discord.Forbidden:
+        logger.error(f"Bot lacks permission to delete roles in guild {guild.id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error removing color role: {str(e)}", exc_info=True)
+        return False
+
+
+@bot.tree.command(name="color-set", description="Set your name color (costs points per day)")
+async def color_set_slash(interaction: discord.Interaction, color: str):
+    """
+    Slash command to set a custom name color.
+
+    Args:
+        interaction: The Discord interaction
+        color: The color name to set
+    """
+    import config
+
+    try:
+        # Validate guild context
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+        user_name = interaction.user.name
+
+        # Normalize color input
+        color_lower = color.lower().strip()
+
+        # Check if color is valid
+        available_colors = getattr(config, 'AVAILABLE_ROLE_COLORS', {})
+        if color_lower not in available_colors:
+            color_list = ', '.join(sorted(available_colors.keys()))
+            await interaction.response.send_message(
+                f"Invalid color. Available colors: {color_list}",
+                ephemeral=True
+            )
+            return
+
+        color_hex = available_colors[color_lower]
+        points_per_day = getattr(config, 'ROLE_COLOR_POINTS_PER_DAY', 1)
+
+        # Check if user has enough points
+        current_points = database.get_user_points(user_id, guild_id)
+        if current_points < points_per_day:
+            await interaction.response.send_message(
+                f"You need at least {points_per_day} points to set a color. You have {current_points} points.",
+                ephemeral=True
+            )
+            return
+
+        # Defer response since role creation might take a moment
+        await interaction.response.defer(ephemeral=True)
+
+        # Get or create the color role
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            member = interaction.guild.get_member(interaction.user.id)
+
+        if not member:
+            await interaction.followup.send(
+                "Could not find you in this server.",
+                ephemeral=True
+            )
+            return
+
+        role = await get_or_create_color_role(interaction.guild, color_lower, color_hex, member)
+
+        if not role:
+            await interaction.followup.send(
+                "Failed to create color role. The bot may not have permission to manage roles.",
+                ephemeral=True
+            )
+            return
+
+        # Assign the role to the user
+        try:
+            await member.add_roles(role, reason=f"Custom color set via /color-set")
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Failed to assign the role. The bot may not have permission or the role is higher than the bot's highest role.",
+                ephemeral=True
+            )
+            return
+
+        # Deduct points for the first day
+        if not database.deduct_user_points(user_id, guild_id, points_per_day):
+            # Rollback - remove role if points deduction failed
+            await member.remove_roles(role, reason="Points deduction failed")
+            await interaction.followup.send(
+                "Failed to deduct points. Please try again.",
+                ephemeral=True
+            )
+            return
+
+        # Save to database
+        database.set_user_role_color(
+            author_id=user_id,
+            author_name=user_name,
+            guild_id=guild_id,
+            role_id=str(role.id),
+            color_hex=color_hex,
+            color_name=color_lower,
+            points_per_day=points_per_day
+        )
+
+        remaining_points = current_points - points_per_day
+        await interaction.followup.send(
+            f"Your name color has been set to **{color_lower}**!\n"
+            f"Cost: {points_per_day} point(s) per day\n"
+            f"Remaining points: {remaining_points}\n\n"
+            f"Use `/color-remove` to remove your color and stop the daily charge.",
+            ephemeral=True
+        )
+
+        logger.info(f"User {user_name} ({user_id}) set color to {color_lower} in guild {guild_id}")
+
+    except Exception as e:
+        logger.error(f"Error in /color-set command: {str(e)}", exc_info=True)
+        try:
+            await interaction.followup.send(
+                "An error occurred while setting your color. Please try again later.",
+                ephemeral=True
+            )
+        except Exception:
+            pass
+
+
+@bot.tree.command(name="color-remove", description="Remove your custom name color")
+async def color_remove_slash(interaction: discord.Interaction):
+    """
+    Slash command to remove a custom name color.
+
+    Args:
+        interaction: The Discord interaction
+    """
+    try:
+        # Validate guild context
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+
+        # Check if user has an active color
+        color_info = database.get_user_role_color(user_id, guild_id)
+
+        if not color_info:
+            await interaction.response.send_message(
+                "You don't have an active color role.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Get member
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            member = interaction.guild.get_member(interaction.user.id)
+
+        # Remove the role
+        await remove_color_role_from_user(interaction.guild, member)
+
+        # Remove from database
+        database.remove_user_role_color(user_id, guild_id)
+
+        await interaction.followup.send(
+            f"Your color role has been removed. You will no longer be charged daily points.",
+            ephemeral=True
+        )
+
+        logger.info(f"User {interaction.user.name} ({user_id}) removed their color in guild {guild_id}")
+
+    except Exception as e:
+        logger.error(f"Error in /color-remove command: {str(e)}", exc_info=True)
+        try:
+            await interaction.followup.send(
+                "An error occurred while removing your color. Please try again later.",
+                ephemeral=True
+            )
+        except Exception:
+            pass
+
+
+@bot.tree.command(name="color-list", description="List all available colors and their costs")
+async def color_list_slash(interaction: discord.Interaction):
+    """
+    Slash command to list all available colors.
+
+    Args:
+        interaction: The Discord interaction
+    """
+    import config
+
+    try:
+        available_colors = getattr(config, 'AVAILABLE_ROLE_COLORS', {})
+        points_per_day = getattr(config, 'ROLE_COLOR_POINTS_PER_DAY', 1)
+
+        if not available_colors:
+            await interaction.response.send_message(
+                "No colors are currently available.",
+                ephemeral=True
+            )
+            return
+
+        # Build color list message
+        message = f"**Available Colors** (Cost: {points_per_day} point(s) per day)\n\n"
+
+        # Sort colors alphabetically
+        sorted_colors = sorted(available_colors.items())
+
+        for color_name, color_hex in sorted_colors:
+            message += f"• **{color_name}** - `{color_hex}`\n"
+
+        message += f"\nUse `/color-set <color>` to set your color."
+
+        await interaction.response.send_message(message, ephemeral=True)
+
+    except Exception as e:
+        logger.error(f"Error in /color-list command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while listing colors. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="color-status", description="Check your current color status")
+async def color_status_slash(interaction: discord.Interaction):
+    """
+    Slash command to check current color status.
+
+    Args:
+        interaction: The Discord interaction
+    """
+    try:
+        # Validate guild context
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+
+        # Get user's color info
+        color_info = database.get_user_role_color(user_id, guild_id)
+        current_points = database.get_user_points(user_id, guild_id)
+
+        if not color_info:
+            await interaction.response.send_message(
+                f"You don't have an active color role.\n"
+                f"Your current points: {current_points}\n\n"
+                f"Use `/color-list` to see available colors and `/color-set <color>` to set one.",
+                ephemeral=True
+            )
+            return
+
+        # Calculate days remaining based on points
+        points_per_day = color_info['points_per_day']
+        days_remaining = current_points // points_per_day if points_per_day > 0 else 0
+
+        # Parse started_at date
+        started_at = color_info['started_at']
+        if isinstance(started_at, str):
+            try:
+                started_dt = datetime.fromisoformat(started_at)
+                started_str = started_dt.strftime("%B %d, %Y")
+            except Exception:
+                started_str = started_at
+        else:
+            started_str = str(started_at)
+
+        await interaction.response.send_message(
+            f"**Your Color Status**\n\n"
+            f"Current color: **{color_info['color_name']}** (`{color_info['color_hex']}`)\n"
+            f"Daily cost: {points_per_day} point(s)\n"
+            f"Your points: {current_points}\n"
+            f"Days remaining: ~{days_remaining}\n"
+            f"Active since: {started_str}\n\n"
+            f"Use `/color-remove` to remove your color.",
+            ephemeral=True
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /color-status command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while checking your status. Please try again later.",
+            ephemeral=True
+        )
 
 
 try:

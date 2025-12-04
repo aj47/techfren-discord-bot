@@ -104,3 +104,32 @@ ERROR_MESSAGES = {
     'database_error': "Sorry, a database connection error occurred. Please try again later.",
     'no_messages_found': "No messages found in this channel for the past {hours} hours."
 }
+
+# Role Color Configuration
+# Points cost per day to maintain a custom role color
+ROLE_COLOR_POINTS_PER_DAY = int(os.getenv('ROLE_COLOR_POINTS_PER_DAY', '1'))
+
+# Available colors for role customization
+# Format: {color_name: hex_value}
+AVAILABLE_ROLE_COLORS = {
+    'red': '#FF0000',
+    'orange': '#FF8C00',
+    'yellow': '#FFD700',
+    'green': '#00FF00',
+    'lime': '#32CD32',
+    'teal': '#008080',
+    'cyan': '#00FFFF',
+    'blue': '#0000FF',
+    'purple': '#800080',
+    'magenta': '#FF00FF',
+    'pink': '#FF69B4',
+    'coral': '#FF7F50',
+    'gold': '#FFD700',
+    'silver': '#C0C0C0',
+    'crimson': '#DC143C',
+    'indigo': '#4B0082',
+    'violet': '#EE82EE',
+    'turquoise': '#40E0D0',
+    'salmon': '#FA8072',
+    'lavender': '#E6E6FA',
+}

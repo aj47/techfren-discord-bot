@@ -442,3 +442,123 @@ async def before_daily_summarization():
     except Exception as e:
         logger.error(f"Error in before_daily_summarization: {str(e)}", exc_info=True)
         await asyncio.sleep(60)
+
+
+# ==================== Daily Role Color Charging ====================
+
+async def process_daily_role_color_charges():
+    """
+    Process daily point charges for users with active role colors.
+    Removes colors from users who don't have enough points.
+    """
+    if not discord_client:
+        logger.error("Discord client not set. Cannot process role color charges.")
+        return
+
+    try:
+        logger.info("Starting daily role color charge processing")
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        # Get all guilds that have active role colors
+        guild_ids = database.get_all_guilds_with_role_colors()
+
+        if not guild_ids:
+            logger.info("No active role colors to process")
+            return
+
+        total_charged = 0
+        total_removed = 0
+
+        for guild_id in guild_ids:
+            # Get all active role colors for this guild
+            active_colors = database.get_all_active_role_colors(guild_id)
+
+            for color_record in active_colors:
+                author_id = color_record['author_id']
+                author_name = color_record['author_name']
+                role_id = color_record['role_id']
+                points_per_day = color_record['points_per_day']
+                last_charged = color_record['last_charged_date']
+
+                # Skip if already charged today
+                if last_charged == today_str:
+                    logger.debug(f"User {author_name} already charged today, skipping")
+                    continue
+
+                # Check if user has enough points
+                current_points = database.get_user_points(author_id, guild_id)
+
+                if current_points >= points_per_day:
+                    # Deduct points
+                    if database.deduct_user_points(author_id, guild_id, points_per_day):
+                        # Update last charged date
+                        database.update_role_color_last_charged(author_id, guild_id, today_str)
+                        total_charged += 1
+                        logger.info(f"Charged {points_per_day} points from {author_name} for color role")
+                else:
+                    # User doesn't have enough points - remove their color role
+                    logger.info(f"User {author_name} has insufficient points ({current_points} < {points_per_day}). Removing color role.")
+
+                    # Try to remove the role from Discord
+                    try:
+                        guild = discord_client.get_guild(int(guild_id))
+                        if guild:
+                            role = guild.get_role(int(role_id))
+                            if role:
+                                await role.delete(reason=f"User {author_name} ran out of points for color role")
+                                logger.info(f"Deleted role {role.name} from guild {guild.name}")
+                    except discord.Forbidden:
+                        logger.warning(f"No permission to delete role {role_id} in guild {guild_id}")
+                    except Exception as e:
+                        logger.error(f"Error deleting role: {str(e)}")
+
+                    # Remove from database
+                    database.remove_user_role_color(author_id, guild_id)
+                    total_removed += 1
+
+        logger.info(f"Daily role color charging complete. Charged: {total_charged}, Removed: {total_removed}")
+
+    except Exception as e:
+        logger.error(f"Error processing daily role color charges: {str(e)}", exc_info=True)
+
+
+@tasks.loop(hours=24)
+async def daily_role_color_charging():
+    """Scheduled task to charge users for their color roles daily."""
+    await process_daily_role_color_charges()
+
+
+@daily_role_color_charging.before_loop
+async def before_daily_role_color_charging():
+    """Wait until a specific time to start the daily role color charging task."""
+    if not discord_client:
+        logger.error("Discord client not set. Cannot start before_daily_role_color_charging.")
+        await asyncio.sleep(60)
+        return
+
+    try:
+        # Run role color charging 1 hour after the summarization
+        # This gives time for point awards to be processed first
+        summary_hour = getattr(config, 'summary_hour', 0)
+        summary_minute = getattr(config, 'summary_minute', 0)
+
+        # Add 1 hour to the summary time for color charging
+        charge_hour = (summary_hour + 1) % 24
+        charge_minute = summary_minute
+
+        logger.info(f"Daily role color charging scheduled for {charge_hour:02d}:{charge_minute:02d} UTC")
+
+        await discord_client.wait_until_ready()
+
+        now = datetime.now(timezone.utc)
+        future = datetime(now.year, now.month, now.day, charge_hour, charge_minute, tzinfo=timezone.utc)
+        if now.hour > charge_hour or (now.hour == charge_hour and now.minute >= charge_minute):
+            future += timedelta(days=1)
+
+        seconds_to_wait = (future - now).total_seconds()
+        logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first daily role color charging")
+        await asyncio.sleep(seconds_to_wait)
+    except Exception as e:
+        logger.error(f"Error in before_daily_role_color_charging: {str(e)}", exc_info=True)
+        await asyncio.sleep(60)
