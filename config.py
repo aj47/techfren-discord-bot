@@ -18,16 +18,12 @@ token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
-# Perplexity API Key (required)
-# Environment variable: PERPLEXITY_API_KEY
-perplexity = os.getenv('PERPLEXITY_API_KEY')
-if not perplexity:
-    raise ValueError("PERPLEXITY_API_KEY environment variable is required")
-
-# LLM Model Configuration (optional)
-# Environment variable: LLM_MODEL
-# Default model is "sonar" for Perplexity
-llm_model = os.getenv('LLM_MODEL', 'sonar')
+# Exa API Key (required)
+# Environment variable: EXA_API_KEY
+# Get this from: https://dashboard.exa.ai/api-keys
+exa_api_key = os.getenv('EXA_API_KEY')
+if not exa_api_key:
+    raise ValueError("EXA_API_KEY environment variable is required")
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
@@ -73,16 +69,6 @@ else:
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
-# LLM API Configuration (optional)
-# Environment variable: PERPLEXITY_BASE_URL
-# Base URL for Perplexity API (or compatible API)
-perplexity_base_url = os.getenv('PERPLEXITY_BASE_URL', 'https://api.perplexity.ai')
-
-# HTTP Headers Configuration (optional)
-# Environment variables: HTTP_REFERER, X_TITLE
-# Used in LLM API requests for tracking/identification
-http_referer = os.getenv('HTTP_REFERER', 'https://techfren.net')
-x_title = os.getenv('X_TITLE', 'TechFren Discord Bot')
 
 # Summary Command Limits
 # Maximum hours that can be requested in summary commands (7 days)

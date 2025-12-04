@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger  # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
-from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_perplexity, call_llm_with_database_context  # Import LLM functions
+from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_exa, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization  # Import summarization tasks
@@ -439,7 +439,7 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
 
 async def handle_link_summary(message: discord.Message) -> bool:
     """
-    Automatically detect non-X/Twitter URLs in messages, summarize them using Perplexity directly,
+    Automatically detect non-X/Twitter URLs in messages, summarize them using Exa,
     and reply to the message with the summary.
 
     Args:
@@ -493,9 +493,9 @@ async def handle_link_summary(message: discord.Message) -> bool:
         # Process each URL
         for url in regular_urls:
             try:
-                # Summarize the URL directly using Perplexity
-                logger.info(f"Starting to summarize URL with Perplexity: {url}")
-                summary_text = await summarize_url_with_perplexity(url)
+                # Summarize the URL directly using Exa
+                logger.info(f"Starting to summarize URL with Exa: {url}")
+                summary_text = await summarize_url_with_exa(url)
 
                 if not summary_text:
                     logger.warning(f"Failed to summarize URL: {url}")

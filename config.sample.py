@@ -11,10 +11,9 @@
 #
 # Environment variable names:
 # DISCORD_BOT_TOKEN=your_discord_bot_token
-# PERPLEXITY_API_KEY=your_perplexity_api_key
+# EXA_API_KEY=your_exa_api_key
 # FIRECRAWL_API_KEY=your_firecrawl_api_key
 # APIFY_API_TOKEN=your_apify_api_token
-# LLM_MODEL=sonar
 # RATE_LIMIT_SECONDS=10
 # MAX_REQUESTS_PER_MINUTE=6
 # SUMMARY_HOUR=0
@@ -30,13 +29,9 @@
 # Environment variable: DISCORD_BOT_TOKEN
 token = "YOUR_DISCORD_BOT_TOKEN"
 
-# Perplexity API Key (required)
-# Environment variable: PERPLEXITY_API_KEY
-perplexity = "YOUR_PERPLEXITY_API_KEY"
-
-# LLM Model Configuration (optional)
-# Environment variable: LLM_MODEL
-llm_model = "sonar"
+# Exa API Key (required)
+# Environment variable: EXA_API_KEY
+exa_api_key = "YOUR_EXA_API_KEY"
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
