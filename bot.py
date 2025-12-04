@@ -1756,6 +1756,7 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         # Assign the role to the user
         try:
             await member.add_roles(role, reason=f"Custom color set via /color-set")
+            logger.info(f"Assigned role {role.name} (position {role.position}) to {member.name}")
         except discord.Forbidden:
             await interaction.followup.send(
                 "Failed to assign the role. The bot may not have permission or the role is higher than the bot's highest role.",
