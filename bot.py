@@ -1630,8 +1630,32 @@ async def remove_color_role_from_user(guild: discord.Guild, user: discord.Member
         return False
 
 
+async def color_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """
+    Autocomplete function for color names.
+    Shows available colors that match what the user is typing.
+    """
+    import config
+    available_colors = getattr(config, 'AVAILABLE_ROLE_COLORS', {})
+
+    # Filter colors that start with or contain what the user typed
+    current_lower = current.lower()
+    matches = [
+        app_commands.Choice(name=f"{color} ({hex_code})", value=color)
+        for color, hex_code in sorted(available_colors.items())
+        if current_lower in color.lower()
+    ]
+
+    # Discord limits to 25 choices max
+    return matches[:25]
+
+
 @bot.tree.command(name="color-set", description="Set your name color (costs points per day)")
 @app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.guild_id, i.user.id))
+@app_commands.autocomplete(color=color_autocomplete)
 async def color_set_slash(interaction: discord.Interaction, color: str):
     """
     Slash command to set a custom name color.
