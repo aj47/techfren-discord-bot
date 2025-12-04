@@ -1710,19 +1710,21 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         ):
             # Rollback - remove role and refund points if DB write failed
             await member.remove_roles(role, reason="Database write failed - rollback")
-            database.add_user_points(user_id, user_name, guild_id, points_per_day)
+            database.award_points_to_user(user_id, user_name, guild_id, points_per_day)
             await interaction.followup.send(
                 "Failed to save color settings. Your points have been refunded. Please try again.",
                 ephemeral=True
             )
             return
 
-        # After all steps succeed, remove old role if user had one
+        # After all steps succeed, remove old role if user had one (but not if same role)
         if existing_color:
             old_role_id = existing_color['role_id']
-            old_role = interaction.guild.get_role(int(old_role_id))
-            if old_role and old_role in member.roles:
-                await member.remove_roles(old_role, reason="Switched to new color")
+            # Skip removal if old role is the same as the new role (same color selected)
+            if old_role_id != str(role.id):
+                old_role = interaction.guild.get_role(int(old_role_id))
+                if old_role and old_role in member.roles:
+                    await member.remove_roles(old_role, reason="Switched to new color")
 
         remaining_points = current_points - points_per_day
         await interaction.followup.send(
