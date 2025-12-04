@@ -1659,7 +1659,7 @@ def update_role_color_last_charged(author_id: str, guild_id: str, date_str: str)
 
 def deduct_user_points(author_id: str, guild_id: str, points: int) -> bool:
     """
-    Deduct points from a user's total.
+    Deduct points from a user's total using atomic operation to prevent race conditions.
 
     Args:
         author_id: The Discord user ID
@@ -1670,37 +1670,34 @@ def deduct_user_points(author_id: str, guild_id: str, points: int) -> bool:
         bool: True if successful, False otherwise
     """
     try:
+        # Validate points is positive
+        if points <= 0:
+            logger.warning(f"Cannot deduct non-positive points ({points}) from user {author_id}")
+            return False
+
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # First check if user has enough points
-            cursor.execute(
-                "SELECT total_points FROM user_points WHERE author_id = ? AND guild_id = ?",
-                (author_id, guild_id)
-            )
-
-            row = cursor.fetchone()
-            if not row:
-                logger.warning(f"User {author_id} has no points record in guild {guild_id}")
-                return False
-
-            current_points = row['total_points']
-            if current_points < points:
-                logger.warning(f"User {author_id} has insufficient points ({current_points} < {points})")
-                return False
-
-            # Deduct points
+            # Atomic update: only deduct if user has enough points
+            # This prevents race conditions where multiple concurrent requests
+            # could overdraft the user's points
             cursor.execute(
                 """
                 UPDATE user_points
                 SET total_points = total_points - ?,
                     last_updated = ?
-                WHERE author_id = ? AND guild_id = ?
+                WHERE author_id = ? AND guild_id = ? AND total_points >= ?
                 """,
-                (points, datetime.now().isoformat(), author_id, guild_id)
+                (points, datetime.now().isoformat(), author_id, guild_id, points)
             )
 
+            rows_affected = cursor.rowcount
             conn.commit()
+
+        if rows_affected == 0:
+            # Either user doesn't exist or has insufficient points
+            logger.warning(f"Could not deduct {points} points from user {author_id} in guild {guild_id} (insufficient points or user not found)")
+            return False
 
         logger.info(f"Deducted {points} points from user {author_id} in guild {guild_id}")
         return True

@@ -1,6 +1,7 @@
 # This example requires the 'message_content' intent.
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import re
@@ -659,6 +660,33 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
     except Exception as e:
         logger.error(f"Error handling links dump channel message {message.id}: {e}", exc_info=True)
         return False
+
+
+# Global error handler for app commands (slash commands)
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handle errors from app commands, including cooldowns."""
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await interaction.response.send_message(
+            f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f} seconds.",
+            ephemeral=True
+        )
+    else:
+        logger.error(f"App command error: {error}", exc_info=True)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "An error occurred while processing your command.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "An error occurred while processing your command.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass
+
 
 @bot.event
 async def on_ready():
@@ -1603,9 +1631,11 @@ async def remove_color_role_from_user(guild: discord.Guild, user: discord.Member
 
 
 @bot.tree.command(name="color-set", description="Set your name color (costs points per day)")
+@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.guild_id, i.user.id))
 async def color_set_slash(interaction: discord.Interaction, color: str):
     """
     Slash command to set a custom name color.
+    Rate limited to 1 use per 30 seconds per user per guild.
 
     Args:
         interaction: The Discord interaction
@@ -1749,9 +1779,11 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
 
 
 @bot.tree.command(name="color-remove", description="Remove your custom name color")
+@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.guild_id, i.user.id))
 async def color_remove_slash(interaction: discord.Interaction):
     """
     Slash command to remove a custom name color.
+    Rate limited to 1 use per 30 seconds per user per guild.
 
     Args:
         interaction: The Discord interaction

@@ -107,7 +107,12 @@ ERROR_MESSAGES = {
 
 # Role Color Configuration
 # Points cost per day to maintain a custom role color
-ROLE_COLOR_POINTS_PER_DAY = int(os.getenv('ROLE_COLOR_POINTS_PER_DAY', '1'))
+try:
+    ROLE_COLOR_POINTS_PER_DAY = int(os.getenv('ROLE_COLOR_POINTS_PER_DAY', '1'))
+    if ROLE_COLOR_POINTS_PER_DAY < 1:
+        ROLE_COLOR_POINTS_PER_DAY = 1  # Minimum 1 point per day
+except (ValueError, TypeError):
+    ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
 
 # Available colors for role customization
 # Format: {color_name: hex_value}
