@@ -501,22 +501,46 @@ async def process_daily_role_color_charges():
                     logger.info(f"User {author_name} has insufficient points ({current_points} < {points_per_day}). Removing color role.")
 
                     # Try to remove the role from the user (don't delete the shared role)
+                    # Track whether we should delete the DB record
+                    should_delete_db_record = False
+                    role_removed_successfully = False
+
                     try:
                         guild = discord_client.get_guild(int(guild_id))
                         if guild:
                             role = guild.get_role(int(role_id))
                             member = guild.get_member(int(author_id))
-                            if role and member and role in member.roles:
+
+                            if not member or not role:
+                                # Member left server or role was manually deleted - cleanup orphaned record
+                                should_delete_db_record = True
+                                logger.info(f"Member or role no longer exists (member={member is not None}, role={role is not None}). Cleaning up orphaned DB record.")
+                            elif role in member.roles:
                                 await member.remove_roles(role, reason=f"User {author_name} ran out of points for color role")
                                 logger.info(f"Removed role {role.name} from user {author_name}")
+                                role_removed_successfully = True
+                                should_delete_db_record = True
+                            else:
+                                # Role exists but user doesn't have it - cleanup DB record
+                                should_delete_db_record = True
+                                logger.info(f"User {author_name} doesn't have the color role. Cleaning up DB record.")
+                        else:
+                            # Guild doesn't exist - cleanup orphaned record
+                            should_delete_db_record = True
+                            logger.info(f"Guild {guild_id} no longer exists. Cleaning up orphaned DB record.")
                     except discord.Forbidden:
-                        logger.warning(f"No permission to remove role {role_id} from user in guild {guild_id}")
+                        # Permission error - keep DB record to retry later
+                        logger.warning(f"No permission to remove role {role_id} from user in guild {guild_id}. Will retry next day.")
+                        should_delete_db_record = False
                     except Exception as e:
                         logger.error(f"Error removing role from user: {str(e)}")
+                        # For other errors, don't delete DB record to be safe
+                        should_delete_db_record = False
 
-                    # Remove from database
-                    database.remove_user_role_color(author_id, guild_id)
-                    total_removed += 1
+                    # Only remove from database if appropriate
+                    if should_delete_db_record:
+                        database.remove_user_role_color(author_id, guild_id)
+                        total_removed += 1
 
         logger.info(f"Daily role color charging complete. Charged: {total_charged}, Removed: {total_removed}")
 
