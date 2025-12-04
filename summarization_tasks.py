@@ -500,18 +500,19 @@ async def process_daily_role_color_charges():
                     # User doesn't have enough points - remove their color role
                     logger.info(f"User {author_name} has insufficient points ({current_points} < {points_per_day}). Removing color role.")
 
-                    # Try to remove the role from Discord
+                    # Try to remove the role from the user (don't delete the shared role)
                     try:
                         guild = discord_client.get_guild(int(guild_id))
                         if guild:
                             role = guild.get_role(int(role_id))
-                            if role:
-                                await role.delete(reason=f"User {author_name} ran out of points for color role")
-                                logger.info(f"Deleted role {role.name} from guild {guild.name}")
+                            member = guild.get_member(int(author_id))
+                            if role and member and role in member.roles:
+                                await member.remove_roles(role, reason=f"User {author_name} ran out of points for color role")
+                                logger.info(f"Removed role {role.name} from user {author_name}")
                     except discord.Forbidden:
-                        logger.warning(f"No permission to delete role {role_id} in guild {guild_id}")
+                        logger.warning(f"No permission to remove role {role_id} from user in guild {guild_id}")
                     except Exception as e:
-                        logger.error(f"Error deleting role: {str(e)}")
+                        logger.error(f"Error removing role from user: {str(e)}")
 
                     # Remove from database
                     database.remove_user_role_color(author_id, guild_id)

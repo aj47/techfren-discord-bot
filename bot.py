@@ -1525,24 +1525,23 @@ async def ask_slash(interaction: discord.Interaction, question: str, hours: int 
 
 # ==================== Role Color Commands ====================
 
-async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_hex: str, user: discord.Member) -> Optional[discord.Role]:
+async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_hex: str) -> Optional[discord.Role]:
     """
-    Get or create a personal color role for a user.
+    Get or create a shared color role.
 
     Args:
         guild: The Discord guild
         color_name: Name of the color
         color_hex: Hex color code
-        user: The user to create the role for
 
     Returns:
         The created/found role, or None on failure
     """
     try:
-        # Role name format: "color-username" to make it unique per user
-        role_name = f"color-{user.name}"
+        # Role name format: "color-{colorname}" - shared by all users with this color
+        role_name = f"color-{color_name}"
 
-        # Check if user already has a color role
+        # Check if role already exists
         existing_role = discord.utils.get(guild.roles, name=role_name)
 
         # Convert hex to discord.Color
@@ -1550,17 +1549,17 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         discord_color = discord.Color(color_int)
 
         if existing_role:
-            # Update the existing role's color
-            await existing_role.edit(color=discord_color, reason=f"Color changed to {color_name} by {user.name}")
-            logger.info(f"Updated existing role {role_name} to color {color_name}")
+            # Ensure the color is correct (in case it was changed)
+            if existing_role.color != discord_color:
+                await existing_role.edit(color=discord_color, reason=f"Correcting color for {color_name}")
+                logger.info(f"Updated existing role {role_name} color")
             return existing_role
 
         # Create a new role
-        # Position it just above @everyone but below other roles
         new_role = await guild.create_role(
             name=role_name,
             color=discord_color,
-            reason=f"Custom color role for {user.name}"
+            reason=f"Shared color role for {color_name}"
         )
 
         logger.info(f"Created new color role {role_name} with color {color_name}")
@@ -1574,32 +1573,32 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         return None
 
 
-async def remove_color_role_from_user(guild: discord.Guild, user: discord.Member) -> bool:
+async def remove_color_role_from_user(guild: discord.Guild, user: discord.Member, role_id: str) -> bool:
     """
-    Remove a user's color role and delete it.
+    Remove a color role from a user (does not delete the role).
 
     Args:
         guild: The Discord guild
         user: The user to remove the role from
+        role_id: The role ID to remove
 
     Returns:
         True if successful, False otherwise
     """
     try:
-        role_name = f"color-{user.name}"
-        role = discord.utils.get(guild.roles, name=role_name)
+        role = guild.get_role(int(role_id))
 
-        if role:
-            await role.delete(reason=f"Color role removed by {user.name}")
-            logger.info(f"Deleted color role {role_name}")
+        if role and role in user.roles:
+            await user.remove_roles(role, reason=f"Color role removed by {user.name}")
+            logger.info(f"Removed color role {role.name} from user {user.name}")
             return True
         return False
 
     except discord.Forbidden:
-        logger.error(f"Bot lacks permission to delete roles in guild {guild.id}")
+        logger.error(f"Bot lacks permission to remove roles in guild {guild.id}")
         return False
     except Exception as e:
-        logger.error(f"Error removing color role: {str(e)}", exc_info=True)
+        logger.error(f"Error removing color role from user: {str(e)}", exc_info=True)
         return False
 
 
@@ -1667,7 +1666,15 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             )
             return
 
-        role = await get_or_create_color_role(interaction.guild, color_lower, color_hex, member)
+        # Check if user already has an active color and remove old role first
+        existing_color = database.get_user_role_color(user_id, guild_id)
+        if existing_color:
+            old_role_id = existing_color['role_id']
+            old_role = interaction.guild.get_role(int(old_role_id))
+            if old_role and old_role in member.roles:
+                await member.remove_roles(old_role, reason="Switching to new color")
+
+        role = await get_or_create_color_role(interaction.guild, color_lower, color_hex)
 
         if not role:
             await interaction.followup.send(
@@ -1766,8 +1773,9 @@ async def color_remove_slash(interaction: discord.Interaction):
         if not isinstance(member, discord.Member):
             member = interaction.guild.get_member(interaction.user.id)
 
-        # Remove the role
-        await remove_color_role_from_user(interaction.guild, member)
+        # Remove the role from user (role is shared, so don't delete it)
+        role_id = color_info['role_id']
+        await remove_color_role_from_user(interaction.guild, member, role_id)
 
         # Remove from database
         database.remove_user_role_color(user_id, guild_id)
