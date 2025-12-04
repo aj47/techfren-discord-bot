@@ -1576,11 +1576,26 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
         color_int = int(color_hex.lstrip('#'), 16)
         discord_color = discord.Color(color_int)
 
+        # Get the bot's highest role position to place color roles just below it
+        bot_member = guild.me
+        bot_top_role_position = bot_member.top_role.position if bot_member else 1
+        # Place color roles at position 1 below the bot's top role (or at least position 1)
+        target_position = max(1, bot_top_role_position - 1)
+
         if existing_role:
             # Ensure the color is correct (in case it was changed)
             if existing_role.color != discord_color:
                 await existing_role.edit(color=discord_color, reason=f"Correcting color for {color_name}")
                 logger.info(f"Updated existing role {role_name} color")
+
+            # Ensure the role is positioned high enough to show the color
+            if existing_role.position < target_position:
+                try:
+                    await existing_role.edit(position=target_position, reason="Moving color role higher in hierarchy")
+                    logger.info(f"Moved existing role {role_name} to position {target_position}")
+                except discord.Forbidden:
+                    logger.warning(f"Could not move role {role_name} - may lack permissions")
+
             return existing_role
 
         # Create a new role
@@ -1590,7 +1605,13 @@ async def get_or_create_color_role(guild: discord.Guild, color_name: str, color_
             reason=f"Shared color role for {color_name}"
         )
 
-        logger.info(f"Created new color role {role_name} with color {color_name}")
+        # Move the new role higher in the hierarchy so the color is visible
+        try:
+            await new_role.edit(position=target_position, reason="Positioning color role for visibility")
+            logger.info(f"Created new color role {role_name} at position {target_position}")
+        except discord.Forbidden:
+            logger.warning(f"Created role {role_name} but could not move it - color may not show")
+
         return new_role
 
     except discord.Forbidden:
