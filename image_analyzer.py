@@ -1,9 +1,13 @@
 """
-Image analysis module using Perplexity Sonar (multimodal) API.
+Image analysis module.
 
-This module analyzes images from Discord attachments using Perplexity's
-Sonar models to generate descriptive text that can be included in
-message summaries.
+NOTE: Image analysis has been disabled after migrating from Perplexity to Exa.
+Exa does not support multimodal image analysis. To re-enable image analysis,
+configure a separate vision-capable LLM API (e.g., OpenAI GPT-4 Vision, Claude, etc.)
+and update this module accordingly.
+
+This module previously analyzed images from Discord attachments using Perplexity's
+Sonar models to generate descriptive text that can be included in message summaries.
 """
 
 import base64
@@ -11,23 +15,16 @@ import logging
 from typing import Optional, List, Dict, Any
 
 import aiohttp
-from openai import AsyncOpenAI
 import config
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Initialize Perplexity client for image analysis if API key is configured
-perplexity_client: Optional[AsyncOpenAI] = None
-if getattr(config, "perplexity", None):
-    perplexity_client = AsyncOpenAI(
-        base_url=getattr(config, "perplexity_base_url", "https://api.perplexity.ai"),
-        api_key=config.perplexity,
-        timeout=60.0,
-    )
-    logger.info("Perplexity Sonar image analysis client initialized")
-else:
-    logger.warning("Perplexity API key not configured - image analysis will be disabled")
+# Image analysis is currently disabled after migration from Perplexity to Exa
+# Exa does not support multimodal image analysis
+# TODO: Re-enable with a vision-capable LLM API (OpenAI GPT-4V, Claude Vision, etc.)
+image_analysis_client = None
+logger.info("Image analysis is disabled - Exa does not support multimodal image analysis")
 
 # Supported image formats
 SUPPORTED_IMAGE_TYPES = {
@@ -94,7 +91,10 @@ def is_supported_image(content_type: str) -> bool:
 
 async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "image") -> Optional[str]:
     """
-    Analyze an image using Perplexity Sonar multimodal models.
+    Analyze an image using a multimodal LLM.
+
+    NOTE: Image analysis is currently disabled after migrating to Exa.
+    Exa does not support multimodal image analysis.
 
     Args:
         image_bytes: The image data as bytes
@@ -102,78 +102,21 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
         filename: Optional filename for context
 
     Returns:
-        Descriptive text about the image, or None if analysis failed
+        Descriptive text about the image, or None if analysis failed/disabled
     """
-    if not perplexity_client:
-        logger.warning("Cannot analyze image: Perplexity API client not initialized")
+    # Image analysis is disabled - Exa does not support multimodal
+    if not image_analysis_client:
+        logger.debug("Image analysis is disabled - skipping image analysis")
         return None
 
     if not is_supported_image(content_type):
         logger.warning(f"Unsupported image type: {content_type}")
         return None
 
-    try:
-        # Convert to base64 and build a data URI for the Perplexity API
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-        mime_type = content_type.lower()
-        if mime_type == "image/jpg":
-            mime_type = "image/jpeg"
-        data_uri = f"data:{mime_type};base64,{image_base64}"
-
-        prompt = (
-            "Please provide a clear, concise description of this image. "
-            "Focus on the main subject, key details, any visible text, and relevant context. "
-            "Keep it informative but brief (2-3 sentences)."
-        )
-
-        # Choose a model for image analysis (defaults to sonar-pro if not configured)
-        model = getattr(config, "image_llm_model", getattr(config, "llm_model", "sonar-pro"))
-
-        completion = await perplexity_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
-                "X-Title": getattr(config, "x_title", "TechFren Discord Bot"),
-            },
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": data_uri},
-                        },
-                    ],
-                }
-            ],
-            max_tokens=300,
-            temperature=0.2,
-        )
-
-        description = completion.choices[0].message.content
-
-        # Perplexity responses are typically plain text, but handle list-of-parts just in case
-        if isinstance(description, list):
-            parts = []
-            for part in description:
-                part_type = getattr(part, "type", None) if not isinstance(part, dict) else part.get("type")
-                if part_type == "text":
-                    text_val = part.get("text") if isinstance(part, dict) else getattr(part, "text", "")
-                    if text_val:
-                        parts.append(text_val)
-            description = " ".join(parts)
-
-        if not description:
-            logger.warning(f"No content in Perplexity response for {filename}")
-            return None
-
-        logger.info(f"Successfully analyzed image with Perplexity: {filename}")
-        return str(description).strip()
-
-    except Exception as e:
-        logger.exception(f"Error analyzing image {filename} with Perplexity: {e}")
-        return None
+    # TODO: Implement image analysis with a vision-capable LLM
+    # (OpenAI GPT-4 Vision, Claude Vision, etc.)
+    logger.debug(f"Image analysis not implemented: {filename}")
+    return None
 
 
 async def analyze_discord_attachment(attachment) -> Optional[Dict[str, Any]]:
@@ -231,7 +174,7 @@ async def analyze_message_images(message) -> List[Dict[str, Any]]:
         List of analysis results for each image attachment
     """
     # Skip processing if image analysis is not configured
-    if perplexity_client is None:
+    if image_analysis_client is None:
         return []
 
     if not hasattr(message, 'attachments') or not message.attachments:

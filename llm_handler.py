@@ -1,8 +1,8 @@
-from openai import AsyncOpenAI
+from exa_py import Exa
 from logging_config import logger
 import config  # Assuming config.py is in the same directory or accessible
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import asyncio
 import re
 from datetime import timezone
@@ -10,6 +10,16 @@ from message_utils import generate_discord_message_link, is_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
 from gif_utils import is_gif_url, is_discord_emoji_url
+
+# Initialize the Exa client
+_exa_client: Optional[Exa] = None
+
+def get_exa_client() -> Exa:
+    """Get or create the Exa client singleton."""
+    global _exa_client
+    if _exa_client is None:
+        _exa_client = Exa(api_key=config.exa_api_key)
+    return _exa_client
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -90,9 +100,20 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error scraping URL on-demand {url}: {str(e)}", exc_info=True)
         return None
 
+def _extract_exa_citations(citations: List) -> List[str]:
+    """Extract URLs from Exa citation objects."""
+    if not citations:
+        return []
+    urls = []
+    for citation in citations:
+        if hasattr(citation, 'url') and citation.url:
+            urls.append(citation.url)
+    return urls
+
+
 async def call_llm_api(query, message_context=None):
     """
-    Call the LLM API with the user's query and return the response
+    Call the Exa API with the user's query and return the response
 
     Args:
         query (str): The user's query text
@@ -102,23 +123,16 @@ async def call_llm_api(query, message_context=None):
         str: The LLM's response or an error message
     """
     try:
-        logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
+        logger.info(f"Calling Exa API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
+        # Check if Exa API key exists
+        if not hasattr(config, 'exa_api_key') or not config.exa_api_key:
+            logger.error("Exa API key not found in config.py or is empty")
+            return "Error: Exa API key is missing. Please contact the bot administrator."
 
-# Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-        
-        # Get the model from config or use default (Perplexity models)
-        model = getattr(config, 'llm_model', "sonar")
-        
+        # Get the Exa client
+        exa = get_exa_client()
+
         # Prepare the user content with message context if available
         user_content = query
         if message_context:
@@ -133,7 +147,7 @@ async def call_llm_api(query, message_context=None):
                 ref_timestamp = getattr(ref_msg, 'created_at', None)
                 ref_time_str = ref_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if ref_timestamp else "Unknown time"
 
-                context_parts.append(f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}")
+                context_parts.append(f"Referenced Message (Reply):\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}")
 
             # Add linked messages context
             if message_context.get('linked_messages'):
@@ -144,28 +158,28 @@ async def call_llm_api(query, message_context=None):
                     linked_timestamp = getattr(linked_msg, 'created_at', None)
                     linked_time_str = linked_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if linked_timestamp else "Unknown time"
 
-                    context_parts.append(f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}")
+                    context_parts.append(f"Linked Message {i+1}:\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}")
 
             if context_parts:
                 context_text = "\n\n".join(context_parts)
-                user_content = f"{context_text}\n\n**User's Question/Request:**\n{query}"
-                logger.debug(f"Added message context to LLM prompt: {len(context_parts)} context message(s)")
+                user_content = f"{context_text}\n\nUser's Question/Request:\n{query}"
+                logger.debug(f"Added message context to Exa prompt: {len(context_parts)} context message(s)")
 
         # Check for URLs in the query and message context, add scraped content if available
         urls_in_query = extract_urls_from_text(query)
-        
+
         # Also check for URLs in message context (referenced messages, linked messages)
         context_urls = []
         if message_context:
             if message_context.get('referenced_message'):
                 ref_content = getattr(message_context['referenced_message'], 'content', '')
                 context_urls.extend(extract_urls_from_text(ref_content))
-            
+
             if message_context.get('linked_messages'):
                 for linked_msg in message_context['linked_messages']:
                     linked_content = getattr(linked_msg, 'content', '')
                     context_urls.extend(extract_urls_from_text(linked_content))
-        
+
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
 
@@ -175,15 +189,15 @@ async def call_llm_api(query, message_context=None):
             filtered_urls = []
             for url in all_urls:
                 if is_gif_url(url):
-                    logger.info(f"Skipping GIF URL in LLM URL scraping: {url}")
+                    logger.info(f"Skipping GIF URL in Exa URL scraping: {url}")
                     continue
 
                 if is_discord_emoji_url(url):
-                    logger.info(f"Skipping Discord emoji/image URL in LLM URL scraping: {url}")
+                    logger.info(f"Skipping Discord emoji/image URL in Exa URL scraping: {url}")
                     continue
 
                 if is_discord_message_link(url):
-                    logger.info(f"Skipping Discord message link in LLM URL scraping: {url}")
+                    logger.info(f"Skipping Discord message link in Exa URL scraping: {url}")
                     continue
 
                 filtered_urls.append(url)
@@ -197,7 +211,7 @@ async def call_llm_api(query, message_context=None):
                     scraped_content = await asyncio.to_thread(get_scraped_content_by_url, url)
                     if scraped_content:
                         logger.info(f"Found scraped content for URL: {url}")
-                        content_section = f"**Scraped Content for {url}:**\n"
+                        content_section = f"Scraped Content for {url}:\n"
                         content_section += f"Summary: {scraped_content['summary']}\n"
                         if scraped_content['key_points']:
                             content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
@@ -208,7 +222,7 @@ async def call_llm_api(query, message_context=None):
                         scraped_content = await scrape_url_on_demand(url)
                         if scraped_content:
                             logger.info(f"Successfully scraped content for URL: {url}")
-                            content_section = f"**Scraped Content for {url}:**\n"
+                            content_section = f"Scraped Content for {url}:\n"
                             content_section += f"Summary: {scraped_content['summary']}\n"
                             if scraped_content['key_points']:
                                 content_section += f"Key Points: {', '.join(scraped_content['key_points'])}\n"
@@ -225,63 +239,51 @@ async def call_llm_api(query, message_context=None):
                     user_content = f"{scraped_content_text}\n\n{user_content}"
                 else:
                     # If no message context, add scraped content before the query
-                    user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
-                logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
+                    user_content = f"{scraped_content_text}\n\nUser's Question/Request:\n{query}"
+                logger.debug(f"Added scraped content to Exa prompt: {len(scraped_content_parts)} URL(s) with content")
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),  # Optional site URL
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),  # Optional site title
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
-                    Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
-                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
-                    When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant. \
-                    IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. \
-                    Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables. \
-                    Wide tables or tables with long content will be automatically reformatted into a card-style vertical layout for better mobile readability. \
-                    CRITICAL:Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            max_tokens=1000,  # Increased for better responses
-            temperature=0.7
+        # Build the full query for Exa with context
+        # Exa's answer() method handles web search internally
+        full_query = f"""You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
+Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly.
+Keep tables simple with 2-3 columns max. For complex comparisons, use a list format instead of tables.
+Never wrap large parts of your response in markdown code blocks. Only use code blocks for specific code snippets.
+
+{user_content}"""
+
+        # Make the API request using Exa's answer() method
+        # Run in thread since Exa SDK is synchronous
+        response = await asyncio.to_thread(
+            exa.answer,
+            full_query,
+            text=True  # Include full citation text
         )
 
-        # Extract the response
-        message = completion.choices[0].message.content
+        # Extract the answer
+        message = response.answer
 
-        # Check if Perplexity returned citations
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity")
-            citations = completion.citations
+        # Extract citations as URLs for the formatter
+        citations = _extract_exa_citations(response.citations) if response.citations else None
+        if citations:
+            logger.info(f"Found {len(citations)} citations from Exa")
 
         # Apply Discord formatting enhancements
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
         formatted_message = DiscordFormatter.format_llm_response(message, citations)
-        
-        logger.info(f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
+
+        logger.info(f"Exa API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
         return formatted_message
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out")
+        logger.error("Exa API request timed out")
         return "Sorry, the request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
+        logger.error(f"Error calling Exa API: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while processing your request. Please try again later."
 
 async def call_llm_for_summary(messages, channel_name, date, hours=24):
     """
-    Call the LLM API to summarize a list of messages from a channel
+    Call the Exa API to summarize a list of messages from a channel
 
     Args:
         messages (list): List of message dictionaries
@@ -399,7 +401,9 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        prompt = f"""Summarize the #{channel_name} channel for the past {time_period}. Extract SIGNAL from noise.
+        prompt = f"""You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). Never use markdown code blocks. Use plain text with bold and headers.
+
+Summarize the #{channel_name} channel for the past {time_period}. Extract SIGNAL from noise.
 
 PRIORITIZE (in order):
 1. New tech news, product launches, announcements
@@ -427,53 +431,32 @@ Format: [Title](link) - why it matters - `username` TIMESTAMP
 - Use the <t:unix:t> timestamp format from the messages when available.
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
-        
-        logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
+        logger.info(f"Calling Exa API for channel summary: #{channel_name} for the past {time_period}")
 
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
+        # Check if Exa API key exists
+        if not hasattr(config, 'exa_api_key') or not config.exa_api_key:
+            logger.error("Exa API key not found in config.py or is empty")
+            return "Error: Exa API key is missing. Please contact the bot administrator."
 
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
+        # Get the Exa client
+        exa = get_exa_client()
 
-        # Make the API request with a higher token limit for summaries
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). Search the web for context on shared links when helpful. CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=2500,  # Increased for very detailed summaries with extensive web context
-            temperature=0.5   # Lower temperature for more focused summaries
+        # Make the API request using Exa's answer() method
+        # Run in thread since Exa SDK is synchronous
+        response = await asyncio.to_thread(
+            exa.answer,
+            prompt,
+            text=True  # Include full citation text
         )
 
         # Extract the response
-        summary = completion.choices[0].message.content
+        summary = response.answer
 
-        # Check if Perplexity returned citations
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity for summary")
-            citations = completion.citations
+        # Extract citations as URLs for the formatter
+        citations = _extract_exa_citations(response.citations) if response.citations else None
+        if citations:
+            logger.info(f"Found {len(citations)} citations from Exa for summary")
 
         # Apply Discord formatting enhancements to the summary
         # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
@@ -482,23 +465,22 @@ Skip sections if nothing noteworthy. No fluff. No introductions. Start directly 
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
 
-        logger.info(f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
+        logger.info(f"Exa API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
 
         return formatted_summary
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during summary generation")
+        logger.error("Exa API request timed out during summary generation")
         return "Sorry, the summary request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
+        logger.error(f"Error calling Exa API for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
-async def summarize_url_with_perplexity(url: str) -> Optional[str]:
-    """Scrape a URL with Firecrawl and summarize its content with Perplexity.
+async def summarize_url_with_exa(url: str) -> Optional[str]:
+    """Scrape a URL with Firecrawl and summarize its content with Exa.
 
-    This function no longer relies on Perplexity to fetch the URL directly.
-    Instead, it uses Firecrawl to retrieve the page content and then calls
-    :func:`summarize_scraped_content` to have Perplexity summarize that text.
+    This function uses Firecrawl to retrieve the page content and then calls
+    :func:`summarize_scraped_content` to have Exa summarize that text.
 
     Args:
         url (str): The URL to scrape and summarize.
@@ -511,14 +493,14 @@ async def summarize_url_with_perplexity(url: str) -> Optional[str]:
         # Import here to avoid circular imports
         from firecrawl_handler import scrape_url_content
 
-        logger.info(f"Scraping URL with Firecrawl for Perplexity summarization: {url}")
+        logger.info(f"Scraping URL with Firecrawl for Exa summarization: {url}")
         markdown_content = await scrape_url_content(url)
 
         if not markdown_content:
             logger.warning(f"No content scraped for URL: {url}")
             return None
 
-        # Summarize the scraped content using Perplexity as a pure text model
+        # Summarize the scraped content using Exa
         summary_text = await summarize_scraped_content(markdown_content, url)
         if not summary_text:
             logger.warning(f"Failed to summarize scraped content for URL: {url}")
@@ -527,12 +509,16 @@ async def summarize_url_with_perplexity(url: str) -> Optional[str]:
         return summary_text
 
     except Exception as e:
-        logger.error(f"Error scraping/summarizing URL {url} with Firecrawl + Perplexity: {str(e)}", exc_info=True)
+        logger.error(f"Error scraping/summarizing URL {url} with Firecrawl + Exa: {str(e)}", exc_info=True)
         return None
+
+
+# Keep the old name as an alias for backward compatibility
+summarize_url_with_perplexity = summarize_url_with_exa
 
 async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
     """
-    Call the LLM API to summarize scraped content from a URL.
+    Call the Exa API to summarize scraped content from a URL.
 
     Args:
         markdown_content (str): The scraped content in markdown format
@@ -550,23 +536,18 @@ async def summarize_scraped_content(markdown_content: str, url: str) -> Optional
 
         logger.info(f"Summarizing content from URL: {url}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
+        # Check if Exa API key exists
+        if not hasattr(config, 'exa_api_key') or not config.exa_api_key:
+            logger.error("Exa API key not found in config.py or is empty")
             return None
 
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
+        # Get the Exa client
+        exa = get_exa_client()
 
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
+        # Create the prompt for Exa
+        prompt = f"""You are a helpful assistant that summarizes web content concisely. Create brief summaries with bullet points. Do not use JSON format. Respond with plain text only. Never wrap your response in a markdown code block. Use plain text with inline formatting only.
 
-        # Create the prompt for the LLM
-        prompt = f"""Analyze and summarize this content from {url}:
+Analyze and summarize this content from {url}:
 
 {truncated_content}
 
@@ -575,30 +556,17 @@ Format your response as plain text with bullet points (use - for bullets).
 Do not include an introductory paragraph or title.
 Keep the summary brief and focused on the most important information."""
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that summarizes web content concisely. Create brief summaries with bullet points. Do not use JSON format. Respond with plain text only. CRITICAL: Never wrap your response in a markdown code block (```). Use plain text with inline formatting only."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=500,  # Enough for a concise summary with key points
-            temperature=0.3   # Lower temperature for more focused and consistent summaries
+        # Make the API request using Exa's answer() method
+        # Run in thread since Exa SDK is synchronous
+        response = await asyncio.to_thread(
+            exa.answer,
+            prompt,
+            text=True  # Include full citation text
         )
 
         # Extract the response
-        response_text = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+        response_text = response.answer
+        logger.info(f"Exa API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
         # Clean up the response
         cleaned_response = response_text.strip()
@@ -621,7 +589,7 @@ Keep the summary brief and focused on the most important information."""
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error(f"LLM API request timed out while summarizing content from URL {url}")
+        logger.error(f"Exa API request timed out while summarizing content from URL {url}")
         return None
     except Exception as e:
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
@@ -629,7 +597,7 @@ Keep the summary brief and focused on the most important information."""
 
 async def analyze_messages_for_points(messages, max_points=50):
     """
-    Call the LLM API to analyze messages and determine point awards based on community value.
+    Call the Exa API to analyze messages and determine point awards based on community value.
 
     Args:
         messages (list): List of message dictionaries with author_id, author_name, content
@@ -688,7 +656,9 @@ async def analyze_messages_for_points(messages, max_points=50):
             messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
 
         # Create the prompt for point analysis
-        prompt = f"""Analyze the following Discord messages from the past 24 hours and award points to users based on their contributions to the community. The total pool is {max_points} points per day.
+        prompt = f"""You are an AI that analyzes Discord community contributions and awards points fairly. You have a daily pool of {max_points} points to distribute based on value provided to the community. Be discerning - only award points for genuine contributions. Respond with valid JSON only.
+
+Analyze the following Discord messages from the past 24 hours and award points to users based on their contributions to the community. The total pool is {max_points} points per day.
 
 Award points based on:
 - Being supportive and helpful to other members
@@ -750,47 +720,27 @@ Respond with a JSON object in this exact format:
 
 Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions. Be strict about gaming detection."""
 
-        logger.info(f"Calling LLM API for point analysis of {len(messages)} messages")
+        logger.info(f"Calling Exa API for point analysis of {len(messages)} messages")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
+        # Check if Exa API key exists
+        if not hasattr(config, 'exa_api_key') or not config.exa_api_key:
+            logger.error("Exa API key not found in config.py or is empty")
             return None
 
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
+        # Get the Exa client
+        exa = get_exa_client()
 
-        # Get the model from config
-        model = getattr(config, 'llm_model', "sonar")
-
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"You are an AI that analyzes Discord community contributions and awards points fairly. You have a daily pool of {max_points} points to distribute based on value provided to the community. Be discerning - only award points for genuine contributions. Respond with valid JSON only."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=1500,
-            temperature=0.3  # Lower temperature for more consistent analysis
+        # Make the API request using Exa's answer() method
+        # Run in thread since Exa SDK is synchronous
+        response = await asyncio.to_thread(
+            exa.answer,
+            prompt,
+            text=True  # Include full citation text
         )
 
         # Extract the response
-        response_text = completion.choices[0].message.content
-        logger.info(f"LLM point analysis received: {response_text[:100]}...")
+        response_text = response.answer
+        logger.info(f"Exa point analysis received: {response_text[:100]}...")
 
         # Parse the JSON response
         try:
@@ -919,10 +869,10 @@ async def call_llm_with_database_context(
         str: The LLM's response
     """
     try:
-        logger.info(f"Calling LLM with database context for query: {query[:50]}...")
+        logger.info(f"Calling Exa with database context for query: {query[:50]}...")
 
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found")
+        if not hasattr(config, 'exa_api_key') or not config.exa_api_key:
+            logger.error("Exa API key not found")
             return "Error: API key is missing. Please contact the bot administrator."
 
         # Format the messages as context
@@ -978,21 +928,17 @@ async def call_llm_with_database_context(
         if len(context_text) > max_context_length:
             context_text = context_text[:max_context_length] + "\n\n[Context truncated due to length...]"
 
-        # Initialize the client
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-
-        model = getattr(config, 'llm_model', "sonar")
+        # Get the Exa client
+        exa = get_exa_client()
 
         # Build the prompt
-        user_prompt = f"""Based on the following Discord conversation history from our tech community, please answer this question:
+        prompt = f"""You are an assistant for the TechFren Discord community. You help users find information from past conversations. Be direct and concise. When referencing messages, include the username and the [Source](link) markdown link provided with each message so users can click to see the original. Never use markdown code blocks. Use plain text with inline formatting.
 
-**Question:** {query}
+Based on the following Discord conversation history from our tech community, please answer this question:
 
-**Conversation History:**
+Question: {query}
+
+Conversation History:
 {context_text}
 
 Instructions:
@@ -1003,41 +949,28 @@ Instructions:
 - Be concise and direct
 - If multiple people discussed the topic, summarize their different perspectives"""
 
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an assistant for the TechFren Discord community. You help users find information from past conversations. Be direct and concise. When referencing messages, include the username and the [Source](link) markdown link provided with each message so users can click to see the original. CRITICAL: Never use markdown code blocks (```). Use plain text with inline formatting."
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            max_tokens=1500,
-            temperature=0.5
+        # Make the API request using Exa's answer() method
+        # Run in thread since Exa SDK is synchronous
+        response = await asyncio.to_thread(
+            exa.answer,
+            prompt,
+            text=True  # Include full citation text
         )
 
-        response = completion.choices[0].message.content
+        response_text = response.answer
 
         # Handle citations if available
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations")
-            citations = completion.citations
+        citations = _extract_exa_citations(response.citations) if response.citations else None
+        if citations:
+            logger.info(f"Found {len(citations)} citations from Exa")
 
-        formatted_response = DiscordFormatter.format_llm_response(response, citations)
+        formatted_response = DiscordFormatter.format_llm_response(response_text, citations)
         logger.info(f"Database context query answered successfully")
 
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during database context query")
+        logger.error("Exa API request timed out during database context query")
         return "Sorry, the request timed out. Please try again."
     except Exception as e:
         logger.error(f"Error answering query with database context: {str(e)}", exc_info=True)

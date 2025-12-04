@@ -209,38 +209,39 @@ class TestMessageReferenceIntegration:
         
         query = "What do these messages say?"
         
-        # Mock the Perplexity client
-        mock_completion = Mock()
-        mock_completion.choices = [Mock()]
-        mock_completion.choices[0].message.content = "Test response"
-        
-        with patch('llm_handler.OpenAI') as mock_openai_class, \
-             patch('llm_handler.config') as mock_config:
-            
-            mock_config.perplexity = "test-key"
-            mock_config.llm_model = "test-model"
-            
-            mock_client = Mock()
-            mock_client.chat.completions.create.return_value = mock_completion
-            mock_openai_class.return_value = mock_client
-            
+        # Mock the Exa client
+        mock_response = Mock()
+        mock_response.answer = "Test response"
+        mock_response.citations = []
+
+        with patch('llm_handler.get_exa_client') as mock_get_exa, \
+             patch('llm_handler.config') as mock_config, \
+             patch('llm_handler.asyncio.to_thread') as mock_to_thread:
+
+            mock_config.exa_api_key = "test-exa-key"
+
+            mock_exa = Mock()
+            mock_exa.answer.return_value = mock_response
+            mock_get_exa.return_value = mock_exa
+            mock_to_thread.return_value = mock_response
+
             # Call the LLM API
             result = await call_llm_api(query, message_context)
-            
+
             # Verify the API was called
-            assert mock_client.chat.completions.create.called
-            call_args = mock_client.chat.completions.create.call_args
-            
-            # Check that the user content includes the context
-            user_message = call_args[1]['messages'][1]['content']
-            assert "**Referenced Message (Reply):**" in user_message
-            assert "RefUser" in user_message
-            assert "Original message content" in user_message
-            assert "**Linked Message 1:**" in user_message
-            assert "LinkUser" in user_message
-            assert "Linked message content" in user_message
-            assert "**User's Question/Request:**" in user_message
-            assert "What do these messages say?" in user_message
+            assert mock_to_thread.called
+            call_args = mock_to_thread.call_args
+
+            # Check that the query content includes the context
+            query_content = call_args[0][1]  # Second positional arg is the query
+            assert "Referenced Message (Reply):" in query_content
+            assert "RefUser" in query_content
+            assert "Original message content" in query_content
+            assert "Linked Message 1:" in query_content
+            assert "LinkUser" in query_content
+            assert "Linked message content" in query_content
+            assert "User's Question/Request:" in query_content
+            assert "What do these messages say?" in query_content
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

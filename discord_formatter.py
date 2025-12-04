@@ -31,7 +31,7 @@ class DiscordFormatter:
         # Convert markdown tables to ASCII tables before other formatting
         formatted = DiscordFormatter._convert_markdown_tables_to_ascii(formatted)
 
-        # Replace Perplexity-style citations [1], [2] with clickable links if citations provided
+        # Replace Exa-style citations [1], [2] with clickable links if citations provided
         if citations:
             for i, url in enumerate(citations, 1):
                 # Make citation numbers into clickable superscript-like links
