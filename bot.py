@@ -1704,7 +1704,7 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             return
 
         # Save to database
-        database.set_user_role_color(
+        if not database.set_user_role_color(
             author_id=user_id,
             author_name=user_name,
             guild_id=guild_id,
@@ -1712,7 +1712,15 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             color_hex=color_hex,
             color_name=color_lower,
             points_per_day=points_per_day
-        )
+        ):
+            # Rollback - remove role and refund points if DB write failed
+            await member.remove_roles(role, reason="Database write failed - rollback")
+            database.add_user_points(user_id, user_name, guild_id, points_per_day)
+            await interaction.followup.send(
+                "Failed to save color settings. Your points have been refunded. Please try again.",
+                ephemeral=True
+            )
+            return
 
         remaining_points = current_points - points_per_day
         await interaction.followup.send(

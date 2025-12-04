@@ -458,7 +458,7 @@ async def process_daily_role_color_charges():
     try:
         logger.info("Starting daily role color charge processing")
 
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
         # Get all guilds that have active role colors
         guild_ids = database.get_all_guilds_with_role_colors()
