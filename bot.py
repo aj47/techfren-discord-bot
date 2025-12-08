@@ -1947,20 +1947,23 @@ async def color_remove_slash(interaction: discord.Interaction):
 
         # Remove the role from user (role is shared, so don't delete it)
         role_id = color_info['role_id']
-        role_removed = await remove_color_role_from_user(interaction.guild, member, role_id)
-
-        # Check if role exists but couldn't be removed (permissions issue)
         role = interaction.guild.get_role(int(role_id))
-        if role and role in member.roles:
-            # Role exists and user still has it - removal failed
-            await interaction.followup.send(
-                "Failed to remove the color role. The bot may not have permission. Please contact an admin.",
-                ephemeral=True
-            )
-            return
 
-        # If we get here, either role was removed successfully, or user didn't have the role
-        # In both cases, clean up the DB record
+        # Check if user actually has the role before trying to remove
+        user_has_role = role and role in member.roles
+
+        if user_has_role:
+            role_removed = await remove_color_role_from_user(interaction.guild, member, role_id)
+            if not role_removed:
+                # Role removal failed (permissions issue)
+                await interaction.followup.send(
+                    "Failed to remove the color role. The bot may not have permission. Please contact an admin.",
+                    ephemeral=True
+                )
+                return
+        # If role doesn't exist or user doesn't have it, we can still clean up the DB record
+
+        # Clean up the DB record
         database.remove_user_role_color(user_id, guild_id)
 
         await interaction.followup.send(
