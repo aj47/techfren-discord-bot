@@ -25,6 +25,13 @@ from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from agent_handler import (
+    is_agent_configured,
+    get_missing_config,
+    run_agent_task,
+    generate_task_id,
+    is_task_active
+)
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -2089,6 +2096,355 @@ async def color_status_slash(interaction: discord.Interaction):
         logger.error(f"Error in /color-status command: {str(e)}", exc_info=True)
         await interaction.response.send_message(
             "An error occurred while checking your status. Please try again later.",
+            ephemeral=True
+        )
+
+
+# Agent Task Commands
+
+@bot.tree.command(name="agent-task", description="Request a Claude agent to work on a task and create a PR (costs points)")
+@app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.guild_id, i.user.id))
+async def agent_task_slash(interaction: discord.Interaction, task: str):
+    """
+    Slash command to request a Claude agent to work on a task.
+
+    Args:
+        task: Description of what the agent should do
+    """
+    try:
+        # Check if in a guild
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        # Check if agent is configured
+        if not is_agent_configured():
+            missing = get_missing_config()
+            await interaction.response.send_message(
+                f"Agent feature is not configured. Missing: {', '.join(missing)}",
+                ephemeral=True
+            )
+            return
+
+        user_id = str(interaction.user.id)
+        user_name = interaction.user.name
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel.id)
+        points_cost = getattr(config, 'AGENT_POINTS_COST', 10)
+        max_concurrent = getattr(config, 'AGENT_MAX_CONCURRENT_TASKS', 1)
+
+        # Check if user has too many active tasks
+        active_count = database.count_user_active_agent_tasks(user_id)
+        if active_count >= max_concurrent:
+            await interaction.response.send_message(
+                f"You already have {active_count} active task(s). "
+                f"Please wait for them to complete before starting a new one. "
+                f"Use `/agent-status` to check your tasks.",
+                ephemeral=True
+            )
+            return
+
+        # Check if user has enough points
+        current_points = database.get_user_points(user_id, guild_id)
+        if current_points < points_cost:
+            await interaction.response.send_message(
+                f"You need at least {points_cost} points to start an agent task. "
+                f"You have {current_points} points.",
+                ephemeral=True
+            )
+            return
+
+        # Defer the response since this will take a while
+        await interaction.response.defer()
+
+        # Generate task ID
+        task_id = generate_task_id(user_id)
+
+        # Deduct points
+        if not database.deduct_user_points(user_id, guild_id, points_cost):
+            await interaction.followup.send(
+                "Failed to deduct points. Please try again.",
+                ephemeral=True
+            )
+            return
+
+        # Create task record
+        if not database.create_agent_task(
+            task_id=task_id,
+            author_id=user_id,
+            author_name=user_name,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            task_description=task,
+            points_cost=points_cost
+        ):
+            # Refund points if task creation failed
+            database.award_points_to_user(user_id, user_name, guild_id, points_cost)
+            await interaction.followup.send(
+                "Failed to create task record. Your points have been refunded.",
+                ephemeral=True
+            )
+            return
+
+        # Send initial response
+        await interaction.followup.send(
+            f"**Agent Task Started**\n\n"
+            f"Task ID: `{task_id}`\n"
+            f"Points charged: {points_cost}\n"
+            f"Task: {task[:200]}{'...' if len(task) > 200 else ''}\n\n"
+            f"The agent is now working on your request. "
+            f"Use `/agent-status` to check progress."
+        )
+
+        # Define status callback to send updates
+        async def status_callback(tid: str, message: str):
+            try:
+                channel = interaction.channel
+                if channel:
+                    # Only send important updates to avoid spam
+                    if any(keyword in message.lower() for keyword in ['completed', 'failed', 'pr created', 'error']):
+                        await channel.send(
+                            f"**Agent Update** (Task: `{tid}`)\n{message}"
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to send status update: {e}")
+
+        # Run the agent task in the background
+        asyncio.create_task(
+            _run_agent_task_background(task_id, task, status_callback, interaction.channel)
+        )
+
+        logger.info(f"User {user_name} started agent task {task_id}: {task[:100]}")
+
+    except app_commands.errors.CommandOnCooldown as e:
+        await interaction.response.send_message(
+            f"Please wait {e.retry_after:.1f} seconds before starting another task.",
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error in /agent-task command: {str(e)}", exc_info=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "An error occurred while starting the task. Please try again later.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "An error occurred while starting the task. Please try again later.",
+                ephemeral=True
+            )
+
+
+async def _run_agent_task_background(
+    task_id: str,
+    task_description: str,
+    status_callback,
+    channel
+):
+    """Background task runner for agent tasks."""
+    try:
+        success, pr_url, error = await run_agent_task(
+            task_id=task_id,
+            task_description=task_description,
+            status_callback=status_callback
+        )
+
+        # Send final result to channel
+        if channel:
+            if success and pr_url:
+                await channel.send(
+                    f"**Agent Task Completed**\n\n"
+                    f"Task ID: `{task_id}`\n"
+                    f"PR Created: {pr_url}"
+                )
+            elif success:
+                await channel.send(
+                    f"**Agent Task Completed**\n\n"
+                    f"Task ID: `{task_id}`\n"
+                    f"The task completed but no PR URL was found. "
+                    f"Please check the repository manually."
+                )
+            else:
+                await channel.send(
+                    f"**Agent Task Failed**\n\n"
+                    f"Task ID: `{task_id}`\n"
+                    f"Error: {error or 'Unknown error'}"
+                )
+    except Exception as e:
+        logger.error(f"Error in background agent task {task_id}: {str(e)}", exc_info=True)
+        if channel:
+            try:
+                await channel.send(
+                    f"**Agent Task Failed**\n\n"
+                    f"Task ID: `{task_id}`\n"
+                    f"Error: {str(e)}"
+                )
+            except Exception:
+                pass
+
+
+@bot.tree.command(name="agent-status", description="Check the status of your agent tasks")
+async def agent_status_slash(interaction: discord.Interaction):
+    """
+    Slash command to check status of user's agent tasks.
+    """
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        user_id = str(interaction.user.id)
+
+        # Get active tasks
+        active_tasks = database.get_user_active_agent_tasks(user_id)
+
+        if not active_tasks:
+            await interaction.response.send_message(
+                "You don't have any active agent tasks.\n"
+                "Use `/agent-task <description>` to start a new task.",
+                ephemeral=True
+            )
+            return
+
+        # Format task list
+        task_lines = []
+        for task in active_tasks:
+            status_emoji = "⏳" if task['status'] == 'pending' else "🔄"
+            desc = task['task_description'][:50] + "..." if len(task['task_description']) > 50 else task['task_description']
+            task_lines.append(
+                f"{status_emoji} `{task['task_id']}`\n"
+                f"   Status: {task['status']}\n"
+                f"   Task: {desc}"
+            )
+
+        await interaction.response.send_message(
+            f"**Your Active Agent Tasks**\n\n" +
+            "\n\n".join(task_lines),
+            ephemeral=True
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /agent-status command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while checking task status. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="agent-history", description="View your recent agent task history")
+async def agent_history_slash(interaction: discord.Interaction, limit: int = 5):
+    """
+    Slash command to view agent task history.
+
+    Args:
+        limit: Number of recent tasks to show (default 5, max 10)
+    """
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        # Clamp limit
+        limit = max(1, min(limit, 10))
+        user_id = str(interaction.user.id)
+
+        # Get task history
+        tasks = database.get_user_agent_task_history(user_id, limit)
+
+        if not tasks:
+            await interaction.response.send_message(
+                "You don't have any agent task history.\n"
+                "Use `/agent-task <description>` to start your first task.",
+                ephemeral=True
+            )
+            return
+
+        # Format task list
+        task_lines = []
+        for task in tasks:
+            status_emoji = {
+                'pending': '⏳',
+                'running': '🔄',
+                'completed': '✅',
+                'failed': '❌'
+            }.get(task['status'], '❓')
+
+            desc = task['task_description'][:40] + "..." if len(task['task_description']) > 40 else task['task_description']
+
+            line = f"{status_emoji} `{task['task_id']}`\n   {desc}"
+
+            if task['pr_url']:
+                line += f"\n   PR: {task['pr_url']}"
+            elif task['error_message']:
+                error = task['error_message'][:50] + "..." if len(task['error_message']) > 50 else task['error_message']
+                line += f"\n   Error: {error}"
+
+            task_lines.append(line)
+
+        await interaction.response.send_message(
+            f"**Your Agent Task History** (last {limit})\n\n" +
+            "\n\n".join(task_lines),
+            ephemeral=True
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /agent-history command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while retrieving task history. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="agent-info", description="Get information about the agent feature and costs")
+async def agent_info_slash(interaction: discord.Interaction):
+    """
+    Slash command to display agent feature information.
+    """
+    try:
+        points_cost = getattr(config, 'AGENT_POINTS_COST', 10)
+        max_concurrent = getattr(config, 'AGENT_MAX_CONCURRENT_TASKS', 1)
+        configured = is_agent_configured()
+        repo = getattr(config, 'agent_github_repo', 'Not configured')
+
+        status = "✅ Configured" if configured else "❌ Not configured"
+
+        if interaction.guild:
+            user_id = str(interaction.user.id)
+            guild_id = str(interaction.guild.id)
+            current_points = database.get_user_points(user_id, guild_id)
+            active_tasks = database.count_user_active_agent_tasks(user_id)
+            points_info = f"Your points: {current_points}\nYour active tasks: {active_tasks}/{max_concurrent}"
+        else:
+            points_info = "Points info only available in servers"
+
+        await interaction.response.send_message(
+            f"**Agent Feature Information**\n\n"
+            f"Status: {status}\n"
+            f"Repository: `{repo}`\n"
+            f"Cost per task: {points_cost} points\n"
+            f"Max concurrent tasks: {max_concurrent}\n\n"
+            f"{points_info}\n\n"
+            f"**Commands:**\n"
+            f"`/agent-task <description>` - Start a new agent task\n"
+            f"`/agent-status` - Check your active tasks\n"
+            f"`/agent-history` - View your task history\n"
+            f"`/agent-info` - Show this information",
+            ephemeral=True
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /agent-info command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while retrieving agent information.",
             ephemeral=True
         )
 

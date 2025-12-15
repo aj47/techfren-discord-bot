@@ -100,6 +100,25 @@ CREATE TABLE IF NOT EXISTS user_role_colors (
 );
 """
 
+CREATE_AGENT_TASKS_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL UNIQUE,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    task_description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    points_cost INTEGER NOT NULL,
+    pr_url TEXT,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -113,6 +132,9 @@ CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_da
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
+CREATE_INDEX_AGENT_TASKS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_agent_tasks_author_id ON agent_tasks (author_id);"
+CREATE_INDEX_AGENT_TASKS_STATUS = "CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks (status);"
+CREATE_INDEX_AGENT_TASKS_TASK_ID = "CREATE INDEX IF NOT EXISTS idx_agent_tasks_task_id ON agent_tasks (task_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -177,6 +199,7 @@ def init_database() -> None:
             cursor.execute(CREATE_USER_POINTS_TABLE)
             cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
+            cursor.execute(CREATE_AGENT_TASKS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -200,6 +223,11 @@ def init_database() -> None:
             # Create indexes for user_role_colors table
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
+
+            # Create indexes for agent_tasks table
+            cursor.execute(CREATE_INDEX_AGENT_TASKS_AUTHOR)
+            cursor.execute(CREATE_INDEX_AGENT_TASKS_STATUS)
+            cursor.execute(CREATE_INDEX_AGENT_TASKS_TASK_ID)
 
             # Insert a test message to ensure the database is working
             try:
@@ -1724,4 +1752,241 @@ def get_all_guilds_with_role_colors() -> List[str]:
             return [row['guild_id'] for row in cursor.fetchall()]
     except Exception as e:
         logger.error(f"Error getting guilds with role colors: {str(e)}", exc_info=True)
+        return []
+
+
+# Agent Tasks Functions
+
+def create_agent_task(
+    task_id: str,
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    channel_id: str,
+    task_description: str,
+    points_cost: int
+) -> bool:
+    """
+    Create a new agent task record.
+
+    Args:
+        task_id: Unique identifier for the task
+        author_id: Discord user ID who requested the task
+        author_name: Discord username
+        guild_id: Guild where the task was requested
+        channel_id: Channel where the task was requested
+        task_description: Description of what the agent should do
+        points_cost: Number of points charged for this task
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO agent_tasks (
+                    task_id, author_id, author_name, guild_id, channel_id,
+                    task_description, status, points_cost, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    task_id,
+                    author_id,
+                    author_name,
+                    guild_id,
+                    channel_id,
+                    task_description,
+                    points_cost,
+                    datetime.now().isoformat()
+                )
+            )
+
+            conn.commit()
+            logger.info(f"Created agent task {task_id} for user {author_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Error creating agent task {task_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def update_agent_task_status(
+    task_id: str,
+    status: str,
+    pr_url: str = None,
+    error_message: str = None
+) -> bool:
+    """
+    Update the status of an agent task.
+
+    Args:
+        task_id: The task ID to update
+        status: New status ('pending', 'running', 'completed', 'failed')
+        pr_url: Optional PR URL if task completed successfully
+        error_message: Optional error message if task failed
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Determine timestamps to update
+            now = datetime.now().isoformat()
+            if status == 'running':
+                cursor.execute(
+                    """
+                    UPDATE agent_tasks
+                    SET status = ?, started_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (status, now, task_id)
+                )
+            elif status in ('completed', 'failed'):
+                cursor.execute(
+                    """
+                    UPDATE agent_tasks
+                    SET status = ?, pr_url = ?, error_message = ?, completed_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (status, pr_url, error_message, now, task_id)
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE agent_tasks
+                    SET status = ?
+                    WHERE task_id = ?
+                    """,
+                    (status, task_id)
+                )
+
+            conn.commit()
+            logger.info(f"Updated agent task {task_id} to status {status}")
+            return True
+    except Exception as e:
+        logger.error(f"Error updating agent task {task_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_agent_task(task_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get an agent task by its ID.
+
+    Args:
+        task_id: The task ID to look up
+
+    Returns:
+        Task record as dictionary, or None if not found
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT * FROM agent_tasks WHERE task_id = ?",
+                (task_id,)
+            )
+
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+    except Exception as e:
+        logger.error(f"Error getting agent task {task_id}: {str(e)}", exc_info=True)
+        return None
+
+
+def get_user_active_agent_tasks(author_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all active (pending or running) agent tasks for a user.
+
+    Args:
+        author_id: Discord user ID
+
+    Returns:
+        List of active task records
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT * FROM agent_tasks
+                WHERE author_id = ? AND status IN ('pending', 'running')
+                ORDER BY created_at DESC
+                """,
+                (author_id,)
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting active tasks for user {author_id}: {str(e)}", exc_info=True)
+        return []
+
+
+def count_user_active_agent_tasks(author_id: str) -> int:
+    """
+    Count the number of active agent tasks for a user.
+
+    Args:
+        author_id: Discord user ID
+
+    Returns:
+        Number of active tasks
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) as count FROM agent_tasks
+                WHERE author_id = ? AND status IN ('pending', 'running')
+                """,
+                (author_id,)
+            )
+
+            row = cursor.fetchone()
+            return row['count'] if row else 0
+    except Exception as e:
+        logger.error(f"Error counting active tasks for user {author_id}: {str(e)}", exc_info=True)
+        return 0
+
+
+def get_user_agent_task_history(
+    author_id: str,
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    """
+    Get recent agent task history for a user.
+
+    Args:
+        author_id: Discord user ID
+        limit: Maximum number of tasks to return
+
+    Returns:
+        List of task records, most recent first
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT * FROM agent_tasks
+                WHERE author_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (author_id, limit)
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting task history for user {author_id}: {str(e)}", exc_info=True)
         return []

@@ -114,6 +114,37 @@ try:
 except (ValueError, TypeError):
     ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
 
+# Claude Agent Configuration
+# Environment variable: ANTHROPIC_API_KEY
+# Required for Claude Code SDK to create PR agents
+anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+
+# Points cost to start a Claude agent task
+# Environment variable: AGENT_POINTS_COST
+try:
+    AGENT_POINTS_COST = int(os.getenv('AGENT_POINTS_COST', '10'))
+    if AGENT_POINTS_COST < 1:
+        AGENT_POINTS_COST = 10  # Default to 10 if invalid
+except (ValueError, TypeError):
+    AGENT_POINTS_COST = 10
+
+# GitHub token for agent PR creation
+# Environment variable: AGENT_GITHUB_TOKEN
+agent_github_token = os.getenv('AGENT_GITHUB_TOKEN')
+
+# GitHub repository for agent tasks (owner/repo format)
+# Environment variable: AGENT_GITHUB_REPO
+agent_github_repo = os.getenv('AGENT_GITHUB_REPO')
+
+# Maximum concurrent agent tasks per user
+# Environment variable: AGENT_MAX_CONCURRENT_TASKS
+try:
+    AGENT_MAX_CONCURRENT_TASKS = int(os.getenv('AGENT_MAX_CONCURRENT_TASKS', '1'))
+    if AGENT_MAX_CONCURRENT_TASKS < 1:
+        AGENT_MAX_CONCURRENT_TASKS = 1
+except (ValueError, TypeError):
+    AGENT_MAX_CONCURRENT_TASKS = 1
+
 # Available colors for role customization
 # Format: {color_name: hex_value}
 # Each color has a light and dark variant
