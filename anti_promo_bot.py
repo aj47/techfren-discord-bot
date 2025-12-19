@@ -22,10 +22,27 @@ load_dotenv()
 # Valid actions for anti-promo moderation
 VALID_ANTI_PROMO_ACTIONS = {'delete', 'kick', 'ban'}
 
+# Default configuration values
+DEFAULT_MIN_ACCOUNT_AGE_DAYS = 7
+DEFAULT_NEW_MEMBER_WINDOW_MINUTES = 30
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    """Parse an integer environment variable with fallback to default on error."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(f"[ANTI-PROMO] Invalid integer value for {name}: '{value}', using default: {default}")
+        return default
+
+
 # Configuration from environment variables
 ANTI_PROMO_ENABLED = os.getenv('ANTI_PROMO_ENABLED', 'true').lower() == 'true'
-ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS = int(os.getenv('ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS', '7'))
-ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES = int(os.getenv('ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES', '30'))
+ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS = _parse_int_env('ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS', DEFAULT_MIN_ACCOUNT_AGE_DAYS)
+ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES = _parse_int_env('ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES', DEFAULT_NEW_MEMBER_WINDOW_MINUTES)
 
 # Normalize and validate ANTI_PROMO_ACTION
 _anti_promo_action_raw = os.getenv('ANTI_PROMO_ACTION', 'kick').lower().strip()
