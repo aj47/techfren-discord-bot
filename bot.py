@@ -67,8 +67,20 @@ class GifBypassView(discord.ui.View):
 
         # Set flag immediately to prevent concurrent execution
         self.bypass_used = True
+        points_deducted = False  # Track if points were deducted to prevent reset after deduction
 
         try:
+            # Check if user is still rate limited (cooldown may have expired during 60s view timeout)
+            can_post, _ = await check_gif_rate_limit(self.user_id)
+            if can_post:
+                # User can now post without paying - cooldown expired
+                self.bypass_used = False  # Reset since bypass wasn't needed
+                await interaction.response.send_message(
+                    "✅ Good news! Your GIF cooldown has expired. You can now post a GIF without using points!",
+                    ephemeral=True
+                )
+                return
+
             # Check if user has enough points
             current_points = database.get_user_points(self.user_id, self.guild_id)
             if current_points < self.bypass_cost:
@@ -88,6 +100,9 @@ class GifBypassView(discord.ui.View):
                     ephemeral=True
                 )
                 return
+
+            # Mark that points have been deducted - don't reset bypass_used after this point
+            points_deducted = True
 
             # Record the bypass in the GIF limiter
             await record_gif_bypass(self.user_id)
@@ -109,7 +124,10 @@ class GifBypassView(discord.ui.View):
 
             logger.info(f"User {self.user_id} used GIF bypass for {self.bypass_cost} points in guild {self.guild_id}")
         except Exception:
-            self.bypass_used = False  # Reset on any error
+            # Only reset bypass_used if points haven't been deducted yet
+            # This prevents double-charging if an error occurs after points are deducted
+            if not points_deducted:
+                self.bypass_used = False
             raise
 
     async def on_timeout(self):
