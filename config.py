@@ -1,14 +1,16 @@
 """
 Discord bot configuration using environment variables and .env file support.
 
-This module loads configuration from environment variables with .env file taking precedence.
-The .env file values override system environment variables to ensure consistent configuration.
+This module loads configuration from environment variables with system env vars taking precedence.
+Explicit environment variables take precedence over .env file contents, which is the expected
+behavior for production deployments where env vars are set directly (e.g., via Docker, Kubernetes,
+or system configuration).
 """
 
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file if it exists
+# Load environment variables from .env file if it exists.
 # Explicit environment variables take precedence over .env file contents,
 # which is the expected behavior for production deployments where env vars
 # are set directly (e.g., via Docker, Kubernetes, or system configuration).

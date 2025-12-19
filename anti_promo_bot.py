@@ -265,27 +265,29 @@ async def handle_suspicious_message(
         f"Reasons: {analysis['reasons']}"
     )
 
-    # Track if we successfully handled the message (deleted it)
-    # Return True if message was handled to prevent other handlers from processing it
-    message_handled = False
+    # Track if we successfully took any enforcement action
+    # Return True if any action was taken to prevent other handlers from processing the spam
+    action_taken = False
 
     try:
         # Try to delete the message first, but don't let failure prevent kick/ban
         try:
             await message.delete()
             logger.info(f"[ANTI-PROMO] Deleted suspicious message from {user.name} ({user.id})")
-            message_handled = True  # Message was deleted, consider it handled
+            action_taken = True  # Message was deleted
         except Exception as delete_error:
             logger.warning(f"[ANTI-PROMO] Failed to delete message from {user.name} ({user.id}): {delete_error}")
 
-        # Attempt kick/ban action - failures here shouldn't affect message_handled status
+        # Attempt kick/ban action
         try:
             if action == 'kick' and guild:
                 await guild.kick(user, reason=f"Anti-promo bot: {', '.join(analysis['reasons'])}")
                 logger.info(f"[ANTI-PROMO] Kicked user {user.name} ({user.id}) from {guild.name}")
+                action_taken = True  # Kick succeeded
             elif action == 'ban' and guild:
                 await guild.ban(user, reason=f"Anti-promo bot: {', '.join(analysis['reasons'])}", delete_message_days=1)
                 logger.info(f"[ANTI-PROMO] Banned user {user.name} ({user.id}) from {guild.name}")
+                action_taken = True  # Ban succeeded
         except Exception as action_error:
             logger.error(f"[ANTI-PROMO] Failed to {action} user {user.name} ({user.id}): {action_error}")
             # Continue - we still want to log the action and return handled status
@@ -294,11 +296,11 @@ async def handle_suspicious_message(
         if ANTI_PROMO_LOG_CHANNEL_ID and guild:
             await log_anti_promo_action(guild, user, analysis, action)
 
-        return True if message_handled else False
+        return action_taken
 
     except Exception as e:
         logger.error(f"[ANTI-PROMO] Failed to handle suspicious message: {e}", exc_info=True)
-        return message_handled  # Return True if we at least deleted the message
+        return action_taken  # Return True if we took any enforcement action
 
 
 async def log_anti_promo_action(guild, user, analysis: Dict[str, Any], action: str):
