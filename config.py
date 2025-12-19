@@ -52,6 +52,19 @@ firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
+# Twitter/X API Configuration (optional, for auto-tweeting)
+# Get these from the Twitter Developer Portal: https://developer.twitter.com/
+# Required for posting tweets automatically
+twitter_consumer_key = os.getenv('TWITTER_CONSUMER_KEY')
+twitter_consumer_secret = os.getenv('TWITTER_CONSUMER_SECRET')
+twitter_access_token = os.getenv('TWITTER_ACCESS_TOKEN')
+twitter_access_token_secret = os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
+
+# Enable/disable automatic tweeting of daily summaries
+# Environment variable: TWITTER_AUTO_TWEET_ENABLED
+# Set to 'true' to enable auto-tweeting (default: disabled)
+twitter_auto_tweet_enabled = os.getenv('TWITTER_AUTO_TWEET_ENABLED', 'false').lower() == 'true'
+
 
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS, GENERAL_CHANNEL_ID
