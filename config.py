@@ -182,6 +182,5 @@ AVAILABLE_ROLE_COLORS = {
 #   ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES: Window after joining when users are monitored closely (default: 30)
 #   ANTI_PROMO_ACTION: Action to take on suspicious messages - 'delete', 'kick', or 'ban' (default: kick)
 #   ANTI_PROMO_LOG_CHANNEL_ID: Optional channel ID to log anti-promo actions
-#   ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES: Minimum messages in lookback period to be protected (default: 25)
-#   ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS: Lookback period in months for message count (default: 6)
+#   ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES: Min messages in past 6 months to be protected (default: 25)
 # Note: Configuration is loaded directly in anti_promo_bot.py module

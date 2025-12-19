@@ -18,7 +18,7 @@ from anti_promo_bot import (
     check_account_age,
     check_member_join_time,
     check_message_for_promo_patterns,
-    check_if_established_user,
+    is_established_user,
     analyze_message_for_spam,
     handle_suspicious_message,
 )
@@ -131,39 +131,26 @@ class TestCheckMessageForPromoPatterns:
         assert len(patterns) >= 2
 
 
-class TestCheckIfEstablishedUser:
-    """Tests for check_if_established_user function."""
+class TestIsEstablishedUser:
+    """Tests for is_established_user function."""
 
     @patch('database.get_user_message_count_since')
     def test_user_with_many_messages_is_established(self, mock_get_count):
         """Test that a user with 25+ messages is considered established."""
         mock_get_count.return_value = 50
-
-        is_established, message_count = check_if_established_user("123456789")
-
-        assert is_established is True
-        assert message_count == 50
-        mock_get_count.assert_called_once()
+        assert is_established_user("123456789") is True
 
     @patch('database.get_user_message_count_since')
     def test_user_with_few_messages_not_established(self, mock_get_count):
         """Test that a user with less than 25 messages is not established."""
         mock_get_count.return_value = 10
-
-        is_established, message_count = check_if_established_user("123456789")
-
-        assert is_established is False
-        assert message_count == 10
+        assert is_established_user("123456789") is False
 
     @patch('database.get_user_message_count_since')
     def test_user_at_threshold_is_established(self, mock_get_count):
         """Test that a user with exactly 25 messages is established."""
         mock_get_count.return_value = 25
-
-        is_established, message_count = check_if_established_user("123456789")
-
-        assert is_established is True
-        assert message_count == 25
+        assert is_established_user("123456789") is True
 
 
 class TestAnalyzeMessageForSpam:
@@ -174,7 +161,7 @@ class TestAnalyzeMessageForSpam:
         user_created_at = datetime.now(timezone.utc) - timedelta(days=2)
         joined_at = datetime.now(timezone.utc) - timedelta(minutes=5)
 
-        with patch('anti_promo_bot.check_if_established_user', return_value=(False, 0)):
+        with patch('anti_promo_bot.is_established_user', return_value=False):
             result = analyze_message_for_spam(
                 content="Join discord.gg/scam for free crypto!",
                 user_created_at=user_created_at,
@@ -232,12 +219,11 @@ class TestAnalyzeMessageForSpam:
         assert result['is_suspicious'] is False
 
     def test_established_user_protected_from_kick_ban(self):
-        """Test that established users with 25+ messages are only deleted, not kicked/banned."""
+        """Test that established users are only deleted, not kicked/banned."""
         user_created_at = datetime.now(timezone.utc) - timedelta(days=2)
         joined_at = datetime.now(timezone.utc) - timedelta(minutes=5)
 
-        # Mock the established user check to return True with 30 messages
-        with patch('anti_promo_bot.check_if_established_user', return_value=(True, 30)):
+        with patch('anti_promo_bot.is_established_user', return_value=True):
             result = analyze_message_for_spam(
                 content="Join discord.gg/scam for free crypto!",
                 user_created_at=user_created_at,
@@ -247,21 +233,15 @@ class TestAnalyzeMessageForSpam:
             )
 
         assert result['is_suspicious'] is True
-        assert result['is_established_user'] is True
-        assert result['message_count_in_period'] == 30
-        # Established users should only get delete, not kick/ban
         assert result['recommended_action'] == 'delete'
-        # Check that the protection reason is included
-        assert any('protected' in reason.lower() or 'established' in reason.lower()
-                   for reason in result['reasons'])
+        assert any('established' in r.lower() for r in result['reasons'])
 
     def test_non_established_user_can_be_kicked(self):
         """Test that non-established users posting promo can be kicked/banned."""
         user_created_at = datetime.now(timezone.utc) - timedelta(days=2)
         joined_at = datetime.now(timezone.utc) - timedelta(minutes=5)
 
-        # Mock the established user check to return False with only 5 messages
-        with patch('anti_promo_bot.check_if_established_user', return_value=(False, 5)):
+        with patch('anti_promo_bot.is_established_user', return_value=False):
             result = analyze_message_for_spam(
                 content="Join discord.gg/scam for free crypto!",
                 user_created_at=user_created_at,
@@ -271,26 +251,7 @@ class TestAnalyzeMessageForSpam:
             )
 
         assert result['is_suspicious'] is True
-        assert result['is_established_user'] is False
-        assert result['message_count_in_period'] == 5
-        # Non-established users can be kicked/banned
         assert result['recommended_action'] in ('kick', 'ban')
-
-    def test_result_includes_established_user_fields(self):
-        """Test that analysis result includes established user fields."""
-        user_created_at = datetime.now(timezone.utc) - timedelta(days=30)
-
-        with patch('anti_promo_bot.check_if_established_user', return_value=(False, 0)):
-            result = analyze_message_for_spam(
-                content="Hello!",
-                user_created_at=user_created_at,
-                member_joined_at=None,
-                is_bot=False,
-                user_id="123456789"
-            )
-
-        assert 'is_established_user' in result
-        assert 'message_count_in_period' in result
 
 
 class TestHandleSuspiciousMessage:
