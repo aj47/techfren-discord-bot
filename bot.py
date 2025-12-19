@@ -50,6 +50,26 @@ def _format_gif_cooldown(seconds_remaining: int) -> str:
     return " and ".join(parts)
 
 
+def get_message_content(message: discord.Message) -> str:
+    """Extract the effective content from a message, handling forwarded messages.
+
+    For forwarded messages (from other servers), the actual content is stored in
+    message_snapshots[0].content, while message.content is empty.
+
+    Args:
+        message: The Discord message object
+
+    Returns:
+        The message content string (from snapshot if forwarded, otherwise from message.content)
+    """
+    # Check if this is a forwarded message with content in snapshots
+    if hasattr(message, 'message_snapshots') and message.message_snapshots:
+        snapshot = message.message_snapshots[0]
+        if hasattr(snapshot, 'content') and snapshot.content:
+            return snapshot.content
+    return message.content or ""
+
+
 def message_contains_gif(message: discord.Message) -> bool:
     """Detect GIFs in attachments, message content URLs, and embeds."""
 
@@ -60,8 +80,8 @@ def message_contains_gif(message: discord.Message) -> bool:
         if filename.endswith((".gif", ".gifv")) or "gif" in content_type:
             return True
 
-    # Check message content for URLs
-    content = message.content or ""
+    # Check message content for URLs (including forwarded messages)
+    content = get_message_content(message)
     if re.search(r'https?://\S+', content):
         for match in re.finditer(r'https?://\S+', content):
             if is_gif_url(match.group(0)):
@@ -329,9 +349,10 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
         if message.author.bot:
             return False
 
-        # Extract URLs from message content
+        # Extract URLs from message content (including forwarded messages)
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
-        urls = re.findall(url_pattern, message.content)
+        content = get_message_content(message)
+        urls = re.findall(url_pattern, content)
 
         if not urls:
             return False
@@ -454,9 +475,10 @@ async def handle_link_summary(message: discord.Message) -> bool:
         if message.author.bot:
             return False
 
-        # Extract URLs from message content
+        # Extract URLs from message content (including forwarded messages)
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
-        urls = re.findall(url_pattern, message.content)
+        content = get_message_content(message)
+        urls = re.findall(url_pattern, content)
 
         if not urls:
             return False
@@ -601,8 +623,10 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
             return False
 
         # Check for URLs in the message content using the same regex as process_url
+        # (including forwarded messages which have content in message_snapshots)
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
-        urls = re.findall(url_pattern, message.content)
+        content = get_message_content(message)
+        urls = re.findall(url_pattern, content)
 
 
         # If message contains URLs, allow it
@@ -1078,7 +1102,9 @@ async def on_message(message):
 
     # Use display_name to show user's server nickname when available
     author_display = message.author.display_name if isinstance(message.author, discord.Member) else str(message.author)
-    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {message.content[:50]}{'...' if len(message.content) > 50 else ''}")
+    # Get effective content (handles forwarded messages)
+    effective_content = get_message_content(message)
+    logger.info(f"Message received - Guild: {guild_name} | Channel: {channel_name} | Author: {author_display} | Content: {effective_content[:50]}{'...' if len(effective_content) > 50 else ''}")
 
     # Analyze images if present
     image_descriptions_json = None
@@ -1122,13 +1148,18 @@ async def on_message(message):
             logger.error("Database module not properly imported or initialized")
             return
 
+        # Get effective content (handles forwarded messages from other servers)
+        content_to_store = get_message_content(message)
+        if content_to_store != message.content:
+            logger.debug(f"Extracted forwarded message content: {content_to_store[:100]}...")
+
         success = database.store_message(
             message_id=str(message.id),
             author_id=str(message.author.id),
             author_name=str(message.author),
             channel_id=channel_id,
             channel_name=channel_name,
-            content=message.content,
+            content=content_to_store,
             created_at=message.created_at,
             guild_id=guild_id,
             guild_name=guild_name,
