@@ -95,4 +95,32 @@ async def check_and_record_gif_post(
     return await _check_rate_limit_internal(user_id, timestamp, record=True)
 
 
-__all__ = ["check_and_record_gif_post", "check_gif_rate_limit", "GIF_LIMIT_PER_WINDOW", "GIF_TIME_WINDOW"]
+async def record_gif_bypass(user_id: str, timestamp: Optional[datetime] = None) -> None:
+    """
+    Record a GIF post as a bypass (used when user pays points to bypass rate limit).
+
+    This forcefully records a GIF post regardless of rate limit status,
+    used when a user spends points to bypass the limit.
+
+    Args:
+        user_id: The Discord user ID
+        timestamp: Optional timestamp (defaults to now)
+    """
+    now = _normalize_timestamp(timestamp)
+
+    lock = _get_lock()
+    async with lock:
+        history = _gif_post_history.get(user_id)
+        if history is None:
+            history = deque()
+            _gif_post_history[user_id] = history
+
+        history.append(now)
+        logger.debug(
+            "Recorded bypass GIF for user %s; %d GIF(s) in the current window",
+            user_id,
+            len(history),
+        )
+
+
+__all__ = ["check_and_record_gif_post", "check_gif_rate_limit", "record_gif_bypass", "GIF_LIMIT_PER_WINDOW", "GIF_TIME_WINDOW"]
