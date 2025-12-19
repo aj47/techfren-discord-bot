@@ -170,3 +170,12 @@ AVAILABLE_ROLE_COLORS = {
     'black': '#0c0c0c',
     'white': '#FFFFFF',
 }
+
+# Anti-Promo Bot Configuration
+# Environment variables:
+#   ANTI_PROMO_ENABLED: Enable/disable the anti-promo bot feature (default: true)
+#   ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS: Minimum account age in days to not be flagged (default: 7)
+#   ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES: Window after joining when users are monitored closely (default: 30)
+#   ANTI_PROMO_ACTION: Action to take on suspicious messages - 'delete', 'kick', or 'ban' (default: kick)
+#   ANTI_PROMO_LOG_CHANNEL_ID: Optional channel ID to log anti-promo actions
+# Note: Configuration is loaded directly in anti_promo_bot.py module
