@@ -97,29 +97,32 @@ async def check_and_record_gif_post(
 
 async def record_gif_bypass(user_id: str, timestamp: Optional[datetime] = None) -> None:
     """
-    Record a GIF post as a bypass (used when user pays points to bypass rate limit).
+    Record a GIF bypass (used when user pays points to bypass rate limit).
 
-    This forcefully records a GIF post regardless of rate limit status,
-    used when a user spends points to bypass the limit.
+    This clears the user's GIF posting history, allowing them to post their next GIF.
+    The next GIF post will be recorded normally through check_and_record_gif_post.
 
     Args:
         user_id: The Discord user ID
         timestamp: Optional timestamp (defaults to now)
     """
     now = _normalize_timestamp(timestamp)
+    cutoff = now - GIF_TIME_WINDOW
 
     lock = _get_lock()
     async with lock:
         history = _gif_post_history.get(user_id)
-        if history is None:
-            history = deque()
-            _gif_post_history[user_id] = history
+        if history is not None:
+            # Clean up old entries first (maintain consistency)
+            while history and history[0] <= cutoff:
+                history.popleft()
 
-        history.append(now)
+            # Clear remaining entries to allow the user to post again
+            history.clear()
+
         logger.debug(
-            "Recorded bypass GIF for user %s; %d GIF(s) in the current window",
+            "Cleared GIF history for user %s bypass",
             user_id,
-            len(history),
         )
 
 

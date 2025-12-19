@@ -119,7 +119,7 @@ except (ValueError, TypeError):
 try:
     GIF_BYPASS_POINTS_COST = int(os.getenv('GIF_BYPASS_POINTS_COST', '100'))
     if GIF_BYPASS_POINTS_COST < 1:
-        GIF_BYPASS_POINTS_COST = 100  # Minimum 1 point cost
+        GIF_BYPASS_POINTS_COST = 1  # Minimum 1 point cost
 except (ValueError, TypeError):
     GIF_BYPASS_POINTS_COST = 100  # Default to 100 if invalid value
 

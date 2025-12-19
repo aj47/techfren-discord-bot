@@ -36,51 +36,65 @@ def setup_database():
 
 @pytest.mark.asyncio
 async def test_record_gif_bypass():
-    """Test that record_gif_bypass properly records a GIF post."""
+    """Test that record_gif_bypass clears history to allow posting."""
     user_id = "test_user_123"
-    
-    # Initially user can post
-    can_post, _ = await check_gif_rate_limit(user_id)
-    assert can_post is True
-    
-    # Record a bypass
-    await record_gif_bypass(user_id)
-    
-    # Now user should be rate limited
-    can_post, seconds = await check_gif_rate_limit(user_id)
-    assert can_post is False
-    assert seconds > 0
 
-
-@pytest.mark.asyncio
-async def test_record_gif_bypass_when_already_rate_limited():
-    """Test that bypass still records when user is already rate limited."""
-    user_id = "test_user_456"
-    
     # First, hit the rate limit normally
     await check_and_record_gif_post(user_id)
-    
+
+    # User is now rate limited
     can_post, _ = await check_gif_rate_limit(user_id)
     assert can_post is False
-    
-    # Record another bypass (this is allowed when user pays points)
+
+    # Use bypass - this should clear history and allow posting
     await record_gif_bypass(user_id)
-    
-    # User should still be rate limited
+
+    # Now user should be able to post again
+    can_post, _ = await check_gif_rate_limit(user_id)
+    assert can_post is True
+
+
+@pytest.mark.asyncio
+async def test_record_gif_bypass_allows_repost():
+    """Test that after bypass, user can post a GIF that gets recorded normally."""
+    user_id = "test_user_456"
+
+    # First, hit the rate limit normally
+    await check_and_record_gif_post(user_id)
+
+    can_post, _ = await check_gif_rate_limit(user_id)
+    assert can_post is False
+
+    # Use bypass to clear history
+    await record_gif_bypass(user_id)
+
+    # User should now be able to post
+    can_post, _ = await check_gif_rate_limit(user_id)
+    assert can_post is True
+
+    # Record the repost (simulating the user posting their GIF)
+    can_post, _ = await check_and_record_gif_post(user_id)
+    assert can_post is True
+
+    # Now user should be rate limited again
     can_post, _ = await check_gif_rate_limit(user_id)
     assert can_post is False
 
 
 @pytest.mark.asyncio
-async def test_bypass_records_with_timestamp():
-    """Test that bypass respects the timestamp parameter."""
+async def test_bypass_clears_history_with_timestamp():
+    """Test that bypass clears history and respects the timestamp parameter."""
     user_id = "test_user_789"
-    past_time = datetime.now(timezone.utc) - GIF_TIME_WINDOW - timedelta(seconds=1)
-    
-    # Record a bypass in the past
-    await record_gif_bypass(user_id, past_time)
-    
-    # User should be able to post now since the bypass was in the past
+
+    # First, hit the rate limit
+    await check_and_record_gif_post(user_id)
+    can_post, _ = await check_gif_rate_limit(user_id)
+    assert can_post is False
+
+    # Use bypass - this clears history
+    await record_gif_bypass(user_id)
+
+    # User should be able to post now
     can_post, _ = await check_gif_rate_limit(user_id)
     assert can_post is True
 
