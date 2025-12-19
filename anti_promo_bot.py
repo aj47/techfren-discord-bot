@@ -15,15 +15,26 @@ from dotenv import load_dotenv
 from logging_config import logger
 
 # Load environment variables from .env file before reading configuration.
-# This ensures .env settings are applied regardless of import order
-# (e.g., if this module is imported before config.py).
-load_dotenv(override=True)
+# Explicit environment variables take precedence over .env file contents,
+# which is the expected behavior for production deployments.
+load_dotenv()
+
+# Valid actions for anti-promo moderation
+VALID_ANTI_PROMO_ACTIONS = {'delete', 'kick', 'ban'}
 
 # Configuration from environment variables
 ANTI_PROMO_ENABLED = os.getenv('ANTI_PROMO_ENABLED', 'true').lower() == 'true'
 ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS = int(os.getenv('ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS', '7'))
 ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES = int(os.getenv('ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES', '30'))
-ANTI_PROMO_ACTION = os.getenv('ANTI_PROMO_ACTION', 'kick')  # 'delete', 'kick', or 'ban'
+
+# Normalize and validate ANTI_PROMO_ACTION
+_anti_promo_action_raw = os.getenv('ANTI_PROMO_ACTION', 'kick').lower().strip()
+if _anti_promo_action_raw not in VALID_ANTI_PROMO_ACTIONS:
+    logger.warning(f"[ANTI-PROMO] Invalid ANTI_PROMO_ACTION '{_anti_promo_action_raw}', defaulting to 'kick'")
+    ANTI_PROMO_ACTION = 'kick'
+else:
+    ANTI_PROMO_ACTION = _anti_promo_action_raw
+
 ANTI_PROMO_LOG_CHANNEL_ID = os.getenv('ANTI_PROMO_LOG_CHANNEL_ID')
 
 # Common promo bot patterns
