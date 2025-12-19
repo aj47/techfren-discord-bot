@@ -11,7 +11,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict, Any
 import os
 
+from dotenv import load_dotenv
 from logging_config import logger
+
+# Load environment variables from .env file before reading configuration.
+# This ensures .env settings are applied regardless of import order
+# (e.g., if this module is imported before config.py).
+load_dotenv(override=True)
 
 # Configuration from environment variables
 ANTI_PROMO_ENABLED = os.getenv('ANTI_PROMO_ENABLED', 'true').lower() == 'true'
@@ -223,9 +229,12 @@ async def handle_suspicious_message(
     )
 
     try:
-        # Always try to delete the message first
-        await message.delete()
-        logger.info(f"[ANTI-PROMO] Deleted suspicious message from {user.name} ({user.id})")
+        # Try to delete the message first, but don't let failure prevent kick/ban
+        try:
+            await message.delete()
+            logger.info(f"[ANTI-PROMO] Deleted suspicious message from {user.name} ({user.id})")
+        except Exception as delete_error:
+            logger.warning(f"[ANTI-PROMO] Failed to delete message from {user.name} ({user.id}): {delete_error}")
 
         if action == 'kick' and guild:
             await guild.kick(user, reason=f"Anti-promo bot: {', '.join(analysis['reasons'])}")
