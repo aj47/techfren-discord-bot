@@ -787,7 +787,8 @@ async def on_message(message):
                 content=message.content,
                 user_created_at=member.created_at,
                 member_joined_at=member_joined_at,
-                is_bot=member.bot
+                is_bot=member.bot,
+                user_id=str(member.id)
             )
 
             if analysis['is_suspicious']:

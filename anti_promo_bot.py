@@ -25,6 +25,8 @@ VALID_ANTI_PROMO_ACTIONS = {'delete', 'kick', 'ban'}
 # Default configuration values
 DEFAULT_MIN_ACCOUNT_AGE_DAYS = 7
 DEFAULT_NEW_MEMBER_WINDOW_MINUTES = 30
+DEFAULT_ESTABLISHED_USER_MIN_MESSAGES = 25
+DEFAULT_ESTABLISHED_USER_LOOKBACK_MONTHS = 6
 
 
 def _parse_int_env(name: str, default: int) -> int:
@@ -43,6 +45,8 @@ def _parse_int_env(name: str, default: int) -> int:
 ANTI_PROMO_ENABLED = os.getenv('ANTI_PROMO_ENABLED', 'true').lower() == 'true'
 ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS = _parse_int_env('ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS', DEFAULT_MIN_ACCOUNT_AGE_DAYS)
 ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES = _parse_int_env('ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES', DEFAULT_NEW_MEMBER_WINDOW_MINUTES)
+ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES = _parse_int_env('ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES', DEFAULT_ESTABLISHED_USER_MIN_MESSAGES)
+ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS = _parse_int_env('ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS', DEFAULT_ESTABLISHED_USER_LOOKBACK_MONTHS)
 
 # Normalize and validate ANTI_PROMO_ACTION
 _anti_promo_action_raw = os.getenv('ANTI_PROMO_ACTION', 'kick').lower().strip()
@@ -148,37 +152,66 @@ def check_member_join_time(member_joined_at: Optional[datetime]) -> Tuple[bool, 
 def check_message_for_promo_patterns(content: str) -> Tuple[bool, List[str]]:
     """
     Check if a message contains promotional/spam patterns.
-    
+
     Args:
         content: The message content to check
-        
+
     Returns:
         Tuple of (has_promo_pattern, list of matched patterns)
     """
     matched_patterns = []
-    
+
     for i, pattern in enumerate(COMPILED_PROMO_PATTERNS):
         if pattern.search(content):
             matched_patterns.append(PROMO_PATTERNS[i])
-    
+
     return bool(matched_patterns), matched_patterns
+
+
+def check_if_established_user(user_id: str) -> Tuple[bool, int]:
+    """
+    Check if a user is an established member with enough message history.
+
+    Established users are protected from kick/ban actions to prevent
+    accidentally removing legitimate community members.
+
+    Args:
+        user_id: The Discord user ID
+
+    Returns:
+        Tuple of (is_established, message_count_in_period)
+    """
+    # Import here to avoid circular imports
+    from database import get_user_message_count_since
+
+    # Calculate the lookback date
+    lookback_date = datetime.now(timezone.utc) - timedelta(
+        days=ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS * 30  # Approximate months
+    )
+
+    message_count = get_user_message_count_since(user_id, lookback_date)
+    is_established = message_count >= ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES
+
+    return is_established, message_count
 
 
 def analyze_message_for_spam(
     content: str,
     user_created_at: datetime,
     member_joined_at: Optional[datetime],
-    is_bot: bool = False
+    is_bot: bool = False,
+    user_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Analyze a message for potential spam/promo bot activity.
-    
+
     Args:
         content: The message content
         user_created_at: When the user's Discord account was created
         member_joined_at: When the member joined the server
         is_bot: Whether the user is a bot account
-        
+        user_id: The user's Discord ID (used to check established user status)
+
     Returns:
         Dictionary with analysis results
     """
@@ -190,14 +223,16 @@ def analyze_message_for_spam(
         'minutes_since_join': -1,
         'matched_patterns': [],
         'recommended_action': None,
+        'is_established_user': False,
+        'message_count_in_period': 0,
     }
-    
+
     # Skip if user is a verified bot
     if is_bot:
         return result
-    
+
     confidence_score = 0.0
-    
+
     # Check for promo patterns
     has_promo, patterns = check_message_for_promo_patterns(content)
     if has_promo:
@@ -219,6 +254,18 @@ def analyze_message_for_spam(
         result['reasons'].append(f"Member joined only {minutes_since} minutes ago (threshold: {ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES} minutes)")
         confidence_score += 0.2
 
+    # Check if user is an established member (only if user_id is provided)
+    is_established = False
+    if user_id:
+        is_established, message_count = check_if_established_user(user_id)
+        result['is_established_user'] = is_established
+        result['message_count_in_period'] = message_count
+        if is_established:
+            logger.info(
+                f"[ANTI-PROMO] User {user_id} is established with {message_count} messages "
+                f"in the past {ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS} months - protected from kick/ban"
+            )
+
     # Determine if suspicious based on combined factors
     # High confidence: promo patterns + new account OR promo patterns + just joined
     # Medium confidence: promo patterns alone (might be legitimate shares)
@@ -226,7 +273,14 @@ def analyze_message_for_spam(
 
     if has_promo and (is_new_account or is_new_member):
         result['is_suspicious'] = True
-        result['recommended_action'] = ANTI_PROMO_ACTION
+        # For established users, only delete the message, don't kick/ban
+        if is_established:
+            result['recommended_action'] = 'delete'
+            result['reasons'].append(
+                f"Established user ({message_count} messages in past {ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS} months) - protected from kick/ban"
+            )
+        else:
+            result['recommended_action'] = ANTI_PROMO_ACTION
     elif confidence_score >= 0.7:
         result['is_suspicious'] = True
         result['recommended_action'] = 'delete'  # Be more conservative
@@ -315,6 +369,9 @@ async def log_anti_promo_action(guild, user, analysis: Dict[str, Any], action: s
 
         embed_color = 0xFF0000 if action in ('kick', 'ban') else 0xFFA500
 
+        established_status = "✅ Yes" if analysis.get('is_established_user', False) else "❌ No"
+        message_count = analysis.get('message_count_in_period', 0)
+
         log_message = (
             f"**🚨 Anti-Promo Action Taken**\n"
             f"**User:** {user.name} ({user.id})\n"
@@ -322,6 +379,7 @@ async def log_anti_promo_action(guild, user, analysis: Dict[str, Any], action: s
             f"**Confidence:** {analysis['confidence']:.0%}\n"
             f"**Account Age:** {analysis['account_age_days']} days\n"
             f"**Minutes Since Join:** {analysis['minutes_since_join']}\n"
+            f"**Established User:** {established_status} ({message_count} messages in past {ANTI_PROMO_ESTABLISHED_USER_LOOKBACK_MONTHS} months)\n"
             f"**Reasons:**\n" + "\n".join(f"• {r}" for r in analysis['reasons'])
         )
 

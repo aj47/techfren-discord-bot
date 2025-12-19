@@ -554,6 +554,35 @@ def get_user_message_count(user_id: str) -> int:
         # Return 0 instead of -1 for consistency with other error cases
         return 0
 
+
+def get_user_message_count_since(user_id: str, since_date: datetime) -> int:
+    """
+    Get the number of messages from a specific user since a given date.
+
+    Args:
+        user_id (str): The Discord user ID
+        since_date (datetime): Only count messages created on or after this date
+
+    Returns:
+        int: The number of messages from the user since the given date
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            since_date_str = since_date.isoformat()
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE author_id = ? AND created_at >= ?",
+                (user_id, since_date_str)
+            )
+            count = cursor.fetchone()[0]
+
+        return count
+    except Exception as e:
+        logger.error(f"Error getting message count for user {user_id} since {since_date}: {str(e)}", exc_info=True)
+        # Return 0 instead of -1 for consistency with other error cases
+        return 0
+
 def get_all_channel_messages(channel_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """
     Get all messages from a specific channel, regardless of date.
