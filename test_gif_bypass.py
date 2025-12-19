@@ -4,6 +4,8 @@ Tests the points-based GIF limit bypass feature.
 """
 
 import asyncio
+import os
+import tempfile
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -29,9 +31,13 @@ def clear_gif_history():
 
 @pytest.fixture
 def setup_database():
-    """Initialize database for testing."""
-    database.init_database()
-    yield
+    """Initialize database for testing with isolated temp directory."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_db_file = os.path.join(temp_dir, "test_discord_messages.db")
+        with patch.object(database, 'DB_FILE', temp_db_file), \
+             patch.object(database, 'DB_DIRECTORY', temp_dir):
+            database.init_database()
+            yield
 
 
 @pytest.mark.asyncio
