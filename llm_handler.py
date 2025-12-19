@@ -2,7 +2,7 @@ from openai import AsyncOpenAI
 from logging_config import logger
 import config  # Assuming config.py is in the same directory or accessible
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import asyncio
 import re
 from datetime import timezone
@@ -10,6 +10,131 @@ from message_utils import generate_discord_message_link, is_discord_message_link
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
 from gif_utils import is_gif_url, is_discord_emoji_url
+import httpx  # For Exa API calls
+
+# Initialize xAI Grok client (OpenAI-compatible)
+xai_client = AsyncOpenAI(
+    base_url=config.xai_base_url,  # 'https://api.x.ai/v1'
+    api_key=config.xai_api_key,
+    timeout=60.0
+)
+
+
+async def call_exa_answer(query: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Call Exa's /answer endpoint for web search queries with built-in LLM.
+
+    Args:
+        query: The search query
+        system_prompt: Optional system prompt for the LLM
+
+    Returns:
+        Dict containing 'answer' text and 'citations' list
+    """
+    try:
+        logger.info(f"Calling Exa /answer with query: {query[:50]}...")
+
+        headers = {
+            "x-api-key": config.exa_api_key,
+            "Content-Type": "application/json"
+        }
+
+        body = {
+            "query": query,
+            "text": True
+        }
+
+        if system_prompt:
+            body["systemPrompt"] = system_prompt
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{config.exa_base_url}/answer",
+                headers=headers,
+                json=body
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        answer = result.get("answer", "")
+        citations = result.get("citations", [])
+
+        logger.info(f"Exa /answer returned {len(citations)} citations")
+        return {
+            "answer": answer,
+            "citations": citations
+        }
+
+    except httpx.TimeoutException:
+        logger.error("Exa /answer request timed out")
+        raise
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Exa /answer HTTP error: {e.response.status_code} - {e.response.text}")
+        raise
+    except Exception as e:
+        logger.error(f"Error calling Exa /answer: {str(e)}", exc_info=True)
+        raise
+
+
+async def get_exa_contents(urls: List[str], summary_query: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Call Exa's /contents endpoint to get page content and optional summaries.
+
+    Args:
+        urls: List of URLs to fetch content from
+        summary_query: Optional query for AI-generated summary
+
+    Returns:
+        List of dicts containing 'url', 'text', and optionally 'summary'
+    """
+    try:
+        logger.info(f"Calling Exa /contents for {len(urls)} URL(s)")
+
+        headers = {
+            "x-api-key": config.exa_api_key,
+            "Content-Type": "application/json"
+        }
+
+        body = {
+            "urls": urls,
+            "text": True,
+            "livecrawl": "preferred"
+        }
+
+        if summary_query:
+            body["summary"] = {"query": summary_query}
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{config.exa_base_url}/contents",
+                headers=headers,
+                json=body
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        results = result.get("results", [])
+        logger.info(f"Exa /contents returned {len(results)} result(s)")
+
+        return [
+            {
+                "url": r.get("url", ""),
+                "title": r.get("title", ""),
+                "text": r.get("text", ""),
+                "summary": r.get("summary", "")
+            }
+            for r in results
+        ]
+
+    except httpx.TimeoutException:
+        logger.error("Exa /contents request timed out")
+        raise
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Exa /contents HTTP error: {e.response.status_code} - {e.response.text}")
+        raise
+    except Exception as e:
+        logger.error(f"Error calling Exa /contents: {str(e)}", exc_info=True)
+        raise
 
 def extract_urls_from_text(text: str) -> list[str]:
     """
@@ -92,7 +217,8 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
 
 async def call_llm_api(query, message_context=None):
     """
-    Call the LLM API with the user's query and return the response
+    Call the LLM API with the user's query and return the response.
+    Uses Exa /answer for web search queries with built-in LLM.
 
     Args:
         query (str): The user's query text
@@ -102,28 +228,13 @@ async def call_llm_api(query, message_context=None):
         str: The LLM's response or an error message
     """
     try:
-        logger.info(f"Calling LLM API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
+        logger.info(f"Calling Exa /answer API with query: {query[:50]}{'...' if len(query) > 50 else ''}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
-
-# Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-        
-        # Get the model from config or use default (Perplexity models)
-        model = getattr(config, 'llm_model', "sonar")
-        
         # Prepare the user content with message context if available
         user_content = query
-        if message_context:
-            context_parts = []
+        context_parts = []
 
+        if message_context:
             # Add referenced message (reply) context
             if message_context.get('referenced_message'):
                 ref_msg = message_context['referenced_message']
@@ -146,26 +257,21 @@ async def call_llm_api(query, message_context=None):
 
                     context_parts.append(f"**Linked Message {i+1}:**\nAuthor: {linked_author_name}\nTime: {linked_time_str}\nContent: {linked_content}")
 
-            if context_parts:
-                context_text = "\n\n".join(context_parts)
-                user_content = f"{context_text}\n\n**User's Question/Request:**\n{query}"
-                logger.debug(f"Added message context to LLM prompt: {len(context_parts)} context message(s)")
-
         # Check for URLs in the query and message context, add scraped content if available
         urls_in_query = extract_urls_from_text(query)
-        
+
         # Also check for URLs in message context (referenced messages, linked messages)
         context_urls = []
         if message_context:
             if message_context.get('referenced_message'):
                 ref_content = getattr(message_context['referenced_message'], 'content', '')
                 context_urls.extend(extract_urls_from_text(ref_content))
-            
+
             if message_context.get('linked_messages'):
                 for linked_msg in message_context['linked_messages']:
                     linked_content = getattr(linked_msg, 'content', '')
                     context_urls.extend(extract_urls_from_text(linked_content))
-        
+
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
 
@@ -219,64 +325,47 @@ async def call_llm_api(query, message_context=None):
                     logger.warning(f"Error retrieving scraped content for URL {url}: {e}")
 
             if scraped_content_parts:
-                scraped_content_text = "\n\n".join(scraped_content_parts)
-                if message_context:
-                    # If we already have message context, add scraped content to it
-                    user_content = f"{scraped_content_text}\n\n{user_content}"
-                else:
-                    # If no message context, add scraped content before the query
-                    user_content = f"{scraped_content_text}\n\n**User's Question/Request:**\n{query}"
-                logger.debug(f"Added scraped content to LLM prompt: {len(scraped_content_parts)} URL(s) with content")
+                context_parts.extend(scraped_content_parts)
+                logger.debug(f"Added scraped content to context: {len(scraped_content_parts)} URL(s) with content")
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),  # Optional site URL
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),  # Optional site title
-            },
-            model=model,  # Use the model from config
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts. \
-                    Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly. \
-                    Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours). \
-                    When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant. \
-                    IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord. \
-                    Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables. \
-                    Wide tables or tables with long content will be automatically reformatted into a card-style vertical layout for better mobile readability. \
-                    CRITICAL:Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            max_tokens=1000,  # Increased for better responses
-            temperature=0.7
-        )
+        # Build the final query with context for Exa
+        if context_parts:
+            context_text = "\n\n".join(context_parts)
+            user_content = f"{context_text}\n\n**User's Question/Request:**\n{query}"
+            logger.debug(f"Added {len(context_parts)} context part(s) to Exa query")
 
-        # Extract the response
-        message = completion.choices[0].message.content
+        # System prompt for Exa
+        system_prompt = """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
+Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly.
+Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours).
+When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant.
+IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord.
+Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables.
+CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."""
 
-        # Check if Perplexity returned citations
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity")
-            citations = completion.citations
+        # Call Exa /answer endpoint
+        result = await call_exa_answer(user_content, system_prompt)
+        message = result.get("answer", "")
+        citations = result.get("citations", [])
+
+        # Format citations for Discord (Exa returns list of citation objects)
+        formatted_citations = None
+        if citations:
+            logger.info(f"Found {len(citations)} citations from Exa")
+            # Extract URLs from Exa citation objects
+            formatted_citations = [c.get("url", c) if isinstance(c, dict) else c for c in citations]
 
         # Apply Discord formatting enhancements
-        # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
-        formatted_message = DiscordFormatter.format_llm_response(message, citations)
-        
-        logger.info(f"LLM API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
+        formatted_message = DiscordFormatter.format_llm_response(message, formatted_citations)
+
+        logger.info(f"Exa API response received successfully: {formatted_message[:50]}{'...' if len(formatted_message) > 50 else ''}")
         return formatted_message
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out")
+        logger.error("Exa API request timed out")
         return "Sorry, the request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API: {str(e)}", exc_info=True)
+        logger.error(f"Error calling Exa API: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while processing your request. Please try again later."
 
 async def call_llm_for_summary(messages, channel_name, date, hours=24):
@@ -428,144 +517,137 @@ Format: [Title](link) - why it matters - `username` TIMESTAMP
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
-        logger.info(f"Calling LLM API for channel summary: #{channel_name} for the past {time_period}")
+        logger.info(f"Calling xAI Grok for channel summary: #{channel_name} for the past {time_period}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return "Error: Perplexity API key is missing. Please contact the bot administrator."
-
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
-
-        # Make the API request with a higher token limit for summaries
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,  # Use the model from config
+        # Make the API request with xAI Grok (higher token limit for summaries)
+        completion = await xai_client.chat.completions.create(
+            model=config.grok_model,
             messages=[
                 {
                     "role": "system",
-                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). Search the web for context on shared links when helpful. CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
+                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            max_tokens=2500,  # Increased for very detailed summaries with extensive web context
+            max_tokens=2500,  # Increased for very detailed summaries
             temperature=0.5   # Lower temperature for more focused summaries
         )
 
         # Extract the response
         summary = completion.choices[0].message.content
 
-        # Check if Perplexity returned citations
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations from Perplexity for summary")
-            citations = completion.citations
-
         # Apply Discord formatting enhancements to the summary
-        # The formatter will convert [1], [2] etc. into clickable hyperlinked footnotes
-        formatted_summary = DiscordFormatter.format_llm_response(summary, citations)
+        formatted_summary = DiscordFormatter.format_llm_response(summary)
 
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
 
-        logger.info(f"LLM API summary received successfully: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
+        logger.info(f"xAI Grok summary received: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
 
         return formatted_summary
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during summary generation")
+        logger.error("xAI Grok request timed out during summary generation")
         return "Sorry, the summary request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling LLM API for summary: {str(e)}", exc_info=True)
+        logger.error(f"Error calling xAI Grok for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
-async def summarize_url_with_perplexity(url: str) -> Optional[str]:
-    """Scrape a URL with Firecrawl and summarize its content with Perplexity.
+async def summarize_url_with_exa(url: str) -> Optional[str]:
+    """Fetch and summarize a URL using Exa's /contents endpoint.
 
-    This function no longer relies on Perplexity to fetch the URL directly.
-    Instead, it uses Firecrawl to retrieve the page content and then calls
-    :func:`summarize_scraped_content` to have Perplexity summarize that text.
+    This function uses Exa to both fetch the page content and generate
+    an AI summary in a single call.
 
     Args:
-        url (str): The URL to scrape and summarize.
+        url (str): The URL to fetch and summarize.
 
     Returns:
-        Optional[str]: A formatted summary string with key points,
-        or None if scraping or summarization failed.
+        Optional[str]: A formatted summary string,
+        or None if fetching or summarization failed.
     """
     try:
-        # Import here to avoid circular imports
-        from firecrawl_handler import scrape_url_content
+        logger.info(f"Fetching and summarizing URL with Exa /contents: {url}")
 
-        logger.info(f"Scraping URL with Firecrawl for Perplexity summarization: {url}")
-        markdown_content = await scrape_url_content(url)
+        # Use Exa /contents to fetch and summarize in one call
+        summary_query = "Provide a concise summary (2-3 sentences) followed by 3-5 key points as bullet points."
+        results = await get_exa_contents([url], summary_query)
 
-        if not markdown_content:
-            logger.warning(f"No content scraped for URL: {url}")
+        if not results:
+            logger.warning(f"No content returned from Exa for URL: {url}")
             return None
 
-        # Summarize the scraped content using Perplexity as a pure text model
-        summary_text = await summarize_scraped_content(markdown_content, url)
-        if not summary_text:
-            logger.warning(f"Failed to summarize scraped content for URL: {url}")
+        result = results[0]
+        summary = result.get("summary", "")
+        text = result.get("text", "")
+
+        if not summary and not text:
+            logger.warning(f"Empty content from Exa for URL: {url}")
             return None
 
-        return summary_text
+        # If we got a summary from Exa, use it; otherwise fall back to the text
+        if summary:
+            formatted_response = DiscordFormatter.format_llm_response(summary)
+        else:
+            # If no summary, use xAI Grok to summarize the text
+            formatted_response = await summarize_scraped_content(text, url)
+
+        logger.info(f"Exa URL summary: {formatted_response[:50] if formatted_response else 'None'}...")
+        return formatted_response
 
     except Exception as e:
-        logger.error(f"Error scraping/summarizing URL {url} with Firecrawl + Perplexity: {str(e)}", exc_info=True)
+        logger.error(f"Error fetching/summarizing URL {url} with Exa: {str(e)}", exc_info=True)
         return None
 
-async def summarize_scraped_content(markdown_content: str, url: str) -> Optional[str]:
+
+# Keep old function name as alias for backward compatibility
+async def summarize_url_with_perplexity(url: str) -> Optional[str]:
+    """Deprecated: Use summarize_url_with_exa instead. Kept for backward compatibility."""
+    return await summarize_url_with_exa(url)
+
+
+async def summarize_scraped_content(markdown_content: str, url: str, use_exa: bool = False) -> Optional[str]:
     """
-    Call the LLM API to summarize scraped content from a URL.
+    Summarize scraped content from a URL.
+
+    Can optionally use Exa /contents to re-fetch and summarize, or use xAI Grok
+    to summarize the already-scraped markdown content.
 
     Args:
         markdown_content (str): The scraped content in markdown format
         url (str): The URL that was scraped
+        use_exa (bool): If True, use Exa /contents to fetch fresh content and summarize
 
     Returns:
         Optional[str]: A formatted summary string with key points, or None if summarization failed
     """
     try:
+        # If use_exa is True, use Exa /contents to get a fresh summary
+        if use_exa:
+            logger.info(f"Using Exa /contents to summarize URL: {url}")
+            summary_query = "Provide a concise summary (2-3 sentences) followed by 3-5 key points as bullet points."
+            results = await get_exa_contents([url], summary_query)
+
+            if results and results[0].get("summary"):
+                summary = results[0]["summary"]
+                formatted_response = DiscordFormatter.format_llm_response(summary)
+                logger.info(f"Exa summary: {formatted_response[:50]}...")
+                return formatted_response
+            # If Exa didn't return a summary, fall through to xAI Grok
+
+        # Use xAI Grok to summarize the markdown content
         # Truncate content if it's too long (to avoid token limits)
         max_content_length = 15000  # Adjust based on model's context window
         truncated_content = markdown_content[:max_content_length]
         if len(markdown_content) > max_content_length:
             truncated_content += "\n\n[Content truncated due to length...]"
 
-        logger.info(f"Summarizing content from URL: {url}")
+        logger.info(f"Summarizing content from URL with xAI Grok: {url}")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return None
-
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-
-        # Get the model from config or use default
-        model = getattr(config, 'llm_model', "sonar")
-
-        # Create the prompt for the LLM
+        # Create the prompt for xAI Grok
         prompt = f"""Analyze and summarize this content from {url}:
 
 {truncated_content}
@@ -575,13 +657,9 @@ Format your response as plain text with bullet points (use - for bullets).
 Do not include an introductory paragraph or title.
 Keep the summary brief and focused on the most important information."""
 
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,  # Use the model from config
+        # Make the API request using xAI Grok
+        completion = await xai_client.chat.completions.create(
+            model=config.grok_model,
             messages=[
                 {
                     "role": "system",
@@ -598,7 +676,7 @@ Keep the summary brief and focused on the most important information."""
 
         # Extract the response
         response_text = completion.choices[0].message.content
-        logger.info(f"LLM API summary received successfully: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+        logger.info(f"xAI Grok summary received: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
         # Clean up the response
         cleaned_response = response_text.strip()
@@ -621,7 +699,7 @@ Keep the summary brief and focused on the most important information."""
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error(f"LLM API request timed out while summarizing content from URL {url}")
+        logger.error(f"xAI Grok request timed out while summarizing content from URL {url}")
         return None
     except Exception as e:
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
@@ -750,30 +828,11 @@ Respond with a JSON object in this exact format:
 
 Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions. Be strict about gaming detection."""
 
-        logger.info(f"Calling LLM API for point analysis of {len(messages)} messages")
+        logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages")
 
-        # Check if Perplexity API key exists
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found in config.py or is empty")
-            return None
-
-        # Initialize the OpenAI client with Perplexity base URL
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-
-        # Get the model from config
-        model = getattr(config, 'llm_model', "sonar")
-
-        # Make the API request
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,
+        # Make the API request using xAI Grok
+        completion = await xai_client.chat.completions.create(
+            model=config.grok_model,
             messages=[
                 {
                     "role": "system",
@@ -790,7 +849,7 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
 
         # Extract the response
         response_text = completion.choices[0].message.content
-        logger.info(f"LLM point analysis received: {response_text[:100]}...")
+        logger.info(f"xAI Grok point analysis received: {response_text[:100]}...")
 
         # Parse the JSON response
         try:
@@ -909,6 +968,7 @@ async def call_llm_with_database_context(
 ) -> str:
     """
     Answer a question using context from database messages.
+    Uses xAI Grok for LLM processing.
 
     Args:
         query: The user's question
@@ -919,11 +979,7 @@ async def call_llm_with_database_context(
         str: The LLM's response
     """
     try:
-        logger.info(f"Calling LLM with database context for query: {query[:50]}...")
-
-        if not hasattr(config, 'perplexity') or not config.perplexity:
-            logger.error("Perplexity API key not found")
-            return "Error: API key is missing. Please contact the bot administrator."
+        logger.info(f"Calling xAI Grok with database context for query: {query[:50]}...")
 
         # Format the messages as context
         if not messages:
@@ -978,15 +1034,6 @@ async def call_llm_with_database_context(
         if len(context_text) > max_context_length:
             context_text = context_text[:max_context_length] + "\n\n[Context truncated due to length...]"
 
-        # Initialize the client
-        openai_client = AsyncOpenAI(
-            base_url=getattr(config, 'perplexity_base_url', 'https://api.perplexity.ai'),
-            api_key=config.perplexity,
-            timeout=60.0
-        )
-
-        model = getattr(config, 'llm_model', "sonar")
-
         # Build the prompt
         user_prompt = f"""Based on the following Discord conversation history from our tech community, please answer this question:
 
@@ -1003,12 +1050,9 @@ Instructions:
 - Be concise and direct
 - If multiple people discussed the topic, summarize their different perspectives"""
 
-        completion = await openai_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, 'http_referer', 'https://techfren.net'),
-                "X-Title": getattr(config, 'x_title', 'TechFren Discord Bot'),
-            },
-            model=model,
+        # Use xAI Grok for database context queries
+        completion = await xai_client.chat.completions.create(
+            model=config.grok_model,
             messages=[
                 {
                     "role": "system",
@@ -1025,20 +1069,14 @@ Instructions:
 
         response = completion.choices[0].message.content
 
-        # Handle citations if available
-        citations = None
-        if hasattr(completion, 'citations') and completion.citations:
-            logger.info(f"Found {len(completion.citations)} citations")
-            citations = completion.citations
-
-        formatted_response = DiscordFormatter.format_llm_response(response, citations)
-        logger.info(f"Database context query answered successfully")
+        formatted_response = DiscordFormatter.format_llm_response(response)
+        logger.info(f"xAI Grok database context query answered successfully")
 
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error("LLM API request timed out during database context query")
+        logger.error("xAI Grok request timed out during database context query")
         return "Sorry, the request timed out. Please try again."
     except Exception as e:
-        logger.error(f"Error answering query with database context: {str(e)}", exc_info=True)
+        logger.error(f"Error answering query with xAI Grok database context: {str(e)}", exc_info=True)
         return "Sorry, an error occurred while processing your question."

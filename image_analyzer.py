@@ -1,8 +1,8 @@
 """
-Image analysis module using Perplexity Sonar (multimodal) API.
+Image analysis module using xAI Grok (multimodal) API.
 
-This module analyzes images from Discord attachments using Perplexity's
-Sonar models to generate descriptive text that can be included in
+This module analyzes images from Discord attachments using xAI's
+Grok models to generate descriptive text that can be included in
 message summaries.
 """
 
@@ -17,17 +17,17 @@ import config
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Initialize Perplexity client for image analysis if API key is configured
-perplexity_client: Optional[AsyncOpenAI] = None
-if getattr(config, "perplexity", None):
-    perplexity_client = AsyncOpenAI(
-        base_url=getattr(config, "perplexity_base_url", "https://api.perplexity.ai"),
-        api_key=config.perplexity,
+# Initialize xAI client for image analysis if API key is configured
+xai_client: Optional[AsyncOpenAI] = None
+if getattr(config, "xai_api_key", None):
+    xai_client = AsyncOpenAI(
+        base_url="https://api.x.ai/v1",
+        api_key=config.xai_api_key,
         timeout=60.0,
     )
-    logger.info("Perplexity Sonar image analysis client initialized")
+    logger.info("xAI Grok image analysis client initialized")
 else:
-    logger.warning("Perplexity API key not configured - image analysis will be disabled")
+    logger.warning("xAI API key not configured - image analysis will be disabled")
 
 # Supported image formats
 SUPPORTED_IMAGE_TYPES = {
@@ -94,7 +94,7 @@ def is_supported_image(content_type: str) -> bool:
 
 async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "image") -> Optional[str]:
     """
-    Analyze an image using Perplexity Sonar multimodal models.
+    Analyze an image using xAI Grok multimodal models.
 
     Args:
         image_bytes: The image data as bytes
@@ -104,8 +104,8 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
     Returns:
         Descriptive text about the image, or None if analysis failed
     """
-    if not perplexity_client:
-        logger.warning("Cannot analyze image: Perplexity API client not initialized")
+    if not xai_client:
+        logger.warning("Cannot analyze image: xAI API client not initialized")
         return None
 
     if not is_supported_image(content_type):
@@ -113,7 +113,7 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
         return None
 
     try:
-        # Convert to base64 and build a data URI for the Perplexity API
+        # Convert to base64 and build a data URI for the xAI API
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         mime_type = content_type.lower()
         if mime_type == "image/jpg":
@@ -126,14 +126,10 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             "Keep it informative but brief (2-3 sentences)."
         )
 
-        # Choose a model for image analysis (defaults to sonar-pro if not configured)
-        model = getattr(config, "image_llm_model", getattr(config, "llm_model", "sonar-pro"))
+        # Use Grok 4.1 Fast for image analysis (supports vision/multimodal)
+        model = "grok-4-1-fast-non-reasoning"
 
-        completion = await perplexity_client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": getattr(config, "http_referer", "https://techfren.net"),
-                "X-Title": getattr(config, "x_title", "TechFren Discord Bot"),
-            },
+        completion = await xai_client.chat.completions.create(
             model=model,
             messages=[
                 {
@@ -153,7 +149,7 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
 
         description = completion.choices[0].message.content
 
-        # Perplexity responses are typically plain text, but handle list-of-parts just in case
+        # xAI responses are typically plain text, but handle list-of-parts just in case
         if isinstance(description, list):
             parts = []
             for part in description:
@@ -165,14 +161,14 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             description = " ".join(parts)
 
         if not description:
-            logger.warning(f"No content in Perplexity response for {filename}")
+            logger.warning(f"No content in xAI response for {filename}")
             return None
 
-        logger.info(f"Successfully analyzed image with Perplexity: {filename}")
+        logger.info(f"Successfully analyzed image with xAI Grok: {filename}")
         return str(description).strip()
 
     except Exception as e:
-        logger.exception(f"Error analyzing image {filename} with Perplexity: {e}")
+        logger.exception(f"Error analyzing image {filename} with xAI Grok: {e}")
         return None
 
 
@@ -231,7 +227,7 @@ async def analyze_message_images(message) -> List[Dict[str, Any]]:
         List of analysis results for each image attachment
     """
     # Skip processing if image analysis is not configured
-    if perplexity_client is None:
+    if xai_client is None:
         return []
 
     if not hasattr(message, 'attachments') or not message.attachments:

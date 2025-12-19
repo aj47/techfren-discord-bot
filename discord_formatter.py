@@ -15,13 +15,123 @@ class DiscordFormatter:
     """Enhanced Discord message formatter with rich markdown support."""
     
     @staticmethod
-    def format_llm_response(content: str, citations: Optional[List[str]] = None) -> str:
+    def _normalize_citations(citations: Any) -> List[Dict[str, Any]]:
+        """
+        Normalize citations from different API formats into a unified format.
+
+        Handles:
+        - Perplexity format: List of URL strings
+        - Exa format: List of objects with url, title, publishedDate, author, etc.
+
+        Args:
+            citations: Citations in either format
+
+        Returns:
+            List of citation dictionaries with at least 'url' key
+        """
+        if not citations:
+            return []
+
+        normalized = []
+        for citation in citations:
+            if isinstance(citation, str):
+                # Perplexity format: simple URL string
+                normalized.append({'url': citation})
+            elif isinstance(citation, dict):
+                # Exa format: object with url and other metadata
+                if 'url' in citation:
+                    normalized.append(citation)
+                else:
+                    logger.warning(f"Citation object missing 'url' field: {citation}")
+            else:
+                logger.warning(f"Unknown citation format: {type(citation)}")
+
+        return normalized
+
+    @staticmethod
+    def _format_citation_link(index: int, citation: Dict[str, Any]) -> str:
+        """
+        Format a single citation as a clickable Discord link.
+
+        Args:
+            index: The citation number (1-based)
+            citation: Citation dictionary with url and optional metadata
+
+        Returns:
+            Formatted citation link
+        """
+        url = citation.get('url', '')
+        return f"[`[{index}]`]({url})"
+
+    @staticmethod
+    def _format_sources_section(citations: List[Dict[str, Any]]) -> str:
+        """
+        Format a sources section with citation metadata for Exa-style citations.
+
+        Args:
+            citations: List of citation dictionaries with metadata
+
+        Returns:
+            Formatted sources section string
+        """
+        if not citations:
+            return ""
+
+        # Check if any citations have metadata beyond just URL
+        has_metadata = any(
+            citation.get('title') or citation.get('author') or citation.get('publishedDate')
+            for citation in citations
+        )
+
+        if not has_metadata:
+            return ""
+
+        lines = ["\n\n📚 **Sources:**"]
+        for i, citation in enumerate(citations, 1):
+            url = citation.get('url', '')
+            title = citation.get('title', '')
+            author = citation.get('author', '')
+            published_date = citation.get('publishedDate', '')
+
+            # Build the source line
+            if title:
+                line = f"**{i}.** [{title}](<{url}>)"
+            else:
+                line = f"**{i}.** [Source {i}](<{url}>)"
+
+            # Add metadata if available
+            metadata_parts = []
+            if author:
+                metadata_parts.append(f"by {author}")
+            if published_date:
+                # Format date if it's in ISO format
+                try:
+                    from datetime import datetime
+                    if 'T' in published_date:
+                        date_obj = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+                        formatted_date = date_obj.strftime('%b %d, %Y')
+                        metadata_parts.append(formatted_date)
+                    else:
+                        metadata_parts.append(published_date)
+                except (ValueError, TypeError):
+                    metadata_parts.append(published_date)
+
+            if metadata_parts:
+                line += f" — *{', '.join(metadata_parts)}*"
+
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_llm_response(content: str, citations: Optional[List[Any]] = None) -> str:
         """
         Format an LLM response with enhanced Discord markdown.
 
         Args:
             content: The raw LLM response content
-            citations: Optional list of citation URLs
+            citations: Optional list of citations (supports both Perplexity URL strings
+                      and Exa citation objects with url, title, author, etc.)
 
         Returns:
             Formatted string with Discord markdown
@@ -31,11 +141,14 @@ class DiscordFormatter:
         # Convert markdown tables to ASCII tables before other formatting
         formatted = DiscordFormatter._convert_markdown_tables_to_ascii(formatted)
 
-        # Replace Perplexity-style citations [1], [2] with clickable links if citations provided
-        if citations:
-            for i, url in enumerate(citations, 1):
-                # Make citation numbers into clickable superscript-like links
-                formatted = formatted.replace(f"[{i}]", f"[`[{i}]`]({url})")
+        # Normalize citations to a unified format
+        normalized_citations = DiscordFormatter._normalize_citations(citations)
+
+        # Replace [1], [2] style citations with clickable links
+        if normalized_citations:
+            for i, citation in enumerate(normalized_citations, 1):
+                citation_link = DiscordFormatter._format_citation_link(i, citation)
+                formatted = formatted.replace(f"[{i}]", citation_link)
 
         # Enhanced formatting patterns
         formatting_rules = [
@@ -70,8 +183,14 @@ class DiscordFormatter:
             else:
                 formatted = re.sub(pattern, replacement, formatted)
 
+        # Add sources section for Exa-style citations with metadata
+        if normalized_citations:
+            sources_section = DiscordFormatter._format_sources_section(normalized_citations)
+            if sources_section:
+                formatted += sources_section
+
         return formatted
-    
+
     @staticmethod
     def format_summary_response(summary: str, channel_name: str, hours: int) -> str:
         """

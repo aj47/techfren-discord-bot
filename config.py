@@ -18,11 +18,42 @@ token = os.getenv('DISCORD_BOT_TOKEN')
 if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
-# Perplexity API Key (required)
+# =============================================================================
+# PRIMARY API CONFIGURATION (Exa + xAI Grok)
+# =============================================================================
+
+# Exa API Key (required for Exa search - primary search provider)
+# Environment variable: EXA_API_KEY
+exa_api_key = os.getenv('EXA_API_KEY')
+if not exa_api_key:
+    raise ValueError("EXA_API_KEY environment variable is required")
+
+# Exa API Base URL
+# Environment variable: EXA_BASE_URL
+exa_base_url = os.getenv('EXA_BASE_URL', 'https://api.exa.ai')
+
+# xAI Grok API Key (required for Grok LLM - primary LLM provider)
+# Environment variable: XAI_API_KEY
+xai_api_key = os.getenv('XAI_API_KEY')
+if not xai_api_key:
+    raise ValueError("XAI_API_KEY environment variable is required")
+
+# xAI Grok API Base URL
+# Environment variable: XAI_BASE_URL
+xai_base_url = os.getenv('XAI_BASE_URL', 'https://api.x.ai/v1')
+
+# Grok Model Configuration
+# Environment variable: GROK_MODEL
+# Default model is "grok-4-1-fast-non-reasoning" for non-reasoning tasks
+grok_model = os.getenv('GROK_MODEL', 'grok-4-1-fast-non-reasoning')
+
+# =============================================================================
+# FALLBACK API CONFIGURATION (Perplexity)
+# =============================================================================
+
+# Perplexity API Key (optional - fallback provider)
 # Environment variable: PERPLEXITY_API_KEY
 perplexity = os.getenv('PERPLEXITY_API_KEY')
-if not perplexity:
-    raise ValueError("PERPLEXITY_API_KEY environment variable is required")
 
 # LLM Model Configuration (optional)
 # Environment variable: LLM_MODEL
@@ -51,6 +82,8 @@ firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
 # Environment variable: APIFY_API_TOKEN
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
+
+# NOTE: xai_api_key is already defined above in the PRIMARY API CONFIGURATION section
 
 
 # Daily Summary Configuration (optional)
