@@ -7,6 +7,7 @@ from logging_config import logger
 from llm_handler import call_llm_for_summary, analyze_messages_for_points
 from message_utils import split_long_message
 import config # Assuming config.py is accessible
+from twitter_poster import is_twitter_posting_enabled, post_tweet
 
 # This variable will be set by the main bot script
 discord_client = None
@@ -249,6 +250,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
             except Exception as e:
                 logger.error(f"Error deleting old messages: {str(e)}", exc_info=True)
 
+            # Auto-tweet the daily summary if enabled
+            await post_daily_summary_tweet(yesterday, successful_summaries, total_messages_processed)
+
         logger.info(f"Daily summarization complete. Generated {successful_summaries} summaries covering {total_messages_processed} messages.")
     except Exception as e:
         logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
@@ -258,6 +262,43 @@ async def run_daily_summarization_once(now: datetime | None = None):
 async def daily_channel_summarization():
     """Scheduled task wrapper that runs the daily summarization once per day."""
     await run_daily_summarization_once()
+
+
+async def post_daily_summary_tweet(date: datetime, summary_count: int, message_count: int) -> None:
+    """Post a tweet about the daily summary if Twitter posting is enabled.
+
+    Args:
+        date: The date of the summary
+        summary_count: Number of channel summaries generated
+        message_count: Total number of messages processed
+    """
+    if not is_twitter_posting_enabled():
+        logger.debug("Twitter auto-posting is disabled or not configured")
+        return
+
+    try:
+        date_str = date.strftime("%B %d") if date else "today"
+
+        # Create a concise tweet (max 280 chars)
+        # Example: "📊 Daily TechFren Summary - Dec 19\n\n✨ 3 channels summarized\n💬 245 messages processed\n\nJoin our Discord to see the full discussions! discord.gg/techfren"
+        tweet_text = (
+            f"📊 Daily TechFren Summary - {date_str}\n\n"
+            f"✨ {summary_count} channel{'s' if summary_count != 1 else ''} summarized\n"
+            f"💬 {message_count} messages processed\n\n"
+            f"Join our Discord to see the full discussions!"
+        )
+
+        # Post the tweet
+        result = await post_tweet(tweet_text)
+
+        if result:
+            logger.info(f"Successfully auto-tweeted daily summary: {result.get('id')}")
+        else:
+            logger.warning("Failed to auto-tweet daily summary")
+
+    except Exception as e:
+        logger.error(f"Error posting daily summary tweet: {str(e)}", exc_info=True)
+
 
 async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text, point_awards_data=None):
     """
