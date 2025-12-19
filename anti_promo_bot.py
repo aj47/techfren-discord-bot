@@ -52,7 +52,16 @@ if _anti_promo_action_raw not in VALID_ANTI_PROMO_ACTIONS:
 else:
     ANTI_PROMO_ACTION = _anti_promo_action_raw
 
-ANTI_PROMO_LOG_CHANNEL_ID = os.getenv('ANTI_PROMO_LOG_CHANNEL_ID')
+# Parse and validate ANTI_PROMO_LOG_CHANNEL_ID at module load time
+_anti_promo_log_channel_id_raw = os.getenv('ANTI_PROMO_LOG_CHANNEL_ID')
+if _anti_promo_log_channel_id_raw:
+    try:
+        ANTI_PROMO_LOG_CHANNEL_ID = int(_anti_promo_log_channel_id_raw)
+    except ValueError:
+        logger.warning(f"[ANTI-PROMO] Invalid ANTI_PROMO_LOG_CHANNEL_ID '{_anti_promo_log_channel_id_raw}', logging disabled")
+        ANTI_PROMO_LOG_CHANNEL_ID = None
+else:
+    ANTI_PROMO_LOG_CHANNEL_ID = None
 
 # Common promo bot patterns
 PROMO_PATTERNS = [
@@ -294,8 +303,11 @@ async def handle_suspicious_message(
 
 async def log_anti_promo_action(guild, user, analysis: Dict[str, Any], action: str):
     """Log anti-promo action to a designated channel."""
+    if ANTI_PROMO_LOG_CHANNEL_ID is None:
+        return  # Logging disabled (not configured or invalid)
+
     try:
-        channel = guild.get_channel(int(ANTI_PROMO_LOG_CHANNEL_ID))
+        channel = guild.get_channel(ANTI_PROMO_LOG_CHANNEL_ID)
         if not channel:
             return
 
