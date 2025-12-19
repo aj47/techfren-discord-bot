@@ -9,8 +9,10 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if it exists
-# Use override=True to prioritize .env file over system environment variables
-load_dotenv(override=True)
+# Explicit environment variables take precedence over .env file contents,
+# which is the expected behavior for production deployments where env vars
+# are set directly (e.g., via Docker, Kubernetes, or system configuration).
+load_dotenv()
 
 # Discord Bot Token (required)
 # Environment variable: DISCORD_BOT_TOKEN
