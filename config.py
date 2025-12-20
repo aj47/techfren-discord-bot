@@ -147,6 +147,15 @@ try:
 except (ValueError, TypeError):
     ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
 
+# GIF Bypass Configuration
+# Points required to bypass GIF rate limits
+try:
+    GIF_BYPASS_POINTS_COST = int(os.getenv('GIF_BYPASS_POINTS_COST', '100'))
+    if GIF_BYPASS_POINTS_COST < 1:
+        GIF_BYPASS_POINTS_COST = 1  # Minimum 1 point cost
+except (ValueError, TypeError):
+    GIF_BYPASS_POINTS_COST = 100  # Default to 100 if invalid value
+
 # Available colors for role customization
 # Format: {color_name: hex_value}
 # Each color has a light and dark variant
