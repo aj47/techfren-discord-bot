@@ -318,6 +318,9 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
     Automatically detect X/Twitter links in messages, scrape and summarize them,
     and reply to the message with the summary.
 
+    When a message contains multiple X/Twitter links, all summaries are combined into a single thread
+    to avoid cluttering the channel with multiple threads.
+
     Args:
         message: The Discord message to check for X/Twitter links
 
@@ -350,16 +353,18 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
 
         logger.info(f"Found {len(x_urls)} X/Twitter URL(s) in message {message.id}")
 
-        # Process each X URL
+        # Check if Apify API token is configured (check once for all URLs)
+        import config
+        if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
+            logger.warning("Apify API token not configured, skipping X post summarization")
+            return False
+
+        # Collect all summaries first before creating the thread
+        # This avoids creating a thread if all URLs fail to summarize
+        url_summaries = []
         for url in x_urls:
             try:
-                # Check if Apify API token is configured
-                import config
-                if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                    logger.warning("Apify API token not configured, skipping X post summarization")
-                    continue
-
-                # Scrape the X/Twitter content FIRST (before creating thread)
+                # Scrape the X/Twitter content
                 logger.info(f"Starting to scrape X post: {url}")
                 scraped_result = await scrape_twitter_content(url)
 
@@ -369,32 +374,57 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
 
                 markdown_content = scraped_result.get('markdown', '')
 
-                # Summarize the content BEFORE creating thread
+                # Summarize the content
                 logger.info(f"Summarizing scraped content for: {url}")
                 summary_text = await summarize_scraped_content(markdown_content, url)
 
-                if not summary_text:
-                    logger.warning(f"Failed to summarize X post: {url}")
-                    continue
-
-                # NOW create or get existing thread from the message (after Apify calls complete)
-                # Pass header text to create thread from bot's reply (avoids notifying the user)
-                from apify_handler import extract_tweet_id
-                tweet_id = extract_tweet_id(url)
-                thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
-                header_text = "📊 **X Post Summary:**"
-
-                thread, header_already_sent = await create_or_get_summary_thread(
-                    message, thread_name, header_text=header_text
-                )
-                if not thread:
-                    continue
-
-                # Build the response message - include header only if not already sent as reply
-                if header_already_sent:
-                    response = summary_text
+                if summary_text:
+                    from apify_handler import extract_tweet_id
+                    tweet_id = extract_tweet_id(url)
+                    url_summaries.append((url, summary_text, tweet_id))
                 else:
-                    response = f"{header_text}\n\n{summary_text}"
+                    logger.warning(f"Failed to summarize X post: {url}")
+
+            except Exception as e:
+                logger.error(f"Error processing X URL {url}: {str(e)}", exc_info=True)
+
+        if not url_summaries:
+            logger.warning(f"No X posts could be summarized for message {message.id}")
+            return False
+
+        # Create thread name based on number of posts
+        if len(url_summaries) == 1:
+            tweet_id = url_summaries[0][2]
+            thread_name = f"X Post Summary: {tweet_id[:20]}" if tweet_id else "X Post Summary"
+            header_text = "📊 **X Post Summary:**"
+        else:
+            thread_name = f"X Post Summaries ({len(url_summaries)} posts)"
+            header_text = f"📊 **X Post Summaries ({len(url_summaries)} posts):**"
+
+        # Create the thread once for all summaries
+        thread, header_already_sent = await create_or_get_summary_thread(
+            message, thread_name, header_text=header_text
+        )
+        if not thread:
+            logger.error(f"Failed to create thread for message {message.id}")
+            return False
+
+        # Post each summary to the thread
+        for i, (url, summary_text, tweet_id) in enumerate(url_summaries, 1):
+            try:
+                # For multiple posts, add a separator and URL header for each summary
+                if len(url_summaries) > 1:
+                    if i > 1:
+                        # Add separator between summaries (not before the first one)
+                        await thread.send("─" * 30)
+                    post_header = f"**Post {i}:** `{tweet_id[:20] if tweet_id else 'unknown'}`\n{url}\n\n"
+                    response = post_header + summary_text
+                else:
+                    # Single post - include header only if not already sent as reply
+                    if header_already_sent:
+                        response = summary_text
+                    else:
+                        response = f"{header_text}\n\n{summary_text}"
 
                 # Split into multiple messages if needed to respect Discord's 2000 character limit
                 if len(response) > 1900:
@@ -406,8 +436,9 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 # Post the summary directly to the thread
                 for part in message_parts:
                     await thread.send(part)
+
                 logger.info(
-                    f"Posted X post summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"Posted X post summary for {url} ({len(response)} chars total) in {len(message_parts)} part(s) "
                     f"to thread {thread.id} (thread name: {thread.name})"
                 )
 
@@ -424,15 +455,13 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
                 logger.info(f"Successfully processed X post: {url}")
 
             except Exception as e:
-                logger.error(f"Error processing X URL {url}: {str(e)}", exc_info=True)
-                # If thread was created before error, post error message to it
+                logger.error(f"Error posting summary for X URL {url}: {str(e)}", exc_info=True)
                 try:
-                    if 'thread' in locals() and thread:
-                        await thread.send(f"❌ Error processing X post: {str(e)[:100]}")
+                    await thread.send(f"❌ Error processing X post {url}: {str(e)[:100]}")
                 except:
                     pass
 
-        return len(x_urls) > 0
+        return len(url_summaries) > 0
 
     except Exception as e:
         logger.error(f"Error in handle_x_post_summary: {str(e)}", exc_info=True)
@@ -442,6 +471,9 @@ async def handle_link_summary(message: discord.Message) -> bool:
     """
     Automatically detect non-X/Twitter URLs in messages, summarize them using Perplexity directly,
     and reply to the message with the summary.
+
+    When a message contains multiple links, all summaries are combined into a single thread
+    to avoid cluttering the channel with multiple threads.
 
     Args:
         message: The Discord message to check for URLs
@@ -491,35 +523,62 @@ async def handle_link_summary(message: discord.Message) -> bool:
 
         logger.info(f"Found {len(regular_urls)} regular URL(s) in message {message.id}")
 
-        # Process each URL
+        # Collect all summaries first before creating the thread
+        # This avoids creating a thread if all URLs fail to summarize
+        url_summaries = []
         for url in regular_urls:
             try:
                 # Summarize the URL directly using Perplexity
                 logger.info(f"Starting to summarize URL with Perplexity: {url}")
                 summary_text = await summarize_url_with_perplexity(url)
 
-                if not summary_text:
-                    logger.warning(f"Failed to summarize URL: {url}")
-                    continue
-
-                # Create or get existing thread from the message
-                # Pass header text to create thread from bot's reply (avoids notifying the user)
-                parsed_url = urlparse(url)
-                domain = parsed_url.netloc or "Link"
-                thread_name = f"Link Summary: {domain[:40]}"  # Limit length
-                header_text = "🔗 **Link Summary:**"
-
-                thread, header_already_sent = await create_or_get_summary_thread(
-                    message, thread_name, header_text=header_text
-                )
-                if not thread:
-                    continue
-
-                # Build the response message - include header only if not already sent as reply
-                if header_already_sent:
-                    response = summary_text
+                if summary_text:
+                    url_summaries.append((url, summary_text))
                 else:
-                    response = f"{header_text}\n\n{summary_text}"
+                    logger.warning(f"Failed to summarize URL: {url}")
+            except Exception as e:
+                logger.error(f"Error summarizing URL {url}: {str(e)}", exc_info=True)
+
+        if not url_summaries:
+            logger.warning(f"No URLs could be summarized for message {message.id}")
+            return False
+
+        # Create thread name based on number of links
+        if len(url_summaries) == 1:
+            parsed_url = urlparse(url_summaries[0][0])
+            domain = parsed_url.netloc or "Link"
+            thread_name = f"Link Summary: {domain[:40]}"
+            header_text = "🔗 **Link Summary:**"
+        else:
+            thread_name = f"Link Summaries ({len(url_summaries)} links)"
+            header_text = f"🔗 **Link Summaries ({len(url_summaries)} links):**"
+
+        # Create the thread once for all summaries
+        thread, header_already_sent = await create_or_get_summary_thread(
+            message, thread_name, header_text=header_text
+        )
+        if not thread:
+            logger.error(f"Failed to create thread for message {message.id}")
+            return False
+
+        # Post each summary to the thread
+        for i, (url, summary_text) in enumerate(url_summaries, 1):
+            try:
+                # For multiple links, add a separator and URL header for each summary
+                if len(url_summaries) > 1:
+                    parsed_url = urlparse(url)
+                    domain = parsed_url.netloc or "Link"
+                    if i > 1:
+                        # Add separator between summaries (not before the first one)
+                        await thread.send("─" * 30)
+                    link_header = f"**Link {i}: {domain}**\n{url}\n\n"
+                    response = link_header + summary_text
+                else:
+                    # Single link - include header only if not already sent as reply
+                    if header_already_sent:
+                        response = summary_text
+                    else:
+                        response = f"{header_text}\n\n{summary_text}"
 
                 # Split into multiple messages if needed to respect Discord's 2000 character limit
                 if len(response) > 1900:
@@ -531,8 +590,9 @@ async def handle_link_summary(message: discord.Message) -> bool:
                 # Post the summary directly to the thread
                 for part in message_parts:
                     await thread.send(part)
+
                 logger.info(
-                    f"Posted link summary ({len(response)} chars total) in {len(message_parts)} part(s) "
+                    f"Posted link summary for {url} ({len(response)} chars total) in {len(message_parts)} part(s) "
                     f"to thread {thread.id} (thread name: {thread.name})"
                 )
 
@@ -549,15 +609,13 @@ async def handle_link_summary(message: discord.Message) -> bool:
                 logger.info(f"Successfully processed URL: {url}")
 
             except Exception as e:
-                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
-                # If thread was created before error, post error message to it
+                logger.error(f"Error posting summary for URL {url}: {str(e)}", exc_info=True)
                 try:
-                    if 'thread' in locals() and thread:
-                        await thread.send(f"❌ Error processing link: {str(e)[:100]}")
+                    await thread.send(f"❌ Error processing link {url}: {str(e)[:100]}")
                 except:
                     pass
 
-        return len(regular_urls) > 0
+        return len(url_summaries) > 0
 
     except Exception as e:
         logger.error(f"Error in handle_link_summary: {str(e)}", exc_info=True)
