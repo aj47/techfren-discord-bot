@@ -28,115 +28,10 @@ from image_analyzer import analyze_message_images  # Import image analysis funct
 from gif_utils import is_gif_url, is_discord_emoji_url
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
-GIF_BYPASS_VIEW_TIMEOUT = 60  # seconds before bypass button expires
-
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
 _gif_warned_users = {}
 
-
-class GifBypassView(discord.ui.View):
-    """A view with a button to bypass GIF rate limits using points."""
-
-    def __init__(self, user_id: str, guild_id: str, bypass_cost: int, original_message_content: str, original_message_attachments: list):
-        super().__init__(timeout=GIF_BYPASS_VIEW_TIMEOUT)
-        self.user_id = user_id
-        self.guild_id = guild_id
-        self.bypass_cost = bypass_cost
-        self.original_message_content = original_message_content
-        self.original_message_attachments = original_message_attachments
-        self.bypass_used = False
-
-    @discord.ui.button(label="🎟️ Use Points to Bypass", style=discord.ButtonStyle.primary)
-    async def bypass_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handle the bypass button click."""
-        # Verify it's the same user
-        if str(interaction.user.id) != self.user_id:
-            await interaction.response.send_message(
-                "❌ Only the original poster can use this bypass.",
-                ephemeral=True
-            )
-            return
-
-        if self.bypass_used:
-            await interaction.response.send_message(
-                "❌ This bypass has already been used.",
-                ephemeral=True
-            )
-            return
-
-        # Set flag immediately to prevent concurrent execution
-        self.bypass_used = True
-        points_deducted = False  # Track if points were deducted to prevent reset after deduction
-
-        try:
-            # Check if user is still rate limited (cooldown may have expired during 60s view timeout)
-            can_post, _ = await check_gif_rate_limit(self.user_id)
-            if can_post:
-                # User can now post without paying - cooldown expired
-                self.bypass_used = False  # Reset since bypass wasn't needed
-                await interaction.response.send_message(
-                    "✅ Good news! Your GIF cooldown has expired. You can now post a GIF without using points!",
-                    ephemeral=True
-                )
-                return
-
-            # Check if user has enough points
-            current_points = database.get_user_points(self.user_id, self.guild_id)
-            if current_points < self.bypass_cost:
-                self.bypass_used = False  # Reset since we didn't actually use it
-                await interaction.response.send_message(
-                    f"❌ You need {self.bypass_cost} points to bypass the GIF limit, but you only have {current_points} points.",
-                    ephemeral=True
-                )
-                return
-
-            # Deduct points
-            success = database.deduct_user_points(self.user_id, self.guild_id, self.bypass_cost)
-            if not success:
-                self.bypass_used = False  # Reset since deduction failed
-                await interaction.response.send_message(
-                    "❌ Failed to deduct points. Please try again.",
-                    ephemeral=True
-                )
-                return
-
-            # Mark that points have been deducted - don't reset bypass_used after this point
-            points_deducted = True
-
-            # Record the bypass in the GIF limiter
-            await record_gif_bypass(self.user_id)
-
-            # Disable the button
-            button.disabled = True
-            button.label = "✅ Bypass Used"
-            button.style = discord.ButtonStyle.success
-
-            # Get remaining points
-            remaining_points = database.get_user_points(self.user_id, self.guild_id)
-
-            # Send confirmation
-            await interaction.response.edit_message(
-                content=f"✅ GIF bypass used! {self.bypass_cost} points deducted. You now have {remaining_points} points.\n\n"
-                        f"You can now repost your GIF.",
-                view=self
-            )
-
-            logger.info(f"User {self.user_id} used GIF bypass for {self.bypass_cost} points in guild {self.guild_id}")
-        except Exception:
-            # Only reset bypass_used if points haven't been deducted yet
-            # This prevents double-charging if an error occurs after points are deducted
-            if not points_deducted:
-                self.bypass_used = False
-            raise
-
-    async def on_timeout(self):
-        """Called when the view times out."""
-        # Disable all buttons when the view times out
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = True
-        # Note: We can't edit the message here since we don't have access to it
 
 
 def _format_gif_cooldown(seconds_remaining: int) -> str:
@@ -1107,50 +1002,24 @@ async def on_message(message):
                         # Send rate limit warning with bypass option
                         wait_text = _format_gif_cooldown(seconds_remaining)
                         bypass_cost = config.GIF_BYPASS_POINTS_COST
-                        guild_id = str(message.guild.id) if message.guild else None
-                        bypass_view = None
 
-                        if guild_id:
-                            user_points = database.get_user_points(user_id, guild_id)
-
-                            if user_points >= bypass_cost:
-                                warning_message = (
-                                    f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                    f"Please wait {wait_text} before posting another GIF.\n\n"
-                                    f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                                )
-                                bypass_view = GifBypassView(
-                                    user_id=user_id,
-                                    guild_id=guild_id,
-                                    bypass_cost=bypass_cost,
-                                    original_message_content=message.content,
-                                    original_message_attachments=[a.url for a in message.attachments]
-                                )
-                            else:
-                                points_needed = bypass_cost - user_points
-                                warning_message = (
-                                    f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                    f"Please wait {wait_text} before posting another GIF.\n\n"
-                                    f"💰 GIF bypass costs {bypass_cost} points. You have {user_points} points "
-                                    f"({points_needed} more needed). This message will be deleted in 30 seconds."
-                                )
-                        else:
-                            warning_message = (
-                                f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                f"Please wait {wait_text} before posting another GIF. "
-                                f"This message will be deleted in 30 seconds."
-                            )
+                        warning_message = (
+                            f"{message.author.mention} You can only post one GIF every 5 minutes. "
+                            f"Please wait {wait_text} before posting another GIF.\n\n"
+                            f"💰 Use `/gif-bypass` to skip the wait for {bypass_cost} points. "
+                            f"This message will be deleted in 30 seconds."
+                        )
 
                         warning_msg = None
                         try:
-                            warning_msg = await message.channel.send(warning_message, view=bypass_view)
+                            warning_msg = await message.channel.send(warning_message)
                             # Mark user as warned for the next 5 minutes
                             _gif_warned_users[user_id] = now + timedelta(minutes=5)
                             logger.debug(f"User {user_id} warned about GIF limit (forward/reply), will suppress warnings until {_gif_warned_users[user_id]}")
                         except Exception as send_error:
                             logger.error(f"Error sending rate limit warning: {send_error}", exc_info=True)
 
-                        if warning_msg and bypass_view is None:
+                        if warning_msg:
                             async def delete_warning_after_delay():
                                 await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
                                 try:
@@ -1229,48 +1098,16 @@ async def on_message(message):
                 wait_text = _format_gif_cooldown(seconds_remaining)
                 bypass_cost = config.GIF_BYPASS_POINTS_COST
 
-                # Check user's points for bypass eligibility
-                guild_id = str(message.guild.id) if message.guild else None
-                user_points = 0
-                bypass_view = None
-
-                if guild_id:
-                    user_points = database.get_user_points(user_id, guild_id)
-
-                    if user_points >= bypass_cost:
-                        # User has enough points - show bypass option
-                        warning_message = (
-                            f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                            f"Please wait {wait_text} before posting another GIF.\n\n"
-                            f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                        )
-                        bypass_view = GifBypassView(
-                            user_id=user_id,
-                            guild_id=guild_id,
-                            bypass_cost=bypass_cost,
-                            original_message_content=message.content,
-                            original_message_attachments=[a.url for a in message.attachments]
-                        )
-                    else:
-                        # User doesn't have enough points - show progress
-                        points_needed = bypass_cost - user_points
-                        warning_message = (
-                            f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                            f"Please wait {wait_text} before posting another GIF.\n\n"
-                            f"💰 GIF bypass costs {bypass_cost} points. You have {user_points} points "
-                            f"({points_needed} more needed). This message will be deleted in 30 seconds."
-                        )
-                else:
-                    # No guild context (DM)
-                    warning_message = (
-                        f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                        f"Please wait {wait_text} before posting another GIF. "
-                        f"This message will be deleted in 30 seconds."
-                    )
+                warning_message = (
+                    f"{message.author.mention} You can only post one GIF every 5 minutes. "
+                    f"Please wait {wait_text} before posting another GIF.\n\n"
+                    f"💰 Use `/gif-bypass` to skip the wait for {bypass_cost} points. "
+                    f"This message will be deleted in 30 seconds."
+                )
 
                 warning_msg = None
                 try:
-                    warning_msg = await message.channel.send(warning_message, view=bypass_view)
+                    warning_msg = await message.channel.send(warning_message)
                     # Mark user as warned for the next 5 minutes
                     _gif_warned_users[user_id] = now + timedelta(minutes=5)
                     logger.debug(f"User {user_id} warned about GIF limit, will suppress warnings until {_gif_warned_users[user_id]}")
@@ -1284,8 +1121,7 @@ async def on_message(message):
                         exc_info=True,
                     )
 
-                if warning_msg and bypass_view is None:
-                    # Only auto-delete if there's no bypass option
+                if warning_msg:
                     async def delete_warning_after_delay():
                         await asyncio.sleep(GIF_WARNING_DELETE_DELAY)
                         try:
@@ -1579,6 +1415,80 @@ async def points_slash(interaction: discord.Interaction, user: discord.User = No
             "❌ An error occurred while retrieving points. Please try again later.",
             ephemeral=True
         )
+
+
+@bot.tree.command(name="gif-bypass", description="Use points to bypass the GIF rate limit")
+async def gif_bypass_slash(interaction: discord.Interaction):
+    """
+    Slash command to bypass GIF rate limit using points.
+    Responds ephemerally (only visible to the user).
+    """
+    try:
+        # Validate guild context
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        user_id = str(interaction.user.id)
+        guild_id = str(interaction.guild.id)
+        bypass_cost = config.GIF_BYPASS_POINTS_COST
+
+        # Check if user is currently rate limited
+        can_post, seconds_remaining = await check_gif_rate_limit(user_id)
+
+        if can_post:
+            await interaction.response.send_message(
+                "✅ You're not currently rate limited! You can post a GIF right now.",
+                ephemeral=True
+            )
+            return
+
+        # Check if user has enough points
+        current_points = database.get_user_points(user_id, guild_id)
+
+        if current_points < bypass_cost:
+            wait_text = _format_gif_cooldown(seconds_remaining)
+            await interaction.response.send_message(
+                f"❌ You need {bypass_cost} points to bypass the GIF limit, but you only have {current_points} points.\n\n"
+                f"⏳ Time remaining: {wait_text}",
+                ephemeral=True
+            )
+            return
+
+        # Deduct points
+        success = database.deduct_user_points(user_id, guild_id, bypass_cost)
+        if not success:
+            await interaction.response.send_message(
+                "❌ Failed to deduct points. Please try again.",
+                ephemeral=True
+            )
+            return
+
+        # Record the bypass in the GIF limiter
+        await record_gif_bypass(user_id)
+
+        # Get remaining points
+        remaining_points = database.get_user_points(user_id, guild_id)
+
+        await interaction.response.send_message(
+            f"✅ GIF bypass activated! {bypass_cost} points deducted.\n\n"
+            f"💰 Remaining points: {remaining_points}\n"
+            f"🎬 You can now post a GIF!",
+            ephemeral=True
+        )
+
+        logger.info(f"User {interaction.user.name} ({user_id}) used /gif-bypass for {bypass_cost} points in guild {guild_id}")
+
+    except Exception as e:
+        logger.error(f"Error in /gif-bypass command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "❌ An error occurred. Please try again later.",
+            ephemeral=True
+        )
+
 
 @bot.tree.command(name="leaderboard", description="View the top users by points")
 async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
