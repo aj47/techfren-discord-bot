@@ -1117,7 +1117,7 @@ async def on_message(message):
                                 warning_message = (
                                     f"{message.author.mention} You can only post one GIF every 5 minutes. "
                                     f"Please wait {wait_text} before posting another GIF.\n\n"
-                                    f"💰 **You have enough points to bypass!** Check your DMs for the bypass option."
+                                    f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
                                 )
                                 bypass_view = GifBypassView(
                                     user_id=user_id,
@@ -1126,32 +1126,6 @@ async def on_message(message):
                                     original_message_content=message.content,
                                     original_message_attachments=[a.url for a in message.attachments]
                                 )
-                                # Send bypass button via DM to user only
-                                try:
-                                    dm_message = (
-                                        f"🎬 **GIF Rate Limit in {message.guild.name}**\n\n"
-                                        f"You tried to post a GIF but you're rate limited. "
-                                        f"Please wait {wait_text} or use the button below to bypass.\n\n"
-                                        f"💰 **Bypass cost:** {bypass_cost} points (You have {user_points} points)"
-                                    )
-                                    await message.author.send(dm_message, view=bypass_view)
-                                    # DM sent successfully, don't include bypass_view in channel message
-                                    bypass_view = None
-                                except discord.Forbidden:
-                                    # User has DMs disabled, fall back to channel message with button
-                                    warning_message = (
-                                        f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                        f"Please wait {wait_text} before posting another GIF.\n\n"
-                                        f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                                    )
-                                except Exception as dm_error:
-                                    logger.warning(f"Failed to send GIF bypass DM to user {user_id}: {dm_error}")
-                                    # Fall back to channel message with button
-                                    warning_message = (
-                                        f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                        f"Please wait {wait_text} before posting another GIF.\n\n"
-                                        f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                                    )
                             else:
                                 points_needed = bypass_cost - user_points
                                 warning_message = (
@@ -1268,7 +1242,7 @@ async def on_message(message):
                         warning_message = (
                             f"{message.author.mention} You can only post one GIF every 5 minutes. "
                             f"Please wait {wait_text} before posting another GIF.\n\n"
-                            f"💰 **You have enough points to bypass!** Check your DMs for the bypass option."
+                            f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
                         )
                         bypass_view = GifBypassView(
                             user_id=user_id,
@@ -1277,32 +1251,6 @@ async def on_message(message):
                             original_message_content=message.content,
                             original_message_attachments=[a.url for a in message.attachments]
                         )
-                        # Send bypass button via DM to user only
-                        try:
-                            dm_message = (
-                                f"🎬 **GIF Rate Limit in {message.guild.name}**\n\n"
-                                f"You tried to post a GIF but you're rate limited. "
-                                f"Please wait {wait_text} or use the button below to bypass.\n\n"
-                                f"💰 **Bypass cost:** {bypass_cost} points (You have {user_points} points)"
-                            )
-                            await message.author.send(dm_message, view=bypass_view)
-                            # DM sent successfully, don't include bypass_view in channel message
-                            bypass_view = None
-                        except discord.Forbidden:
-                            # User has DMs disabled, fall back to channel message with button
-                            warning_message = (
-                                f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                f"Please wait {wait_text} before posting another GIF.\n\n"
-                                f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                            )
-                        except Exception as dm_error:
-                            logger.warning(f"Failed to send GIF bypass DM to user {user_id}: {dm_error}")
-                            # Fall back to channel message with button
-                            warning_message = (
-                                f"{message.author.mention} You can only post one GIF every 5 minutes. "
-                                f"Please wait {wait_text} before posting another GIF.\n\n"
-                                f"💰 **Or use {bypass_cost} points to bypass the limit!** (You have {user_points} points)"
-                            )
                     else:
                         # User doesn't have enough points - show progress
                         points_needed = bypass_cost - user_points
