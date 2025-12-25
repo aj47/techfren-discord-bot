@@ -794,7 +794,7 @@ async def on_message(message):
             if analysis['is_suspicious']:
                 handled = await handle_suspicious_message(message, analysis, bot.user)
                 if handled:
-                    return  # Message was handled (deleted), stop processing
+                    return  # Message was handled by anti-promo (deleted/kicked/banned), stop processing
         except Exception as e:
             logger.error(f"Error in anti-promo check: {e}", exc_info=True)
 

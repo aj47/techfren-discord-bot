@@ -167,10 +167,20 @@ def check_message_for_promo_patterns(content: str) -> Tuple[bool, List[str]]:
 
 
 def is_established_user(user_id: str) -> bool:
-    """Check if user has enough message history to be protected from kick/ban."""
+    """Check if user has enough message history to be protected from kick/ban.
+
+    Returns True (established) if:
+    - User has >= ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES in the past 6 months
+    - Database lookup fails (-1 return) - to avoid false-positive moderation during DB issues
+    """
     from database import get_user_message_count_since
     lookback_date = datetime.now(timezone.utc) - timedelta(days=180)  # 6 months
-    return get_user_message_count_since(user_id, lookback_date) >= ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES
+    message_count = get_user_message_count_since(user_id, lookback_date)
+    # Treat DB errors (-1) as established to avoid kick/ban during transient issues
+    if message_count < 0:
+        logger.warning(f"[ANTI-PROMO] DB lookup failed for user {user_id}, treating as established to avoid false-positive moderation")
+        return True
+    return message_count >= ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES
 
 
 def analyze_message_for_spam(
@@ -219,7 +229,9 @@ def analyze_message_for_spam(
 
     result['confidence'] = min(confidence_score, 1.0)
 
-    # Determine action based on factors
+    # Determine if message is suspicious - requires promo content from a new account/member
+    # Note: With current scoring (+0.5 promo, +0.3 new account, +0.2 new member),
+    # has_promo is required for any meaningful confidence score
     if has_promo and (is_new_account or is_new_member):
         result['is_suspicious'] = True
         # Established users (25+ messages in past 6 months) only get message deleted
@@ -228,9 +240,6 @@ def analyze_message_for_spam(
             result['reasons'].append("Established user - protected from kick/ban")
         else:
             result['recommended_action'] = ANTI_PROMO_ACTION
-    elif confidence_score >= 0.7:
-        result['is_suspicious'] = True
-        result['recommended_action'] = 'delete'
 
     return result
 

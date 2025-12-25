@@ -152,6 +152,12 @@ class TestIsEstablishedUser:
         mock_get_count.return_value = 25
         assert is_established_user("123456789") is True
 
+    @patch('database.get_user_message_count_since')
+    def test_db_error_returns_established(self, mock_get_count):
+        """Test that DB errors (-1) are treated as established to avoid false-positive moderation."""
+        mock_get_count.return_value = -1
+        assert is_established_user("123456789") is True
+
 
 class TestAnalyzeMessageForSpam:
     """Tests for analyze_message_for_spam function."""
