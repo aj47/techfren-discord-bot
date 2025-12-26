@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import re
+import time
 from urllib.parse import urlparse
 
 import os
@@ -89,6 +90,7 @@ def message_contains_gif(message: discord.Message) -> bool:
 # Using message_content intent (requires enabling in the Discord Developer Portal)
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
+intents.reactions = True  # Required for on_raw_reaction_add to detect reactions for link summarization
 
 # Use commands.Bot instead of discord.Client to support slash commands
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -1224,27 +1226,13 @@ async def on_message(message):
             # This is usually because the message already exists (common when bot restarts)
             logger.debug(f"Failed to store message {message.id} in database (likely duplicate)")
 
-        # Note: Automatic URL processing disabled - URLs are now processed on-demand when requested
-        # This saves resources and avoids processing URLs that nobody asks about
-        # Exception: X/Twitter posts are auto-summarized (see handle_x_post_summary below)
+        # Note: Link summarization is reaction-based, not automatic.
+        # See on_raw_reaction_add handler - links are summarized when:
+        # - 2+ thumbs up (👍) reactions are added to a message, OR
+        # - The bot (@techfren) adds a thumbs up reaction
+        # This saves resources and ensures only community-approved links are summarized.
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
-
-    # Handle X/Twitter post summarization automatically
-    try:
-        x_post_handled = await handle_x_post_summary(message)
-        if x_post_handled:
-            logger.debug(f"X post summary handled for message {message.id}")
-    except Exception as e:
-        logger.error(f"Error in X post summary handler: {str(e)}", exc_info=True)
-
-    # Handle regular link summarization automatically (non-X.com, non-YouTube URLs)
-    try:
-        link_handled = await handle_link_summary(message)
-        if link_handled:
-            logger.debug(f"Link summary handled for message {message.id}")
-    except Exception as e:
-        logger.error(f"Error in link summary handler: {str(e)}", exc_info=True)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
@@ -1290,6 +1278,177 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         logger.info(f"New GIF detected in edited message - User: {after.author.id}")
         # Reuse the same enforcement logic by treating it as a new message check
         await on_message(after)
+
+
+# Track messages that have already been successfully processed for link summarization
+# Maps message_id -> timestamp for TTL-based eviction
+# Entries expire after 24 hours to prevent unbounded memory growth
+_summarized_message_ids = {}
+_SUMMARIZED_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+# Track messages currently being processed to prevent race conditions
+# This prevents duplicate summarizations when multiple 👍 events arrive close together
+_processing_message_ids = set()
+
+
+def _cleanup_expired_summarized_ids():
+    """Remove expired entries from _summarized_message_ids to prevent memory leaks."""
+    current_time = time.time()
+    expired_keys = [
+        msg_id for msg_id, timestamp in _summarized_message_ids.items()
+        if current_time - timestamp > _SUMMARIZED_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        del _summarized_message_ids[key]
+
+
+def _is_message_summarized(message_id: int) -> bool:
+    """Check if a message has been successfully summarized (within TTL)."""
+    if message_id not in _summarized_message_ids:
+        return False
+    # Check if entry has expired
+    if time.time() - _summarized_message_ids[message_id] > _SUMMARIZED_TTL_SECONDS:
+        del _summarized_message_ids[message_id]
+        return False
+    return True
+
+
+def _is_message_being_processed(message_id: int) -> bool:
+    """Check if a message is currently being processed for summarization."""
+    return message_id in _processing_message_ids
+
+
+def _mark_message_processing(message_id: int) -> bool:
+    """
+    Mark a message as currently being processed.
+    Returns True if successfully marked (wasn't already processing), False otherwise.
+    """
+    if message_id in _processing_message_ids:
+        return False
+    _processing_message_ids.add(message_id)
+    return True
+
+
+def _unmark_message_processing(message_id: int):
+    """Remove a message from the processing set."""
+    _processing_message_ids.discard(message_id)
+
+
+def _mark_message_summarized(message_id: int):
+    """Mark a message as successfully summarized."""
+    _summarized_message_ids[message_id] = time.time()
+    # Also remove from processing set
+    _unmark_message_processing(message_id)
+    # Periodically clean up expired entries (every 100 new entries)
+    if len(_summarized_message_ids) % 100 == 0:
+        _cleanup_expired_summarized_ids()
+
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    """
+    Handle reaction-based link summarization using raw events.
+
+    Using on_raw_reaction_add instead of on_reaction_add ensures this works
+    for messages not in the bot's cache (e.g., older messages or after restart).
+
+    Links are summarized when:
+    - 2+ thumbs up (👍) reactions are added to a message containing links, OR
+    - The bot (@techfren) itself adds a thumbs up reaction to the message
+
+    This ensures only community-approved or bot-selected links are summarized.
+    """
+    # Only process thumbs up reactions
+    if str(payload.emoji) != '👍':
+        return
+
+    # Skip if already successfully processed this message
+    if _is_message_summarized(payload.message_id):
+        return
+
+    # Fetch the channel and message (required for raw events)
+    try:
+        channel = bot.get_channel(payload.channel_id)
+        if channel is None:
+            channel = await bot.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+    except discord.NotFound:
+        logger.debug(f"Message {payload.message_id} not found for reaction processing")
+        return
+    except discord.Forbidden:
+        logger.debug(f"No permission to fetch message {payload.message_id}")
+        return
+    except Exception as e:
+        logger.error(f"Error fetching message for reaction: {str(e)}")
+        return
+
+    # Skip bot messages
+    if message.author.bot:
+        return
+
+    # Check if this message contains any URLs
+    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
+    urls = re.findall(url_pattern, message.content or '')
+
+    if not urls:
+        return
+
+    # Count thumbs up reactions
+    thumbs_up_count = 0
+    for r in message.reactions:
+        if str(r.emoji) == '👍':
+            thumbs_up_count = r.count
+            break
+
+    # Check trigger conditions:
+    # 1. Bot itself added the reaction
+    # 2. 2+ total thumbs up reactions
+    bot_triggered = payload.user_id == bot.user.id
+    community_triggered = thumbs_up_count >= 2
+
+    if not (bot_triggered or community_triggered):
+        return
+
+    trigger_reason = "bot reaction" if bot_triggered else f"{thumbs_up_count} thumbs up"
+    logger.info(f"Link summarization triggered by {trigger_reason} for message {message.id}")
+
+    # Mark as processing to prevent race conditions from concurrent reaction events
+    # If another event already started processing, skip this one
+    if not _mark_message_processing(message.id):
+        logger.debug(f"Message {message.id} already being processed, skipping duplicate")
+        return
+
+    # Track if summarization was successful
+    summarization_succeeded = False
+
+    try:
+        # Handle X/Twitter post summarization
+        try:
+            x_post_handled = await handle_x_post_summary(message)
+            if x_post_handled:
+                logger.debug(f"X post summary handled for message {message.id}")
+                summarization_succeeded = True
+        except Exception as e:
+            logger.error(f"Error in X post summary handler: {str(e)}", exc_info=True)
+
+        # Handle regular link summarization (non-X.com, non-YouTube URLs)
+        try:
+            link_handled = await handle_link_summary(message)
+            if link_handled:
+                logger.debug(f"Link summary handled for message {message.id}")
+                summarization_succeeded = True
+        except Exception as e:
+            logger.error(f"Error in link summary handler: {str(e)}", exc_info=True)
+
+        # Only mark as processed after successful summarization
+        # This allows retries on transient failures
+        if summarization_succeeded:
+            _mark_message_summarized(message.id)
+    finally:
+        # If summarization failed, remove from processing set to allow retries
+        if not summarization_succeeded:
+            _unmark_message_processing(message.id)
+
 
 # Helper function for slash command handling
 async def _handle_slash_command_wrapper(
