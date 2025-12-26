@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import re
+import time
 from urllib.parse import urlparse
 
 import os
@@ -1279,15 +1280,50 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         await on_message(after)
 
 
-# Track messages that have already been processed for link summarization
-# This prevents duplicate processing when more reactions are added after initial trigger
-_summarized_message_ids = set()
+# Track messages that have already been successfully processed for link summarization
+# Maps message_id -> timestamp for TTL-based eviction
+# Entries expire after 24 hours to prevent unbounded memory growth
+_summarized_message_ids = {}
+_SUMMARIZED_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+def _cleanup_expired_summarized_ids():
+    """Remove expired entries from _summarized_message_ids to prevent memory leaks."""
+    current_time = time.time()
+    expired_keys = [
+        msg_id for msg_id, timestamp in _summarized_message_ids.items()
+        if current_time - timestamp > _SUMMARIZED_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        del _summarized_message_ids[key]
+
+
+def _is_message_summarized(message_id: int) -> bool:
+    """Check if a message has been successfully summarized (within TTL)."""
+    if message_id not in _summarized_message_ids:
+        return False
+    # Check if entry has expired
+    if time.time() - _summarized_message_ids[message_id] > _SUMMARIZED_TTL_SECONDS:
+        del _summarized_message_ids[message_id]
+        return False
+    return True
+
+
+def _mark_message_summarized(message_id: int):
+    """Mark a message as successfully summarized."""
+    _summarized_message_ids[message_id] = time.time()
+    # Periodically clean up expired entries (every 100 new entries)
+    if len(_summarized_message_ids) % 100 == 0:
+        _cleanup_expired_summarized_ids()
 
 
 @bot.event
-async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     """
-    Handle reaction-based link summarization.
+    Handle reaction-based link summarization using raw events.
+
+    Using on_raw_reaction_add instead of on_reaction_add ensures this works
+    for messages not in the bot's cache (e.g., older messages or after restart).
 
     Links are summarized when:
     - 2+ thumbs up (👍) reactions are added to a message containing links, OR
@@ -1296,13 +1332,27 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     This ensures only community-approved or bot-selected links are summarized.
     """
     # Only process thumbs up reactions
-    if str(reaction.emoji) != '👍':
+    if str(payload.emoji) != '👍':
         return
 
-    message = reaction.message
+    # Skip if already successfully processed this message
+    if _is_message_summarized(payload.message_id):
+        return
 
-    # Skip if already processed this message
-    if message.id in _summarized_message_ids:
+    # Fetch the channel and message (required for raw events)
+    try:
+        channel = bot.get_channel(payload.channel_id)
+        if channel is None:
+            channel = await bot.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+    except discord.NotFound:
+        logger.debug(f"Message {payload.message_id} not found for reaction processing")
+        return
+    except discord.Forbidden:
+        logger.debug(f"No permission to fetch message {payload.message_id}")
+        return
+    except Exception as e:
+        logger.error(f"Error fetching message for reaction: {str(e)}")
         return
 
     # Skip bot messages
@@ -1326,23 +1376,24 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     # Check trigger conditions:
     # 1. Bot itself added the reaction
     # 2. 2+ total thumbs up reactions
-    bot_triggered = user.id == bot.user.id
+    bot_triggered = payload.user_id == bot.user.id
     community_triggered = thumbs_up_count >= 2
 
     if not (bot_triggered or community_triggered):
         return
 
-    # Mark as processed before starting (to prevent race conditions)
-    _summarized_message_ids.add(message.id)
-
     trigger_reason = "bot reaction" if bot_triggered else f"{thumbs_up_count} thumbs up"
     logger.info(f"Link summarization triggered by {trigger_reason} for message {message.id}")
+
+    # Track if summarization was successful
+    summarization_succeeded = False
 
     # Handle X/Twitter post summarization
     try:
         x_post_handled = await handle_x_post_summary(message)
         if x_post_handled:
             logger.debug(f"X post summary handled for message {message.id}")
+            summarization_succeeded = True
     except Exception as e:
         logger.error(f"Error in X post summary handler: {str(e)}", exc_info=True)
 
@@ -1351,8 +1402,14 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
         link_handled = await handle_link_summary(message)
         if link_handled:
             logger.debug(f"Link summary handled for message {message.id}")
+            summarization_succeeded = True
     except Exception as e:
         logger.error(f"Error in link summary handler: {str(e)}", exc_info=True)
+
+    # Only mark as processed after successful summarization
+    # This allows retries on transient failures
+    if summarization_succeeded:
+        _mark_message_summarized(message.id)
 
 
 # Helper function for slash command handling
