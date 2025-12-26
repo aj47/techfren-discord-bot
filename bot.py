@@ -1228,8 +1228,7 @@ async def on_message(message):
 
         # Note: Link summarization is reaction-based, not automatic.
         # See on_raw_reaction_add handler - links are summarized when:
-        # - 2+ thumbs up (👍) reactions are added to a message, OR
-        # - The bot (@techfren) adds a thumbs up reaction
+        # - A thumbs up (👍) reaction is added to a message
         # This saves resources and ensures only community-approved links are summarized.
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
@@ -1352,11 +1351,8 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     Using on_raw_reaction_add instead of on_reaction_add ensures this works
     for messages not in the bot's cache (e.g., older messages or after restart).
 
-    Links are summarized when:
-    - 2+ thumbs up (👍) reactions are added to a message containing links, OR
-    - The bot (@techfren) itself adds a thumbs up reaction to the message
-
-    This ensures only community-approved or bot-selected links are summarized.
+    Links are summarized when a thumbs up (👍) reaction is added to a message containing links.
+    This ensures only community-approved links are summarized.
     """
     # Only process thumbs up reactions
     if str(payload.emoji) != '👍':
@@ -1400,16 +1396,13 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             thumbs_up_count = r.count
             break
 
-    # Check trigger conditions:
-    # 1. Bot itself added the reaction
-    # 2. 2+ total thumbs up reactions
-    bot_triggered = payload.user_id == bot.user.id
-    community_triggered = thumbs_up_count >= 2
+    # Check trigger condition: 1+ thumbs up reaction
+    community_triggered = thumbs_up_count >= 1
 
-    if not (bot_triggered or community_triggered):
+    if not community_triggered:
         return
 
-    trigger_reason = "bot reaction" if bot_triggered else f"{thumbs_up_count} thumbs up"
+    trigger_reason = f"{thumbs_up_count} thumbs up"
     logger.info(f"Link summarization triggered by {trigger_reason} for message {message.id}")
 
     # Mark as processing to prevent race conditions from concurrent reaction events
