@@ -1152,6 +1152,7 @@ def get_user_engagement_metrics(
             - message_count: Number of messages they posted
             - replies_received: Number of replies their messages received
             - unique_repliers: Number of unique users who replied to them
+            - replies_given: Number of replies they gave to other users' messages
             - engagement_score: Calculated engagement score (replies weighted more than messages)
     """
     try:
@@ -1196,6 +1197,7 @@ def get_user_engagement_metrics(
             # Count replies to each user's messages
             user_replies_received = {}  # author_id -> count of replies
             user_unique_repliers = {}   # author_id -> set of replier author_ids
+            user_replies_given = {}     # author_id -> count of replies they gave to others
 
             for row in messages:
                 reply_to_id = row['reply_to_message_id']
@@ -1213,6 +1215,10 @@ def get_user_engagement_metrics(
                             user_unique_repliers[original_author_id] = set()
                         user_unique_repliers[original_author_id].add(replier_id)
 
+                        # Track that this user gave a reply to someone else
+                        user_replies_given[replier_id] = \
+                            user_replies_given.get(replier_id, 0) + 1
+
             # Build the result with engagement scores
             result = {}
             all_author_ids = set(user_message_counts.keys())
@@ -1221,19 +1227,22 @@ def get_user_engagement_metrics(
                 message_count = user_message_counts.get(author_id, 0)
                 replies_received = user_replies_received.get(author_id, 0)
                 unique_repliers = len(user_unique_repliers.get(author_id, set()))
+                replies_given = user_replies_given.get(author_id, 0)
 
                 # Engagement score formula:
                 # - Each reply received is worth 3 points (shows their content sparked discussion)
                 # - Each unique replier adds 2 bonus points (shows broad engagement)
+                # - Each reply given to others is worth 2 points (shows they're helping others)
                 # - Each message sent is worth 1 point (baseline activity)
-                # This rewards quality (getting replies) over quantity (sending many messages)
-                engagement_score = (replies_received * 3) + (unique_repliers * 2) + message_count
+                # This rewards quality (getting replies) AND helpfulness (giving replies)
+                engagement_score = (replies_received * 3) + (unique_repliers * 2) + (replies_given * 2) + message_count
 
                 result[author_id] = {
                     'author_name': user_names.get(author_id, 'Unknown'),
                     'message_count': message_count,
                     'replies_received': replies_received,
                     'unique_repliers': unique_repliers,
+                    'replies_given': replies_given,
                     'engagement_score': engagement_score
                 }
 

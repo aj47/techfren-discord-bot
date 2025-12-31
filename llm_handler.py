@@ -781,23 +781,35 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
             )
 
             engagement_lines = []
+            helper_lines = []
             for author_id, metrics in sorted_metrics:
-                replies = metrics.get('replies_received', 0)
+                replies_received = metrics.get('replies_received', 0)
                 repliers = metrics.get('unique_repliers', 0)
+                replies_given = metrics.get('replies_given', 0)
                 msg_count = metrics.get('message_count', 0)
                 author_name = metrics.get('author_name', 'Unknown')
 
-                if replies > 0:  # Only show users who received replies
+                if replies_received > 0:  # Users who received replies (discussion starters)
                     engagement_lines.append(
-                        f"- {author_name} (ID: {author_id}): {replies} replies from {repliers} unique users, sent {msg_count} messages"
+                        f"- {author_name} (ID: {author_id}): {replies_received} replies from {repliers} unique users, sent {msg_count} messages"
                     )
 
-            if engagement_lines:
-                engagement_section = f"""
+                if replies_given > 0:  # Users who gave replies (helpers)
+                    helper_lines.append(
+                        f"- {author_name} (ID: {author_id}): replied to {replies_given} other users' messages"
+                    )
 
-USER ENGAGEMENT DATA (replies received to their messages):
+            if engagement_lines or helper_lines:
+                engagement_section = "\n"
+                if engagement_lines:
+                    engagement_section += f"""
+DISCUSSION STARTERS (users whose messages received replies):
 {chr(10).join(engagement_lines)}
-
+"""
+                if helper_lines:
+                    engagement_section += f"""
+ACTIVE HELPERS (users who replied to others - potential helpful contributors):
+{chr(10).join(helper_lines)}
 """
 
         # Create the prompt for point analysis
@@ -812,11 +824,18 @@ Award points based on:
 - Posting content that generates engagement from other users (replies, threads, discussions)
 
 CRITICAL - ENGAGEMENT-WEIGHTED SCORING:
-The engagement data below shows which users' messages sparked discussions. This is a KEY signal of value:
-- Users whose messages received many replies should be strongly considered for points
-- A user with 2-3 messages that got 10+ replies is MORE valuable than someone with 50 messages and 0 replies
-- Users who sparked discussions from multiple different community members (unique repliers) are especially valuable
-- Someone who posts rarely but always gets thoughtful replies is contributing more than a frequent poster who gets ignored
+The engagement data below shows TWO key signals of value:
+
+1. DISCUSSION STARTERS - Users whose messages received replies:
+   - Users whose messages received many replies should be strongly considered for points
+   - A user with 2-3 messages that got 10+ replies is MORE valuable than someone with 50 messages and 0 replies
+   - Someone who posts rarely but always gets thoughtful replies is contributing more than a frequent poster who gets ignored
+
+2. HELPFUL RESPONDERS - Users who replied to others:
+   - Users who actively reply to others' questions or messages are likely helping the community
+   - Someone who replied to 5+ different users' messages is probably being helpful
+   - Look at the CONTENT of their replies in the messages below - are they providing genuine help, suggestions, or answers?
+   - A single thoughtful, helpful reply to someone asking for help is VERY valuable
 {engagement_section}
 IMPORTANT GUIDELINES:
 - You do NOT have to award all {max_points} points if contributions don't warrant it
