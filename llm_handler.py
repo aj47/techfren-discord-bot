@@ -1048,10 +1048,68 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
                 # Recalculate total after scaling
                 total_awarded = sum(award["points"] for award in sanitized_awards)
 
+            # ==============================================
+            # ANTI-GAMING MITIGATIONS
+            # ==============================================
+
+            # 1. DIMINISHING RETURNS: 100% → 70% → 50% → 30% per message/day
+            # Users who post more messages get diminishing returns on their points
+            # This prevents "quality-looking spam" (posting 3-5 optimized messages)
+            diminishing_multipliers = [1.0, 0.7, 0.5, 0.3]  # 1st, 2nd, 3rd, 4th+ message
+
+            if engagement_metrics:
+                for award in sanitized_awards:
+                    author_id = award.get("author_id")
+                    if author_id and author_id in engagement_metrics:
+                        msg_count = engagement_metrics[author_id].get('message_count', 1)
+                        # Get the appropriate multiplier based on message count
+                        # msg_count 1 → index 0 (1.0), 2 → index 1 (0.7), etc.
+                        multiplier_index = min(msg_count - 1, len(diminishing_multipliers) - 1)
+                        multiplier = diminishing_multipliers[max(0, multiplier_index)]
+
+                        if multiplier < 1.0:
+                            original_points = award["points"]
+                            award["points"] = max(1, int(award["points"] * multiplier))
+                            award["reason"] = f"{award.get('reason', '')} [Diminishing returns: {msg_count} messages → ×{multiplier}]"
+                            logger.info(f"Diminishing returns: {award['author_name']} ({msg_count} msgs) - {original_points} → {award['points']} points (×{multiplier})")
+
+            # 2. ZERO-ENGAGEMENT DECAY: 50% penalty for messages with no engagement
+            # Only applies to users whose messages had 1-6 hours to accumulate engagement
+            # This catches "manufactured depth" - posts that sound good but nobody responds to
+            zero_engagement_penalty = 0.5
+
+            if engagement_metrics:
+                for award in sanitized_awards:
+                    author_id = award.get("author_id")
+                    if author_id and author_id in engagement_metrics:
+                        metrics = engagement_metrics[author_id]
+                        replies_received = metrics.get('replies_received', 0)
+                        mentions_received = metrics.get('mentions_received', 0)
+                        total_engagement = replies_received + mentions_received
+
+                        # Apply penalty if user posted messages but received zero engagement
+                        # This is a strong signal that their "quality" content wasn't actually valued
+                        if total_engagement == 0 and metrics.get('message_count', 0) > 0:
+                            original_points = award["points"]
+                            award["points"] = max(1, int(award["points"] * zero_engagement_penalty))
+                            award["reason"] = f"{award.get('reason', '')} [Zero engagement penalty: ×{zero_engagement_penalty}]"
+                            logger.info(f"Zero-engagement decay: {award['author_name']} (0 replies/mentions) - {original_points} → {award['points']} points (×{zero_engagement_penalty})")
+
+            # Recalculate total after mitigations
+            total_awarded = sum(award["points"] for award in sanitized_awards)
+
+            # Filter out awards that dropped to 0
+            sanitized_awards = [a for a in sanitized_awards if a["points"] > 0]
+            total_awarded = sum(award["points"] for award in sanitized_awards)
+
+            # ==============================================
+            # END ANTI-GAMING MITIGATIONS
+            # ==============================================
+
             result["awards"] = sanitized_awards
             result["total_awarded"] = total_awarded
 
-            logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points")
+            logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points (after anti-gaming mitigations)")
             return result
 
         except json.JSONDecodeError as e:
