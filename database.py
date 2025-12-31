@@ -1153,6 +1153,8 @@ def get_user_engagement_metrics(
             - replies_received: Number of replies their messages received
             - unique_repliers: Number of unique users who replied to them
             - replies_given: Number of replies they gave to other users' messages
+            - mentions_received: Number of @mentions they received from others
+            - mentions_given: Number of @mentions they gave to others
             - engagement_score: Calculated engagement score (replies weighted more than messages)
     """
     try:
@@ -1165,7 +1167,7 @@ def get_user_engagement_metrics(
             # Get all messages in the time range for this guild
             cursor.execute(
                 """
-                SELECT id, author_id, author_name, reply_to_message_id
+                SELECT id, author_id, author_name, reply_to_message_id, content
                 FROM messages
                 WHERE guild_id = ?
                 AND is_bot = 0
@@ -1181,9 +1183,11 @@ def get_user_engagement_metrics(
             messages = cursor.fetchall()
 
             # Build a map of message_id -> author_id for messages in this time range
+            # Also build author_id -> author_id map for mention detection
             message_authors = {}
             user_message_counts = {}
             user_names = {}
+            author_id_set = set()  # All author IDs in this time range
 
             for row in messages:
                 msg_id = row['id']
@@ -1193,16 +1197,26 @@ def get_user_engagement_metrics(
                 message_authors[msg_id] = author_id
                 user_message_counts[author_id] = user_message_counts.get(author_id, 0) + 1
                 user_names[author_id] = author_name
+                author_id_set.add(author_id)
 
             # Count replies to each user's messages
+            # Also count @mentions as a form of engagement (when someone mentions another user)
             user_replies_received = {}  # author_id -> count of replies
             user_unique_repliers = {}   # author_id -> set of replier author_ids
             user_replies_given = {}     # author_id -> count of replies they gave to others
+            user_mentions_received = {} # author_id -> count of @mentions they received
+            user_mentions_given = {}    # author_id -> count of @mentions they gave
+
+            # Regex to find Discord user mentions: <@user_id> or <@!user_id>
+            import re
+            mention_pattern = re.compile(r'<@!?(\d+)>')
 
             for row in messages:
                 reply_to_id = row['reply_to_message_id']
                 replier_id = row['author_id']
+                content = row['content'] or ''
 
+                # Track explicit replies
                 if reply_to_id and reply_to_id in message_authors:
                     original_author_id = message_authors[reply_to_id]
 
@@ -1219,6 +1233,18 @@ def get_user_engagement_metrics(
                         user_replies_given[replier_id] = \
                             user_replies_given.get(replier_id, 0) + 1
 
+                # Track @mentions as an additional engagement signal
+                # This catches responses written without using the reply button
+                mentioned_ids = mention_pattern.findall(content)
+                for mentioned_id in mentioned_ids:
+                    # Only count mentions of users who are active in this time period
+                    # and don't count self-mentions
+                    if mentioned_id in author_id_set and mentioned_id != replier_id:
+                        user_mentions_received[mentioned_id] = \
+                            user_mentions_received.get(mentioned_id, 0) + 1
+                        user_mentions_given[replier_id] = \
+                            user_mentions_given.get(replier_id, 0) + 1
+
             # Build the result with engagement scores
             result = {}
             all_author_ids = set(user_message_counts.keys())
@@ -1228,14 +1254,25 @@ def get_user_engagement_metrics(
                 replies_received = user_replies_received.get(author_id, 0)
                 unique_repliers = len(user_unique_repliers.get(author_id, set()))
                 replies_given = user_replies_given.get(author_id, 0)
+                mentions_received = user_mentions_received.get(author_id, 0)
+                mentions_given = user_mentions_given.get(author_id, 0)
 
                 # Engagement score formula:
                 # - Each reply received is worth 3 points (shows their content sparked discussion)
                 # - Each unique replier adds 2 bonus points (shows broad engagement)
                 # - Each reply given to others is worth 2 points (shows they're helping others)
+                # - Each @mention received is worth 2 points (someone addressed them directly)
+                # - Each @mention given is worth 1 point (they're engaging with others)
                 # - Each message sent is worth 1 point (baseline activity)
-                # This rewards quality (getting replies) AND helpfulness (giving replies)
-                engagement_score = (replies_received * 3) + (unique_repliers * 2) + (replies_given * 2) + message_count
+                # This rewards quality engagement over quantity
+                engagement_score = (
+                    (replies_received * 3) +
+                    (unique_repliers * 2) +
+                    (replies_given * 2) +
+                    (mentions_received * 2) +
+                    (mentions_given * 1) +
+                    message_count
+                )
 
                 result[author_id] = {
                     'author_name': user_names.get(author_id, 'Unknown'),
@@ -1243,6 +1280,8 @@ def get_user_engagement_metrics(
                     'replies_received': replies_received,
                     'unique_repliers': unique_repliers,
                     'replies_given': replies_given,
+                    'mentions_received': mentions_received,
+                    'mentions_given': mentions_given,
                     'engagement_score': engagement_score
                 }
 

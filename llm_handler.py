@@ -786,29 +786,45 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
                 replies_received = metrics.get('replies_received', 0)
                 repliers = metrics.get('unique_repliers', 0)
                 replies_given = metrics.get('replies_given', 0)
+                mentions_received = metrics.get('mentions_received', 0)
+                mentions_given = metrics.get('mentions_given', 0)
                 msg_count = metrics.get('message_count', 0)
                 author_name = metrics.get('author_name', 'Unknown')
 
-                if replies_received > 0:  # Users who received replies (discussion starters)
+                # Total engagement = replies + mentions (both ways of responding)
+                total_engagement_received = replies_received + mentions_received
+                total_engagement_given = replies_given + mentions_given
+
+                if total_engagement_received > 0:  # Users who received replies or mentions
+                    parts = []
+                    if replies_received > 0:
+                        parts.append(f"{replies_received} replies from {repliers} unique users")
+                    if mentions_received > 0:
+                        parts.append(f"{mentions_received} @mentions")
                     engagement_lines.append(
-                        f"- {author_name} (ID: {author_id}): {replies_received} replies from {repliers} unique users, sent {msg_count} messages"
+                        f"- {author_name} (ID: {author_id}): {', '.join(parts)}, sent {msg_count} messages"
                     )
 
-                if replies_given > 0:  # Users who gave replies (helpers)
+                if total_engagement_given > 0:  # Users who gave replies or mentioned others
+                    parts = []
+                    if replies_given > 0:
+                        parts.append(f"replied to {replies_given} messages")
+                    if mentions_given > 0:
+                        parts.append(f"@mentioned {mentions_given} users")
                     helper_lines.append(
-                        f"- {author_name} (ID: {author_id}): replied to {replies_given} other users' messages"
+                        f"- {author_name} (ID: {author_id}): {', '.join(parts)}"
                     )
 
             if engagement_lines or helper_lines:
                 engagement_section = "\n"
                 if engagement_lines:
                     engagement_section += f"""
-DISCUSSION STARTERS (users whose messages received replies):
+DISCUSSION STARTERS (users whose messages received replies or @mentions):
 {chr(10).join(engagement_lines)}
 """
                 if helper_lines:
                     engagement_section += f"""
-ACTIVE HELPERS (users who replied to others - potential helpful contributors):
+ACTIVE HELPERS (users who replied to or @mentioned others - potential helpful contributors):
 {chr(10).join(helper_lines)}
 """
 
@@ -826,16 +842,18 @@ Award points based on:
 CRITICAL - ENGAGEMENT-WEIGHTED SCORING:
 The engagement data below shows TWO key signals of value:
 
-1. DISCUSSION STARTERS - Users whose messages received replies:
-   - Users whose messages received many replies should be strongly considered for points
+1. DISCUSSION STARTERS - Users whose messages received replies OR @mentions:
+   - Users whose messages received many replies or @mentions should be strongly considered for points
    - A user with 2-3 messages that got 10+ replies is MORE valuable than someone with 50 messages and 0 replies
    - Someone who posts rarely but always gets thoughtful replies is contributing more than a frequent poster who gets ignored
+   - Being @mentioned by others indicates they sparked discussion or provided value worth referencing
 
-2. HELPFUL RESPONDERS - Users who replied to others:
-   - Users who actively reply to others' questions or messages are likely helping the community
-   - Someone who replied to 5+ different users' messages is probably being helpful
-   - Look at the CONTENT of their replies in the messages below - are they providing genuine help, suggestions, or answers?
+2. HELPFUL RESPONDERS - Users who replied to OR @mentioned others:
+   - Users who actively reply to others' questions or @mention people to help are likely helping the community
+   - Someone who replied to or @mentioned 5+ different users is probably being helpful
+   - Look at the CONTENT of their messages - are they providing genuine help, suggestions, or answers?
    - A single thoughtful, helpful reply to someone asking for help is VERY valuable
+   - Even without using Discord's reply button, someone who @mentions a user to answer their question IS helping
 {engagement_section}
 IMPORTANT GUIDELINES:
 - You do NOT have to award all {max_points} points if contributions don't warrant it
