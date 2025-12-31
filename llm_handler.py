@@ -862,7 +862,7 @@ The engagement data below shows TWO key signals of value:
 
 2. HELPFUL RESPONDERS - Users who replied to OR @mentioned others:
    - Users who actively reply to others' questions or @mention people to help are likely helping the community
-   - Someone who replied to or @mentioned 5+ different users is probably being helpful
+   - Someone who replied to 5+ messages or @mentioned others frequently is probably being helpful
    - Look at the CONTENT of their messages - are they providing genuine help, suggestions, or answers?
    - A single thoughtful, helpful reply to someone asking for help is VERY valuable
    - Even without using Discord's reply button, someone who @mentions a user to answer their question IS helping
@@ -917,18 +917,24 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
         # Final prompt length safety check - ensure total prompt doesn't exceed max size
         max_prompt_length = 80000
         if len(prompt) > max_prompt_length:
-            # Calculate how much we need to trim from engagement_section
             excess_length = len(prompt) - max_prompt_length
-            if engagement_section and len(engagement_section) > excess_length:
+
+            if engagement_section and len(engagement_section) > excess_length + 100:
                 # Truncate engagement_section to fit within limits
-                truncated_engagement = engagement_section[:len(engagement_section) - excess_length - 50]
+                # Guard against negative slice by using max(0, ...)
+                target_length = max(0, len(engagement_section) - excess_length - 50)
+                truncated_engagement = engagement_section[:target_length]
                 truncated_engagement += "\n[Engagement data truncated due to length...]"
-                # Rebuild prompt with truncated engagement section
                 prompt = prompt.replace(engagement_section, truncated_engagement)
                 logger.warning(f"Prompt exceeded {max_prompt_length} chars, truncated engagement_section by {excess_length} chars")
             else:
-                # If engagement_section is small or empty, truncate messages_text further
-                logger.warning(f"Prompt exceeded {max_prompt_length} chars but engagement_section too small to truncate meaningfully")
+                # Engagement section too small to fix the issue - truncate entire prompt
+                logger.warning(f"Prompt exceeded {max_prompt_length} chars, truncating entire prompt")
+                prompt = prompt[:max_prompt_length]
+
+            # Final safety check - ensure prompt is within limits
+            if len(prompt) > max_prompt_length:
+                logger.warning(f"Prompt still exceeds limit after truncation ({len(prompt)} > {max_prompt_length}), hard truncating")
                 prompt = prompt[:max_prompt_length]
 
         logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
