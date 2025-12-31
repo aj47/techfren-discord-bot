@@ -907,7 +907,24 @@ Respond with a JSON object in this exact format:
 
 Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions. Be strict about gaming detection."""
 
-        logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages")
+        # Final prompt length safety check - ensure total prompt doesn't exceed max size
+        max_prompt_length = 80000
+        if len(prompt) > max_prompt_length:
+            # Calculate how much we need to trim from engagement_section
+            excess_length = len(prompt) - max_prompt_length
+            if engagement_section and len(engagement_section) > excess_length:
+                # Truncate engagement_section to fit within limits
+                truncated_engagement = engagement_section[:len(engagement_section) - excess_length - 50]
+                truncated_engagement += "\n[Engagement data truncated due to length...]"
+                # Rebuild prompt with truncated engagement section
+                prompt = prompt.replace(engagement_section, truncated_engagement)
+                logger.warning(f"Prompt exceeded {max_prompt_length} chars, truncated engagement_section by {excess_length} chars")
+            else:
+                # If engagement_section is small or empty, truncate messages_text further
+                logger.warning(f"Prompt exceeded {max_prompt_length} chars but engagement_section too small to truncate meaningfully")
+                prompt = prompt[:max_prompt_length]
+
+        logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
 
         # Make the API request using xAI Grok
         completion = await xai_client.chat.completions.create(

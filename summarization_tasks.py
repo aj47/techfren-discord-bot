@@ -106,7 +106,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
         if all_messages_for_points:
             try:
                 # Get the set of author_ids that appear in the messages being analyzed
-                # This ensures we only include engagement metrics for users in the analyzed channels
+                # This ensures we only include engagement metrics for users who contributed messages
+                # in the analyzed content (note: their engagement metrics may include activity from
+                # all channels in the guild, but we only include users who appear in our analysis)
                 analyzed_author_ids = set(msg.get('author_id') for msg in all_messages_for_points if msg.get('author_id'))
 
                 # Calculate engagement metrics (replies received) for each user

@@ -1223,6 +1223,11 @@ def get_user_engagement_metrics(
                 content = row['content'] or ''
 
                 # Track explicit replies
+                # NOTE: We intentionally only count replies to messages that are also within
+                # the current analysis time window (i.e., reply_to_id exists in message_authors).
+                # This ensures engagement scoring focuses on conversations happening together
+                # within the same period. Replies to very old messages (sent before the window)
+                # don't represent ongoing engagement within the analysis period being scored.
                 if reply_to_id and reply_to_id in message_authors:
                     original_author_id = message_authors[reply_to_id]
 
