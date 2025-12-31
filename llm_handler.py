@@ -785,6 +785,9 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
 
             engagement_lines = []
             helper_lines = []
+            # Track how many users were eligible for each list (for truncation note)
+            eligible_engagement_count = 0
+            eligible_helper_count = 0
             for author_id, metrics in sorted_metrics:
                 replies_received = metrics.get('replies_received', 0)
                 repliers = metrics.get('unique_repliers', 0)
@@ -798,36 +801,40 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
                 total_engagement_received = replies_received + mentions_received
                 total_engagement_given = replies_given + mentions_given
 
-                if total_engagement_received > 0 and len(engagement_lines) < MAX_ENGAGEMENT_USERS:
-                    parts = []
-                    if replies_received > 0:
-                        parts.append(f"{replies_received} replies from {repliers} unique users")
-                    if mentions_received > 0:
-                        parts.append(f"@mentioned {mentions_received} times")
-                    engagement_lines.append(
-                        f"- {author_name} (ID: {author_id}): {', '.join(parts)}, sent {msg_count} messages"
-                    )
+                if total_engagement_received > 0:
+                    eligible_engagement_count += 1
+                    if len(engagement_lines) < MAX_ENGAGEMENT_USERS:
+                        parts = []
+                        if replies_received > 0:
+                            parts.append(f"{replies_received} replies from {repliers} unique users")
+                        if mentions_received > 0:
+                            parts.append(f"@mentioned {mentions_received} times")
+                        engagement_lines.append(
+                            f"- {author_name} (ID: {author_id}): {', '.join(parts)}, sent {msg_count} messages"
+                        )
 
-                if total_engagement_given > 0 and len(helper_lines) < MAX_ENGAGEMENT_USERS:
-                    parts = []
-                    if replies_given > 0:
-                        parts.append(f"replied to {replies_given} messages")
-                    if mentions_given > 0:
-                        parts.append(f"@mentioned others {mentions_given} times")
-                    helper_lines.append(
-                        f"- {author_name} (ID: {author_id}): {', '.join(parts)}"
-                    )
+                if total_engagement_given > 0:
+                    eligible_helper_count += 1
+                    if len(helper_lines) < MAX_ENGAGEMENT_USERS:
+                        parts = []
+                        if replies_given > 0:
+                            parts.append(f"replied to {replies_given} messages")
+                        if mentions_given > 0:
+                            parts.append(f"@mentioned others {mentions_given} times")
+                        helper_lines.append(
+                            f"- {author_name} (ID: {author_id}): {', '.join(parts)}"
+                        )
 
             if engagement_lines or helper_lines:
                 engagement_section = "\n"
                 if engagement_lines:
-                    truncation_note = f" (showing top {len(engagement_lines)})" if len(sorted_metrics) > MAX_ENGAGEMENT_USERS else ""
+                    truncation_note = f" (showing top {len(engagement_lines)})" if eligible_engagement_count > MAX_ENGAGEMENT_USERS else ""
                     engagement_section += f"""
 DISCUSSION STARTERS{truncation_note} (users whose messages received replies or @mentions):
 {chr(10).join(engagement_lines)}
 """
                 if helper_lines:
-                    truncation_note = f" (showing top {len(helper_lines)})" if len(sorted_metrics) > MAX_ENGAGEMENT_USERS else ""
+                    truncation_note = f" (showing top {len(helper_lines)})" if eligible_helper_count > MAX_ENGAGEMENT_USERS else ""
                     engagement_section += f"""
 ACTIVE HELPERS{truncation_note} (users who replied to or @mentioned others - potential helpful contributors):
 {chr(10).join(helper_lines)}
