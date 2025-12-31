@@ -705,13 +705,18 @@ Keep the summary brief and focused on the most important information."""
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
         return None
 
-async def analyze_messages_for_points(messages, max_points=50):
+async def analyze_messages_for_points(messages, max_points=50, engagement_metrics=None):
     """
     Call the LLM API to analyze messages and determine point awards based on community value.
 
     Args:
         messages (list): List of message dictionaries with author_id, author_name, content
         max_points (int): Maximum total points to award (default: 50)
+        engagement_metrics (dict): Optional dictionary mapping author_id to engagement data:
+            - message_count: Number of messages posted
+            - replies_received: Number of replies to their messages
+            - unique_repliers: Number of unique users who replied
+            - engagement_score: Calculated engagement score
 
     Returns:
         dict: Dictionary with 'awards' (list of user awards) and 'summary' (explanation text)
@@ -765,6 +770,76 @@ async def analyze_messages_for_points(messages, max_points=50):
         if len(messages_text) > max_input_length:
             messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
 
+        # Build engagement metrics section if available
+        engagement_section = ""
+        if engagement_metrics:
+            # Sort by engagement score (highest first) to highlight top engaged users
+            sorted_metrics = sorted(
+                engagement_metrics.items(),
+                key=lambda x: x[1].get('engagement_score', 0),
+                reverse=True
+            )
+
+            # Limit to top N users to prevent prompt overflow in large guilds
+            MAX_ENGAGEMENT_USERS = 25
+
+            engagement_lines = []
+            helper_lines = []
+            # Track how many users were eligible for each list (for truncation note)
+            eligible_engagement_count = 0
+            eligible_helper_count = 0
+            for author_id, metrics in sorted_metrics:
+                replies_received = metrics.get('replies_received', 0)
+                repliers = metrics.get('unique_repliers', 0)
+                replies_given = metrics.get('replies_given', 0)
+                mentions_received = metrics.get('mentions_received', 0)
+                mentions_given = metrics.get('mentions_given', 0)
+                msg_count = metrics.get('message_count', 0)
+                author_name = metrics.get('author_name', 'Unknown')
+
+                # Total engagement = replies + mentions (both ways of responding)
+                total_engagement_received = replies_received + mentions_received
+                total_engagement_given = replies_given + mentions_given
+
+                if total_engagement_received > 0:
+                    eligible_engagement_count += 1
+                    if len(engagement_lines) < MAX_ENGAGEMENT_USERS:
+                        parts = []
+                        if replies_received > 0:
+                            parts.append(f"{replies_received} replies from {repliers} unique users")
+                        if mentions_received > 0:
+                            parts.append(f"@mentioned {mentions_received} times")
+                        engagement_lines.append(
+                            f"- {author_name} (ID: {author_id}): {', '.join(parts)}, sent {msg_count} messages"
+                        )
+
+                if total_engagement_given > 0:
+                    eligible_helper_count += 1
+                    if len(helper_lines) < MAX_ENGAGEMENT_USERS:
+                        parts = []
+                        if replies_given > 0:
+                            parts.append(f"replied to {replies_given} messages")
+                        if mentions_given > 0:
+                            parts.append(f"@mentioned others {mentions_given} times")
+                        helper_lines.append(
+                            f"- {author_name} (ID: {author_id}): {', '.join(parts)}"
+                        )
+
+            if engagement_lines or helper_lines:
+                engagement_section = "\n"
+                if engagement_lines:
+                    truncation_note = f" (showing top {len(engagement_lines)})" if eligible_engagement_count > MAX_ENGAGEMENT_USERS else ""
+                    engagement_section += f"""
+DISCUSSION STARTERS{truncation_note} (users whose messages received replies or @mentions):
+{chr(10).join(engagement_lines)}
+"""
+                if helper_lines:
+                    truncation_note = f" (showing top {len(helper_lines)})" if eligible_helper_count > MAX_ENGAGEMENT_USERS else ""
+                    engagement_section += f"""
+ACTIVE HELPERS{truncation_note} (users who replied to or @mentioned others - potential helpful contributors):
+{chr(10).join(helper_lines)}
+"""
+
         # Create the prompt for point analysis
         prompt = f"""Analyze the following Discord messages from the past 24 hours and award points to users based on their contributions to the community. The total pool is {max_points} points per day.
 
@@ -776,11 +851,22 @@ Award points based on:
 - Creating a positive, welcoming community atmosphere
 - Posting content that generates engagement from other users (replies, threads, discussions)
 
-IMPORTANT - ENGAGEMENT VALUE:
-- If a user's post or link sparked replies, questions, or thread discussions from other members, this indicates the content was valuable to the community
-- Original posters who share content that generates meaningful engagement should be rewarded
-- Look for posts that started conversations, not just isolated messages
+CRITICAL - ENGAGEMENT-WEIGHTED SCORING:
+The engagement data below shows TWO key signals of value:
 
+1. DISCUSSION STARTERS - Users whose messages received replies OR @mentions:
+   - Users whose messages received many replies or @mentions should be strongly considered for points
+   - A user with 2-3 messages that got 10+ replies is MORE valuable than someone with 50 messages and 0 replies
+   - Someone who posts rarely but always gets thoughtful replies is contributing more than a frequent poster who gets ignored
+   - Being @mentioned by others indicates they sparked discussion or provided value worth referencing
+
+2. HELPFUL RESPONDERS - Users who replied to OR @mentioned others:
+   - Users who actively reply to others' questions or @mention people to help are likely helping the community
+   - Someone who replied to 5+ messages or @mentioned others frequently is probably being helpful
+   - Look at the CONTENT of their messages - are they providing genuine help, suggestions, or answers?
+   - A single thoughtful, helpful reply to someone asking for help is VERY valuable
+   - Even without using Discord's reply button, someone who @mentions a user to answer their question IS helping
+{engagement_section}
 IMPORTANT GUIDELINES:
 - You do NOT have to award all {max_points} points if contributions don't warrant it
 - Only award points for genuine, valuable contributions
@@ -802,12 +888,12 @@ CRITICAL - ANTI-GAMING RULES:
 - If you suspect gaming behavior, award 0 points to that user
 - Be STRICT and CONSERVATIVE - when in doubt, don't award points
 
-EVALUATION CRITERIA:
-1. Depth: Does the message show genuine thought and effort?
-2. Uniqueness: Is it repetitive or does it add new value?
-3. Impact: Did it actually help someone or advance the discussion?
-4. Authenticity: Does it feel genuine or like point-farming?
-5. Engagement: Did the post generate replies, questions, or meaningful follow-up discussion from others?
+EVALUATION CRITERIA (in order of importance):
+1. Engagement: Did the post generate replies from others? (check the engagement data above)
+2. Impact: Did it actually help someone or advance the discussion?
+3. Depth: Does the message show genuine thought and effort?
+4. Uniqueness: Is it repetitive or does it add new value?
+5. Authenticity: Does it feel genuine or like point-farming?
 
 Messages to analyze:
 {messages_text}
@@ -828,7 +914,30 @@ Respond with a JSON object in this exact format:
 
 Make sure the JSON is valid and parseable. Only award points to users who made meaningful contributions. Be strict about gaming detection."""
 
-        logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages")
+        # Final prompt length safety check - ensure total prompt doesn't exceed max size
+        max_prompt_length = 80000
+        if len(prompt) > max_prompt_length:
+            excess_length = len(prompt) - max_prompt_length
+
+            if engagement_section and len(engagement_section) > excess_length + 100:
+                # Truncate engagement_section to fit within limits
+                # Guard against negative slice by using max(0, ...)
+                target_length = max(0, len(engagement_section) - excess_length - 50)
+                truncated_engagement = engagement_section[:target_length]
+                truncated_engagement += "\n[Engagement data truncated due to length...]"
+                prompt = prompt.replace(engagement_section, truncated_engagement)
+                logger.warning(f"Prompt exceeded {max_prompt_length} chars, truncated engagement_section by {excess_length} chars")
+            else:
+                # Engagement section too small to fix the issue - truncate entire prompt
+                logger.warning(f"Prompt exceeded {max_prompt_length} chars, truncating entire prompt")
+                prompt = prompt[:max_prompt_length]
+
+            # Final safety check - ensure prompt is within limits
+            if len(prompt) > max_prompt_length:
+                logger.warning(f"Prompt still exceeds limit after truncation ({len(prompt)} > {max_prompt_length}), hard truncating")
+                prompt = prompt[:max_prompt_length]
+
+        logger.info(f"Calling xAI Grok for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
 
         # Make the API request using xAI Grok
         completion = await xai_client.chat.completions.create(
@@ -939,10 +1048,68 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
                 # Recalculate total after scaling
                 total_awarded = sum(award["points"] for award in sanitized_awards)
 
+            # ==============================================
+            # ANTI-GAMING MITIGATIONS
+            # ==============================================
+
+            # 1. DIMINISHING RETURNS: 100% → 70% → 50% → 30% per message/day
+            # Users who post more messages get diminishing returns on their points
+            # This prevents "quality-looking spam" (posting 3-5 optimized messages)
+            diminishing_multipliers = [1.0, 0.7, 0.5, 0.3]  # 1st, 2nd, 3rd, 4th+ message
+
+            if engagement_metrics:
+                for award in sanitized_awards:
+                    author_id = award.get("author_id")
+                    if author_id and author_id in engagement_metrics:
+                        msg_count = engagement_metrics[author_id].get('message_count', 1)
+                        # Get the appropriate multiplier based on message count
+                        # msg_count 1 → index 0 (1.0), 2 → index 1 (0.7), etc.
+                        multiplier_index = min(msg_count - 1, len(diminishing_multipliers) - 1)
+                        multiplier = diminishing_multipliers[max(0, multiplier_index)]
+
+                        if multiplier < 1.0:
+                            original_points = award["points"]
+                            award["points"] = max(1, int(award["points"] * multiplier))
+                            award["reason"] = f"{award.get('reason', '')} [Diminishing returns: {msg_count} messages → ×{multiplier}]"
+                            logger.info(f"Diminishing returns: {award['author_name']} ({msg_count} msgs) - {original_points} → {award['points']} points (×{multiplier})")
+
+            # 2. ZERO-ENGAGEMENT DECAY: 50% penalty for messages with no engagement
+            # Only applies to users whose messages had 1-6 hours to accumulate engagement
+            # This catches "manufactured depth" - posts that sound good but nobody responds to
+            zero_engagement_penalty = 0.5
+
+            if engagement_metrics:
+                for award in sanitized_awards:
+                    author_id = award.get("author_id")
+                    if author_id and author_id in engagement_metrics:
+                        metrics = engagement_metrics[author_id]
+                        replies_received = metrics.get('replies_received', 0)
+                        mentions_received = metrics.get('mentions_received', 0)
+                        total_engagement = replies_received + mentions_received
+
+                        # Apply penalty if user posted messages but received zero engagement
+                        # This is a strong signal that their "quality" content wasn't actually valued
+                        if total_engagement == 0 and metrics.get('message_count', 0) > 0:
+                            original_points = award["points"]
+                            award["points"] = max(1, int(award["points"] * zero_engagement_penalty))
+                            award["reason"] = f"{award.get('reason', '')} [Zero engagement penalty: ×{zero_engagement_penalty}]"
+                            logger.info(f"Zero-engagement decay: {award['author_name']} (0 replies/mentions) - {original_points} → {award['points']} points (×{zero_engagement_penalty})")
+
+            # Recalculate total after mitigations
+            total_awarded = sum(award["points"] for award in sanitized_awards)
+
+            # Filter out awards that dropped to 0
+            sanitized_awards = [a for a in sanitized_awards if a["points"] > 0]
+            total_awarded = sum(award["points"] for award in sanitized_awards)
+
+            # ==============================================
+            # END ANTI-GAMING MITIGATIONS
+            # ==============================================
+
             result["awards"] = sanitized_awards
             result["total_awarded"] = total_awarded
 
-            logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points")
+            logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points (after anti-gaming mitigations)")
             return result
 
         except json.JSONDecodeError as e:

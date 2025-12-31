@@ -105,8 +105,30 @@ async def run_daily_summarization_once(now: datetime | None = None):
         point_awards_result = None
         if all_messages_for_points:
             try:
-                logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards")
-                point_awards_result = await analyze_messages_for_points(all_messages_for_points, max_points=max_points_per_day)
+                # Get the set of author_ids that appear in the messages being analyzed
+                # This ensures we only include engagement metrics for users who contributed messages
+                # in the analyzed content (note: their engagement metrics may include activity from
+                # all channels in the guild, but we only include users who appear in our analysis)
+                analyzed_author_ids = set(msg.get('author_id') for msg in all_messages_for_points if msg.get('author_id'))
+
+                # Calculate engagement metrics (replies received) for each user
+                # This helps identify quality contributors whose messages sparked discussions
+                engagement_metrics = {}
+                guild_ids_for_metrics = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
+                for metrics_guild_id in guild_ids_for_metrics:
+                    guild_metrics = database.get_user_engagement_metrics(metrics_guild_id, yesterday, now)
+                    # Filter to only include users who appear in the analyzed messages
+                    # This prevents surfacing engagement data for users not in the LLM input
+                    for author_id, metrics in guild_metrics.items():
+                        if author_id in analyzed_author_ids:
+                            engagement_metrics[author_id] = metrics
+
+                logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards with engagement metrics for {len(engagement_metrics)} users (filtered from {len(analyzed_author_ids)} authors)")
+                point_awards_result = await analyze_messages_for_points(
+                    all_messages_for_points,
+                    max_points=max_points_per_day,
+                    engagement_metrics=engagement_metrics
+                )
 
                 if point_awards_result and point_awards_result.get('awards'):
                     # Get guild_id and validate all messages are from the same guild
