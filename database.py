@@ -136,12 +136,13 @@ INSERT INTO channel_summaries (
 def migrate_database() -> None:
     """
     Run database migrations to update schema for existing databases.
+    Also ensures indexes exist for columns that may have been created by CREATE_MESSAGES_TABLE.
     """
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
 
-            # Check if image_descriptions column exists
+            # Check which columns exist
             cursor.execute("PRAGMA table_info(messages)")
             columns = [column[1] for column in cursor.fetchall()]
 
@@ -155,9 +156,14 @@ def migrate_database() -> None:
             if 'reply_to_message_id' not in columns:
                 logger.info("Adding reply_to_message_id column to messages table")
                 cursor.execute("ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT")
-                cursor.execute(CREATE_INDEX_REPLY_TO)
                 conn.commit()
-                logger.info("Successfully added reply_to_message_id column and index")
+                logger.info("Successfully added reply_to_message_id column")
+
+            # Always ensure the reply_to index exists (handles both new DBs and migrated DBs)
+            # CREATE INDEX IF NOT EXISTS is idempotent, so this is safe to run always
+            cursor.execute(CREATE_INDEX_REPLY_TO)
+            conn.commit()
+            logger.debug("Ensured reply_to_message_id index exists")
 
     except Exception as e:
         logger.error(f"Error running database migrations: {str(e)}", exc_info=True)
@@ -212,8 +218,8 @@ def init_database() -> None:
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
 
-            # Create index for reply tracking
-            cursor.execute(CREATE_INDEX_REPLY_TO)
+            # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
+            # the column exists first (handles both new DBs and existing DBs)
 
             # Insert a test message to ensure the database is working
             try:
