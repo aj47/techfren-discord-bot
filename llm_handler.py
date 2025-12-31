@@ -780,6 +780,9 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
                 reverse=True
             )
 
+            # Limit to top N users to prevent prompt overflow in large guilds
+            MAX_ENGAGEMENT_USERS = 25
+
             engagement_lines = []
             helper_lines = []
             for author_id, metrics in sorted_metrics:
@@ -795,22 +798,22 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
                 total_engagement_received = replies_received + mentions_received
                 total_engagement_given = replies_given + mentions_given
 
-                if total_engagement_received > 0:  # Users who received replies or mentions
+                if total_engagement_received > 0 and len(engagement_lines) < MAX_ENGAGEMENT_USERS:
                     parts = []
                     if replies_received > 0:
                         parts.append(f"{replies_received} replies from {repliers} unique users")
                     if mentions_received > 0:
-                        parts.append(f"{mentions_received} @mentions")
+                        parts.append(f"@mentioned {mentions_received} times")
                     engagement_lines.append(
                         f"- {author_name} (ID: {author_id}): {', '.join(parts)}, sent {msg_count} messages"
                     )
 
-                if total_engagement_given > 0:  # Users who gave replies or mentioned others
+                if total_engagement_given > 0 and len(helper_lines) < MAX_ENGAGEMENT_USERS:
                     parts = []
                     if replies_given > 0:
                         parts.append(f"replied to {replies_given} messages")
                     if mentions_given > 0:
-                        parts.append(f"@mentioned {mentions_given} users")
+                        parts.append(f"@mentioned others {mentions_given} times")
                     helper_lines.append(
                         f"- {author_name} (ID: {author_id}): {', '.join(parts)}"
                     )
@@ -818,13 +821,15 @@ async def analyze_messages_for_points(messages, max_points=50, engagement_metric
             if engagement_lines or helper_lines:
                 engagement_section = "\n"
                 if engagement_lines:
+                    truncation_note = f" (showing top {len(engagement_lines)})" if len(sorted_metrics) > MAX_ENGAGEMENT_USERS else ""
                     engagement_section += f"""
-DISCUSSION STARTERS (users whose messages received replies or @mentions):
+DISCUSSION STARTERS{truncation_note} (users whose messages received replies or @mentions):
 {chr(10).join(engagement_lines)}
 """
                 if helper_lines:
+                    truncation_note = f" (showing top {len(helper_lines)})" if len(sorted_metrics) > MAX_ENGAGEMENT_USERS else ""
                     engagement_section += f"""
-ACTIVE HELPERS (users who replied to or @mentioned others - potential helpful contributors):
+ACTIVE HELPERS{truncation_note} (users who replied to or @mentioned others - potential helpful contributors):
 {chr(10).join(helper_lines)}
 """
 
