@@ -1206,6 +1206,11 @@ async def on_message(message):
             logger.error("Database module not properly imported or initialized")
             return
 
+        # Capture reply relationship if this message is a reply
+        reply_to_message_id = None
+        if message.reference and message.reference.message_id:
+            reply_to_message_id = str(message.reference.message_id)
+
         success = database.store_message(
             message_id=str(message.id),
             author_id=str(message.author.id),
@@ -1219,7 +1224,8 @@ async def on_message(message):
             is_bot=message.author.bot,
             is_command=is_command,
             command_type=command_type,
-            image_descriptions=image_descriptions_json
+            image_descriptions=image_descriptions_json,
+            reply_to_message_id=reply_to_message_id
         )
 
         if not success:

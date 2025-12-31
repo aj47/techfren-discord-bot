@@ -705,13 +705,18 @@ Keep the summary brief and focused on the most important information."""
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
         return None
 
-async def analyze_messages_for_points(messages, max_points=50):
+async def analyze_messages_for_points(messages, max_points=50, engagement_metrics=None):
     """
     Call the LLM API to analyze messages and determine point awards based on community value.
 
     Args:
         messages (list): List of message dictionaries with author_id, author_name, content
         max_points (int): Maximum total points to award (default: 50)
+        engagement_metrics (dict): Optional dictionary mapping author_id to engagement data:
+            - message_count: Number of messages posted
+            - replies_received: Number of replies to their messages
+            - unique_repliers: Number of unique users who replied
+            - engagement_score: Calculated engagement score
 
     Returns:
         dict: Dictionary with 'awards' (list of user awards) and 'summary' (explanation text)
@@ -765,6 +770,36 @@ async def analyze_messages_for_points(messages, max_points=50):
         if len(messages_text) > max_input_length:
             messages_text = messages_text[:max_input_length] + "\n\n[Messages truncated due to length...]"
 
+        # Build engagement metrics section if available
+        engagement_section = ""
+        if engagement_metrics:
+            # Sort by engagement score (highest first) to highlight top engaged users
+            sorted_metrics = sorted(
+                engagement_metrics.items(),
+                key=lambda x: x[1].get('engagement_score', 0),
+                reverse=True
+            )
+
+            engagement_lines = []
+            for author_id, metrics in sorted_metrics:
+                replies = metrics.get('replies_received', 0)
+                repliers = metrics.get('unique_repliers', 0)
+                msg_count = metrics.get('message_count', 0)
+                author_name = metrics.get('author_name', 'Unknown')
+
+                if replies > 0:  # Only show users who received replies
+                    engagement_lines.append(
+                        f"- {author_name} (ID: {author_id}): {replies} replies from {repliers} unique users, sent {msg_count} messages"
+                    )
+
+            if engagement_lines:
+                engagement_section = f"""
+
+USER ENGAGEMENT DATA (replies received to their messages):
+{chr(10).join(engagement_lines)}
+
+"""
+
         # Create the prompt for point analysis
         prompt = f"""Analyze the following Discord messages from the past 24 hours and award points to users based on their contributions to the community. The total pool is {max_points} points per day.
 
@@ -776,11 +811,13 @@ Award points based on:
 - Creating a positive, welcoming community atmosphere
 - Posting content that generates engagement from other users (replies, threads, discussions)
 
-IMPORTANT - ENGAGEMENT VALUE:
-- If a user's post or link sparked replies, questions, or thread discussions from other members, this indicates the content was valuable to the community
-- Original posters who share content that generates meaningful engagement should be rewarded
-- Look for posts that started conversations, not just isolated messages
-
+CRITICAL - ENGAGEMENT-WEIGHTED SCORING:
+The engagement data below shows which users' messages sparked discussions. This is a KEY signal of value:
+- Users whose messages received many replies should be strongly considered for points
+- A user with 2-3 messages that got 10+ replies is MORE valuable than someone with 50 messages and 0 replies
+- Users who sparked discussions from multiple different community members (unique repliers) are especially valuable
+- Someone who posts rarely but always gets thoughtful replies is contributing more than a frequent poster who gets ignored
+{engagement_section}
 IMPORTANT GUIDELINES:
 - You do NOT have to award all {max_points} points if contributions don't warrant it
 - Only award points for genuine, valuable contributions
@@ -802,12 +839,12 @@ CRITICAL - ANTI-GAMING RULES:
 - If you suspect gaming behavior, award 0 points to that user
 - Be STRICT and CONSERVATIVE - when in doubt, don't award points
 
-EVALUATION CRITERIA:
-1. Depth: Does the message show genuine thought and effort?
-2. Uniqueness: Is it repetitive or does it add new value?
-3. Impact: Did it actually help someone or advance the discussion?
-4. Authenticity: Does it feel genuine or like point-farming?
-5. Engagement: Did the post generate replies, questions, or meaningful follow-up discussion from others?
+EVALUATION CRITERIA (in order of importance):
+1. Engagement: Did the post generate replies from others? (check the engagement data above)
+2. Impact: Did it actually help someone or advance the discussion?
+3. Depth: Does the message show genuine thought and effort?
+4. Uniqueness: Is it repetitive or does it add new value?
+5. Authenticity: Does it feel genuine or like point-farming?
 
 Messages to analyze:
 {messages_text}

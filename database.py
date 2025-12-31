@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS messages (
     scraped_url TEXT,
     scraped_content_summary TEXT,
     scraped_content_key_points TEXT,
-    image_descriptions TEXT
+    image_descriptions TEXT,
+    reply_to_message_id TEXT
 );
 """
 
@@ -113,13 +114,15 @@ CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_da
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
+CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
     id, author_id, author_name, channel_id, channel_name,
     guild_id, guild_name, content, created_at, is_bot, is_command, command_type,
-    scraped_url, scraped_content_summary, scraped_content_key_points, image_descriptions
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    scraped_url, scraped_content_summary, scraped_content_key_points, image_descriptions,
+    reply_to_message_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 INSERT_CHANNEL_SUMMARY = """
@@ -147,6 +150,14 @@ def migrate_database() -> None:
                 cursor.execute("ALTER TABLE messages ADD COLUMN image_descriptions TEXT")
                 conn.commit()
                 logger.info("Successfully added image_descriptions column")
+
+            # Check if reply_to_message_id column exists
+            if 'reply_to_message_id' not in columns:
+                logger.info("Adding reply_to_message_id column to messages table")
+                cursor.execute("ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT")
+                cursor.execute(CREATE_INDEX_REPLY_TO)
+                conn.commit()
+                logger.info("Successfully added reply_to_message_id column and index")
 
     except Exception as e:
         logger.error(f"Error running database migrations: {str(e)}", exc_info=True)
@@ -201,6 +212,9 @@ def init_database() -> None:
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
 
+            # Create index for reply tracking
+            cursor.execute(CREATE_INDEX_REPLY_TO)
+
             # Insert a test message to ensure the database is working
             try:
                 test_message_id = f"test-init-{datetime.now().timestamp()}"
@@ -222,7 +236,8 @@ def init_database() -> None:
                         None,
                         None,
                         None,
-                        None  # image_descriptions
+                        None,  # image_descriptions
+                        None   # reply_to_message_id
                     )
                 )
                 logger.info("Successfully inserted test message during database initialization")
@@ -325,7 +340,8 @@ def store_message(
     scraped_url: Optional[str] = None,
     scraped_content_summary: Optional[str] = None,
     scraped_content_key_points: Optional[str] = None,
-    image_descriptions: Optional[str] = None
+    image_descriptions: Optional[str] = None,
+    reply_to_message_id: Optional[str] = None
 ) -> bool:
     """
     Store a message in the database.
@@ -347,6 +363,7 @@ def store_message(
         scraped_content_summary (Optional[str]): Summary of the scraped content (if any)
         scraped_content_key_points (Optional[str]): JSON string of key points from scraped content (if any)
         image_descriptions (Optional[str]): JSON string of image analysis results (if any)
+        reply_to_message_id (Optional[str]): The ID of the message this is replying to (if any)
 
     Returns:
         bool: True if the message was stored successfully, False otherwise
@@ -377,7 +394,8 @@ def store_message(
                     scraped_url,
                     scraped_content_summary,
                     scraped_content_key_points,
-                    image_descriptions
+                    image_descriptions,
+                    reply_to_message_id
                 )
             )
 
@@ -435,7 +453,8 @@ async def store_messages_batch(messages: List[Dict[str, Any]]) -> bool:
                             msg.get('scraped_url'),
                             msg.get('scraped_content_summary'),
                             msg.get('scraped_content_key_points'),
-                            msg.get('image_descriptions')
+                            msg.get('image_descriptions'),
+                            msg.get('reply_to_message_id')
                         )
                     )
                 
@@ -1109,6 +1128,122 @@ def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting leaderboard for guild {guild_id}: {str(e)}", exc_info=True)
         return []
+
+
+def get_user_engagement_metrics(
+    guild_id: str,
+    start_time: datetime,
+    end_time: datetime
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Calculate engagement metrics for users based on replies to their messages.
+
+    This helps identify users whose messages sparked discussions, even if they
+    didn't post many messages themselves.
+
+    Args:
+        guild_id (str): The Discord guild ID
+        start_time (datetime): Start of the time range
+        end_time (datetime): End of the time range
+
+    Returns:
+        Dict[str, Dict[str, Any]]: Dictionary mapping author_id to engagement metrics:
+            - author_name: The username
+            - message_count: Number of messages they posted
+            - replies_received: Number of replies their messages received
+            - unique_repliers: Number of unique users who replied to them
+            - engagement_score: Calculated engagement score (replies weighted more than messages)
+    """
+    try:
+        start_time_str = start_time.replace(tzinfo=None).isoformat()
+        end_time_str = end_time.replace(tzinfo=None).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get all messages in the time range for this guild
+            cursor.execute(
+                """
+                SELECT id, author_id, author_name, reply_to_message_id
+                FROM messages
+                WHERE guild_id = ?
+                AND is_bot = 0
+                AND is_command = 0
+                AND (
+                    datetime(created_at) BETWEEN datetime(?) AND datetime(?)
+                    OR datetime(substr(created_at, 1, 19)) BETWEEN datetime(?) AND datetime(?)
+                )
+                """,
+                (guild_id, start_time_str, end_time_str, start_time_str, end_time_str)
+            )
+
+            messages = cursor.fetchall()
+
+            # Build a map of message_id -> author_id for messages in this time range
+            message_authors = {}
+            user_message_counts = {}
+            user_names = {}
+
+            for row in messages:
+                msg_id = row['id']
+                author_id = row['author_id']
+                author_name = row['author_name']
+
+                message_authors[msg_id] = author_id
+                user_message_counts[author_id] = user_message_counts.get(author_id, 0) + 1
+                user_names[author_id] = author_name
+
+            # Count replies to each user's messages
+            user_replies_received = {}  # author_id -> count of replies
+            user_unique_repliers = {}   # author_id -> set of replier author_ids
+
+            for row in messages:
+                reply_to_id = row['reply_to_message_id']
+                replier_id = row['author_id']
+
+                if reply_to_id and reply_to_id in message_authors:
+                    original_author_id = message_authors[reply_to_id]
+
+                    # Don't count self-replies
+                    if original_author_id != replier_id:
+                        user_replies_received[original_author_id] = \
+                            user_replies_received.get(original_author_id, 0) + 1
+
+                        if original_author_id not in user_unique_repliers:
+                            user_unique_repliers[original_author_id] = set()
+                        user_unique_repliers[original_author_id].add(replier_id)
+
+            # Build the result with engagement scores
+            result = {}
+            all_author_ids = set(user_message_counts.keys())
+
+            for author_id in all_author_ids:
+                message_count = user_message_counts.get(author_id, 0)
+                replies_received = user_replies_received.get(author_id, 0)
+                unique_repliers = len(user_unique_repliers.get(author_id, set()))
+
+                # Engagement score formula:
+                # - Each reply received is worth 3 points (shows their content sparked discussion)
+                # - Each unique replier adds 2 bonus points (shows broad engagement)
+                # - Each message sent is worth 1 point (baseline activity)
+                # This rewards quality (getting replies) over quantity (sending many messages)
+                engagement_score = (replies_received * 3) + (unique_repliers * 2) + message_count
+
+                result[author_id] = {
+                    'author_name': user_names.get(author_id, 'Unknown'),
+                    'message_count': message_count,
+                    'replies_received': replies_received,
+                    'unique_repliers': unique_repliers,
+                    'engagement_score': engagement_score
+                }
+
+            logger.info(f"Calculated engagement metrics for {len(result)} users in guild {guild_id}")
+            return result
+
+    except Exception as e:
+        logger.error(f"Error calculating engagement metrics for guild {guild_id}: {str(e)}", exc_info=True)
+        return {}
+
 
 def store_daily_point_award(
     author_id: str,
