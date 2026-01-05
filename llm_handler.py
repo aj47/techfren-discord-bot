@@ -560,7 +560,8 @@ async def summarize_url_with_exa(url: str) -> Optional[str]:
     """Fetch and summarize a URL using Exa's /contents endpoint.
 
     This function uses Exa to both fetch the page content and generate
-    an AI summary in a single call.
+    an AI summary in a single call. If Exa fails or returns no content,
+    falls back to Crawl4AI for scraping.
 
     Args:
         url (str): The URL to fetch and summarize.
@@ -576,30 +577,48 @@ async def summarize_url_with_exa(url: str) -> Optional[str]:
         summary_query = "Provide a concise summary (2-3 sentences) followed by 3-5 key points as bullet points."
         results = await get_exa_contents([url], summary_query)
 
-        if not results:
-            logger.warning(f"No content returned from Exa for URL: {url}")
-            return None
+        if results:
+            result = results[0]
+            summary = result.get("summary", "")
+            text = result.get("text", "")
 
-        result = results[0]
-        summary = result.get("summary", "")
-        text = result.get("text", "")
+            if summary:
+                formatted_response = DiscordFormatter.format_llm_response(summary)
+                logger.info(f"Exa URL summary: {formatted_response[:50] if formatted_response else 'None'}...")
+                return formatted_response
+            elif text:
+                # If no summary but we have text, use xAI Grok to summarize it
+                formatted_response = await summarize_scraped_content(text, url)
+                return formatted_response
 
-        if not summary and not text:
-            logger.warning(f"Empty content from Exa for URL: {url}")
-            return None
+        # Exa returned no content - fall back to Crawl4AI
+        logger.warning(f"No content returned from Exa for URL: {url}, falling back to Crawl4AI")
+        from firecrawl_handler import scrape_url_content
 
-        # If we got a summary from Exa, use it; otherwise fall back to the text
-        if summary:
-            formatted_response = DiscordFormatter.format_llm_response(summary)
-        else:
-            # If no summary, use xAI Grok to summarize the text
-            formatted_response = await summarize_scraped_content(text, url)
+        scraped_content = await scrape_url_content(url)
+        if scraped_content:
+            logger.info(f"Successfully scraped URL with Crawl4AI: {url}")
+            formatted_response = await summarize_scraped_content(scraped_content, url)
+            return formatted_response
 
-        logger.info(f"Exa URL summary: {formatted_response[:50] if formatted_response else 'None'}...")
-        return formatted_response
+        logger.warning(f"Failed to scrape URL with Crawl4AI: {url}")
+        return None
 
     except Exception as e:
         logger.error(f"Error fetching/summarizing URL {url} with Exa: {str(e)}", exc_info=True)
+
+        # Try Crawl4AI as a fallback on exception
+        try:
+            logger.info(f"Attempting Crawl4AI fallback for URL: {url}")
+            from firecrawl_handler import scrape_url_content
+
+            scraped_content = await scrape_url_content(url)
+            if scraped_content:
+                formatted_response = await summarize_scraped_content(scraped_content, url)
+                return formatted_response
+        except Exception as fallback_error:
+            logger.error(f"Crawl4AI fallback also failed for URL {url}: {str(fallback_error)}")
+
         return None
 
 
