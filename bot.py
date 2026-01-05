@@ -21,7 +21,7 @@ from youtube_handler import is_youtube_url, scrape_youtube_content  # Import You
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging  # Import summarization tasks
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
-from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
+from firecrawl_handler import scrape_url_content  # Import web scraper (uses Crawl4AI)
 from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify handler
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_gif_bypass
 import config
@@ -117,9 +117,9 @@ async def process_url(message_id: str, url: str):
             # Use YouTube handler to scrape content
             scraped_result = await scrape_youtube_content(url)
 
-            # If YouTube scraping fails, fall back to Firecrawl
+            # If YouTube scraping fails, fall back to Crawl4AI
             if not scraped_result:
-                logger.warning(f"Failed to scrape YouTube content, falling back to Firecrawl: {url}")
+                logger.warning(f"Failed to scrape YouTube content, falling back to Crawl4AI: {url}")
                 scraped_result = await scrape_url_content(url)
             else:
                 logger.info(f"Successfully scraped YouTube content: {url}")
@@ -142,29 +142,29 @@ async def process_url(message_id: str, url: str):
                         "markdown": f"# Twitter/X.com\n\nThis is the main page of Twitter/X.com: {url}"
                     }
                 else:
-                    # For other Twitter/X.com URLs without a tweet ID, try Firecrawl
+                    # For other Twitter/X.com URLs without a tweet ID, try Crawl4AI
                     scraped_result = await scrape_url_content(url)
             else:
                 # Check if Apify API token is configured
                 if not hasattr(config, 'apify_api_token') or not config.apify_api_token:
-                    logger.warning("Apify API token not found in config.py or is empty, falling back to Firecrawl")
+                    logger.warning("Apify API token not found in config.py or is empty, falling back to Crawl4AI")
                     scraped_result = await scrape_url_content(url)
                 else:
                     # Use Apify to scrape Twitter/X.com content
                     scraped_result = await scrape_twitter_content(url)
 
-                    # If Apify scraping fails, fall back to Firecrawl
+                    # If Apify scraping fails, fall back to Crawl4AI
                     if not scraped_result:
-                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Firecrawl: {url}")
+                        logger.warning(f"Failed to scrape Twitter/X.com content with Apify, falling back to Crawl4AI: {url}")
                         scraped_result = await scrape_url_content(url)
                     else:
                         logger.info(f"Successfully scraped Twitter/X.com content with Apify: {url}")
                         # Extract markdown content from the scraped result
                         markdown_content = scraped_result.get('markdown')
         else:
-            # For non-Twitter/X.com and non-YouTube URLs, use Firecrawl
+            # For non-Twitter/X.com and non-YouTube URLs, use Crawl4AI
             scraped_result = await scrape_url_content(url)
-            markdown_content = scraped_result  # Firecrawl returns markdown directly
+            markdown_content = scraped_result  # Crawl4AI returns markdown directly
 
         # Check if scraping was successful
         if not scraped_result:
@@ -187,7 +187,7 @@ async def process_url(message_id: str, url: str):
                 logger.warning(f"Invalid scraped result structure for Twitter URL {url}: expected dict with 'markdown' key")
                 return
         else:
-            # Firecrawl returns markdown directly as a string
+            # Crawl4AI returns markdown directly as a string
             if isinstance(scraped_result, str):
                 markdown_content = scraped_result
             else:

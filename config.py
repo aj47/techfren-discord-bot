@@ -66,21 +66,9 @@ llm_model = os.getenv('LLM_MODEL', 'sonar')
 rate_limit_seconds = int(os.getenv('RATE_LIMIT_SECONDS', '10'))
 max_requests_per_minute = int(os.getenv('MAX_REQUESTS_PER_MINUTE', '6'))
 
-# Firecrawl API Key (required for link scraping)
-# Environment variable: FIRECRAWL_API_KEY
-firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
-if not firecrawl_api_key:
-    raise ValueError("FIRECRAWL_API_KEY environment variable is required")
-
-# Firecrawl Timeout Configuration (optional)
-# Environment variable: FIRECRAWL_TIMEOUT_MS
-# Maximum duration in milliseconds before aborting a scrape request
-# Default: 900000ms (15 minutes) - maximum practical value
-firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
-
 # Apify API Token (optional, for x.com/twitter.com link scraping)
 # Environment variable: APIFY_API_TOKEN
-# If not provided, Twitter/X.com links will be processed using Firecrawl
+# If not provided, Twitter/X.com links will be processed using Crawl4AI
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
 # NOTE: xai_api_key is already defined above in the PRIMARY API CONFIGURATION section

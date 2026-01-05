@@ -181,7 +181,7 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
             if hasattr(config, 'apify_api_token') and config.apify_api_token:
                 scraped_result = await scrape_twitter_content(url)
                 if not scraped_result:
-                    logger.warning(f"Failed to scrape Twitter content with Apify, falling back to Firecrawl: {url}")
+                    logger.warning(f"Failed to scrape Twitter content with Apify, falling back to Crawl4AI: {url}")
                     scraped_result = await scrape_url_content(url)
                     markdown_content = scraped_result if isinstance(scraped_result, str) else ''
                 else:
@@ -191,8 +191,8 @@ async def scrape_url_on_demand(url: str) -> Optional[Dict[str, Any]]:
                 markdown_content = scraped_result if isinstance(scraped_result, str) else ''
 
         else:
-            # For other URLs, use Firecrawl
-            logger.info(f"Scraping URL with Firecrawl on-demand: {url}")
+            # For other URLs, use Crawl4AI
+            logger.info(f"Scraping URL with Crawl4AI on-demand: {url}")
             scraped_result = await scrape_url_content(url)
             markdown_content = scraped_result if isinstance(scraped_result, str) else ''
 

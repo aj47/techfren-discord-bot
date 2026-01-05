@@ -13,7 +13,7 @@ A simple Discord bot built with discord.py.
 - Automatically splits long messages into multiple parts to handle Discord's 2000 character limit
 - Processes URLs shared in messages:
   - Uses Apify to scrape Twitter/X.com URLs, extracting tweet content, video URLs, and replies
-  - Uses Firecrawl for all other URLs
+  - Uses Crawl4AI for all other URLs (open-source, no API key required)
   - Summarizes content and stores it in the database
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel, with responses posted in threads attached to your original message. Mentions can appear anywhere in the message (beginning, middle, or end)
@@ -52,7 +52,6 @@ A simple Discord bot built with discord.py.
    ```bash
    export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
    export PERPLEXITY_API_KEY="YOUR_PERPLEXITY_API_KEY"
-   export FIRECRAWL_API_KEY="YOUR_FIRECRAWL_API_KEY"
    # ... other variables as needed
    ```
 
@@ -60,7 +59,6 @@ A simple Discord bot built with discord.py.
    ```bash
    DISCORD_BOT_TOKEN=your_discord_bot_token
    PERPLEXITY_API_KEY=your_perplexity_api_key
-   FIRECRAWL_API_KEY=your_firecrawl_api_key
    ```
 
    **Optional environment variables:**
@@ -77,8 +75,7 @@ A simple Discord bot built with discord.py.
    X_TITLE=TechFren Discord Bot  # X-Title header for API requests
    ```
    - You can get a Perplexity API key by signing up at [Perplexity.ai](https://perplexity.ai/)
-   - You can get a Firecrawl API key by signing up at [Firecrawl.dev](https://firecrawl.dev)
-   - You can get an Apify API token by signing up at [Apify.com](https://apify.com)
+   - You can get an Apify API token by signing up at [Apify.com](https://apify.com) (optional, for Twitter/X.com)
 6. Run the bot:
    ```
    python bot.py
@@ -259,7 +256,7 @@ If you encounter database-related errors:
 - Added Apify integration for Twitter/X.com URL processing:
   - Uses Apify API to fetch tweet content and replies
   - Extracts video URLs from tweets when available
-  - Falls back to Firecrawl if Apify is not configured or fails
+  - Falls back to Crawl4AI if Apify is not configured or fails
 - Added database migration script to handle schema updates
 - Added URL scraping functionality with new database columns:
   - `scraped_url`

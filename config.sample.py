@@ -12,8 +12,7 @@
 # Environment variable names:
 # DISCORD_BOT_TOKEN=your_discord_bot_token
 # PERPLEXITY_API_KEY=your_perplexity_api_key
-# FIRECRAWL_API_KEY=your_firecrawl_api_key
-# APIFY_API_TOKEN=your_apify_api_token
+# APIFY_API_TOKEN=your_apify_api_token (optional)
 # LLM_MODEL=sonar
 # RATE_LIMIT_SECONDS=10
 # MAX_REQUESTS_PER_MINUTE=6
@@ -43,11 +42,8 @@ llm_model = "sonar"
 rate_limit_seconds = 10
 max_requests_per_minute = 6
 
-# Firecrawl API Key (required for link scraping)
-# Environment variable: FIRECRAWL_API_KEY
-firecrawl_api_key = "YOUR_FIRECRAWL_API_KEY"
-
 # Apify API Token (optional for x.com/twitter.com link scraping)
+# If not set, Crawl4AI will be used (no API key needed)
 # Environment variable: APIFY_API_TOKEN
 apify_api_token = "YOUR_APIFY_API_TOKEN"
 
