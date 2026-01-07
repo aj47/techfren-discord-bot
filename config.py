@@ -208,6 +208,8 @@ AVAILABLE_ROLE_COLORS = {
     'gold': '#FFD700',
     'gold-light': '#FFEC8B',
     'gold-dark': '#B8860B',
+    # Grays
+    'gray-dark': '#323338',
     # Black & White
     'black': '#0c0c0c',
     'white': '#FFFFFF',
