@@ -106,6 +106,24 @@ else:
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
+# Auto Thread Configuration (optional)
+# Environment variable: AUTO_THREAD_CHANNEL_IDS
+# Comma-separated list of channel IDs where auto-threading is enabled
+# When two users reply back-and-forth N times, their conversation is moved to a thread
+_auto_thread_channel_ids_raw = os.getenv('AUTO_THREAD_CHANNEL_IDS')
+if _auto_thread_channel_ids_raw:
+    auto_thread_channel_ids = [cid.strip() for cid in _auto_thread_channel_ids_raw.split(',') if cid.strip()]
+else:
+    auto_thread_channel_ids = None
+
+# Reply threshold before creating thread (default: 5)
+# Environment variable: AUTO_THREAD_REPLY_THRESHOLD
+AUTO_THREAD_REPLY_THRESHOLD = int(os.getenv('AUTO_THREAD_REPLY_THRESHOLD', '5'))
+
+# Conversation timeout in minutes - chains expire after this inactivity (default: 60)
+# Environment variable: AUTO_THREAD_TTL_MINUTES
+AUTO_THREAD_TTL_MINUTES = int(os.getenv('AUTO_THREAD_TTL_MINUTES', '60'))
+
 # LLM API Configuration (optional)
 # Environment variable: PERPLEXITY_BASE_URL
 # Base URL for Perplexity API (or compatible API)
