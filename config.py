@@ -1,16 +1,20 @@
 """
 Discord bot configuration using environment variables and .env file support.
 
-This module loads configuration from environment variables with .env file taking precedence.
-The .env file values override system environment variables to ensure consistent configuration.
+This module loads configuration from environment variables with system env vars taking precedence.
+Explicit environment variables take precedence over .env file contents, which is the expected
+behavior for production deployments where env vars are set directly (e.g., via Docker, Kubernetes,
+or system configuration).
 """
 
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file if it exists
-# Use override=True to prioritize .env file over system environment variables
-load_dotenv(override=True)
+# Load environment variables from .env file if it exists.
+# Explicit environment variables take precedence over .env file contents,
+# which is the expected behavior for production deployments where env vars
+# are set directly (e.g., via Docker, Kubernetes, or system configuration).
+load_dotenv()
 
 # Discord Bot Token (required)
 # Environment variable: DISCORD_BOT_TOKEN
@@ -214,3 +218,13 @@ AVAILABLE_ROLE_COLORS = {
     'black': '#0c0c0c',
     'white': '#FFFFFF',
 }
+
+# Anti-Promo Bot Configuration
+# Environment variables:
+#   ANTI_PROMO_ENABLED: Enable/disable the anti-promo bot feature (default: true)
+#   ANTI_PROMO_MIN_ACCOUNT_AGE_DAYS: Minimum account age in days to not be flagged (default: 7)
+#   ANTI_PROMO_NEW_MEMBER_WINDOW_MINUTES: Window after joining when users are monitored closely (default: 30)
+#   ANTI_PROMO_ACTION: Action to take on suspicious messages - 'delete', 'kick', or 'ban' (default: kick)
+#   ANTI_PROMO_LOG_CHANNEL_ID: Optional channel ID to log anti-promo actions
+#   ANTI_PROMO_ESTABLISHED_USER_MIN_MESSAGES: Min messages in past 6 months to be protected (default: 25)
+# Note: Configuration is loaded directly in anti_promo_bot.py module
