@@ -27,6 +27,13 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from honeypot_handler import (
+    is_honeypot_channel, 
+    handle_honeypot_message, 
+    set_honeypot_channel, 
+    remove_honeypot_channel,
+    get_guild_honeypot_channels
+)  # Import honeypot handler functions
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -830,6 +837,15 @@ async def on_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return
+
+    # Check if message is in a honeypot channel (before other processing)
+    if message.guild and not message.author.bot:
+        try:
+            if await is_honeypot_channel(str(message.channel.id), str(message.guild.id)):
+                await handle_honeypot_message(message)
+                return  # Stop processing - user was banned
+        except Exception as e:
+            logger.error(f"Error checking honeypot status: {e}", exc_info=True)
 
     # Handle links dump channel logic first
     # This needs to happen before storing in database to avoid storing deleted messages
@@ -2403,6 +2419,143 @@ async def color_status_slash(interaction: discord.Interaction):
         logger.error(f"Error in /color-status command: {str(e)}", exc_info=True)
         await interaction.response.send_message(
             "An error occurred while checking your status. Please try again later.",
+            ephemeral=True
+        )
+
+
+# =============================================================================
+# HONEYPOT COMMANDS
+# =============================================================================
+
+@bot.tree.command(name="honeypot-set", description="Set a channel as a honeypot to catch spammers (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(channel="The channel to set as a honeypot")
+async def honeypot_set_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    """
+    Slash command to set a channel as a honeypot.
+    Only administrators can use this command.
+
+    Args:
+        interaction: The Discord interaction
+        channel: The channel to set as honeypot
+    """
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        # Set the channel as honeypot
+        success = await set_honeypot_channel(channel, interaction.user)
+
+        if success:
+            await interaction.response.send_message(
+                f"✅ Channel {channel.mention} has been set as a honeypot.\n\n"
+                f"Anyone who posts in this channel will be automatically banned and their messages deleted.\n"
+                f"Make sure this channel is hidden from regular users for maximum effectiveness.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to set the channel as a honeypot. Please try again.",
+                ephemeral=True
+            )
+
+    except Exception as e:
+        logger.error(f"Error in /honeypot-set command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while setting the honeypot. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="honeypot-remove", description="Remove a channel from being a honeypot (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(channel="The channel to remove from honeypot")
+async def honeypot_remove_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    """
+    Slash command to remove a channel from being a honeypot.
+    Only administrators can use this command.
+
+    Args:
+        interaction: The Discord interaction
+        channel: The channel to remove from honeypot
+    """
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        # Remove the channel from honeypot
+        success = await remove_honeypot_channel(channel)
+
+        if success:
+            await interaction.response.send_message(
+                f"✅ Channel {channel.mention} is no longer a honeypot.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Channel {channel.mention} was not a honeypot channel.",
+                ephemeral=True
+            )
+
+    except Exception as e:
+        logger.error(f"Error in /honeypot-remove command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while removing the honeypot. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="honeypot-list", description="List all honeypot channels in this server")
+@app_commands.checks.has_permissions(administrator=True)
+async def honeypot_list_slash(interaction: discord.Interaction):
+    """
+    Slash command to list all honeypot channels in the current guild.
+    Only administrators can use this command.
+
+    Args:
+        interaction: The Discord interaction
+    """
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        honeypot_channels = await get_guild_honeypot_channels(guild_id)
+
+        if not honeypot_channels:
+            await interaction.response.send_message(
+                "There are no honeypot channels in this server.",
+                ephemeral=True
+            )
+            return
+
+        # Build the list message
+        message = "**🍯 Honeypot Channels**\n\n"
+
+        for hp in honeypot_channels:
+            channel = interaction.guild.get_channel(int(hp['channel_id']))
+            channel_mention = channel.mention if channel else f"`{hp['channel_name']}` (deleted)"
+            message += f"• {channel_mention}\n"
+            message += f"  Created by: {hp['created_by_name']} on {hp['created_at'][:10]}\n\n"
+
+        await interaction.response.send_message(message, ephemeral=True)
+
+    except Exception as e:
+        logger.error(f"Error in /honeypot-list command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "An error occurred while listing honeypot channels. Please try again later.",
             ephemeral=True
         )
 

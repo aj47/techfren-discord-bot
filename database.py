@@ -101,6 +101,20 @@ CREATE TABLE IF NOT EXISTS user_role_colors (
 );
 """
 
+CREATE_HONEYPOT_CHANNELS_TABLE = """
+CREATE TABLE IF NOT EXISTS honeypot_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    guild_name TEXT,
+    created_at TIMESTAMP NOT NULL,
+    created_by_id TEXT NOT NULL,
+    created_by_name TEXT NOT NULL,
+    UNIQUE(channel_id, guild_id)
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -115,6 +129,8 @@ CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
+CREATE_INDEX_HONEYPOT_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_honeypot_channel_id ON honeypot_channels (channel_id);"
+CREATE_INDEX_HONEYPOT_GUILD = "CREATE INDEX IF NOT EXISTS idx_honeypot_guild_id ON honeypot_channels (guild_id);"
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -194,6 +210,7 @@ def init_database() -> None:
             cursor.execute(CREATE_USER_POINTS_TABLE)
             cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
+            cursor.execute(CREATE_HONEYPOT_CHANNELS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -217,6 +234,10 @@ def init_database() -> None:
             # Create indexes for user_role_colors table
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
+
+            # Create indexes for honeypot_channels table
+            cursor.execute(CREATE_INDEX_HONEYPOT_CHANNEL)
+            cursor.execute(CREATE_INDEX_HONEYPOT_GUILD)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -1918,4 +1939,165 @@ def get_all_guilds_with_role_colors() -> List[str]:
             return [row['guild_id'] for row in cursor.fetchall()]
     except Exception as e:
         logger.error(f"Error getting guilds with role colors: {str(e)}", exc_info=True)
+        return []
+
+
+def add_honeypot_channel(
+    channel_id: str,
+    channel_name: str,
+    guild_id: str,
+    guild_name: str,
+    created_by_id: str,
+    created_by_name: str
+) -> bool:
+    """
+    Add a channel as a honeypot channel.
+    
+    Args:
+        channel_id: The Discord channel ID
+        channel_name: The channel name
+        guild_id: The Discord guild ID
+        guild_name: The guild name
+        created_by_id: The ID of the user who created the honeypot
+        created_by_name: The name of the user who created the honeypot
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO honeypot_channels 
+                (channel_id, channel_name, guild_id, guild_name, created_at, created_by_id, created_by_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    channel_id,
+                    channel_name,
+                    guild_id,
+                    guild_name,
+                    datetime.now().isoformat(),
+                    created_by_id,
+                    created_by_name
+                )
+            )
+            
+            conn.commit()
+            
+        logger.info(f"Added honeypot channel {channel_name} ({channel_id}) in guild {guild_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Error adding honeypot channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def remove_honeypot_channel(channel_id: str, guild_id: str) -> bool:
+    """
+    Remove a channel from being a honeypot channel.
+    
+    Args:
+        channel_id: The Discord channel ID
+        guild_id: The Discord guild ID
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                DELETE FROM honeypot_channels 
+                WHERE channel_id = ? AND guild_id = ?
+                """,
+                (channel_id, guild_id)
+            )
+            
+            rows_affected = cursor.rowcount
+            conn.commit()
+            
+        if rows_affected > 0:
+            logger.info(f"Removed honeypot channel {channel_id} from guild {guild_id}")
+            return True
+        else:
+            logger.warning(f"Channel {channel_id} was not a honeypot in guild {guild_id}")
+            return False
+    except Exception as e:
+        logger.error(f"Error removing honeypot channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def is_honeypot_channel(channel_id: str, guild_id: str) -> bool:
+    """
+    Check if a channel is a honeypot channel.
+    
+    Args:
+        channel_id: The Discord channel ID
+        guild_id: The Discord guild ID
+        
+    Returns:
+        bool: True if the channel is a honeypot, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                SELECT 1 FROM honeypot_channels 
+                WHERE channel_id = ? AND guild_id = ?
+                """,
+                (channel_id, guild_id)
+            )
+            
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error checking honeypot status for channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_honeypot_channels_for_guild(guild_id: str) -> list:
+    """
+    Get all honeypot channels for a guild.
+    
+    Args:
+        guild_id: The Discord guild ID
+        
+    Returns:
+        List of dictionaries containing honeypot channel info
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                SELECT channel_id, channel_name, guild_id, guild_name, 
+                       created_at, created_by_id, created_by_name
+                FROM honeypot_channels 
+                WHERE guild_id = ?
+                """,
+                (guild_id,)
+            )
+            
+            rows = cursor.fetchall()
+            
+            return [
+                {
+                    'channel_id': row['channel_id'],
+                    'channel_name': row['channel_name'],
+                    'guild_id': row['guild_id'],
+                    'guild_name': row['guild_name'],
+                    'created_at': row['created_at'],
+                    'created_by_id': row['created_by_id'],
+                    'created_by_name': row['created_by_name']
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logger.error(f"Error getting honeypot channels for guild {guild_id}: {str(e)}", exc_info=True)
         return []
