@@ -84,6 +84,22 @@ A simple Discord bot built with discord.py.
    python bot.py
    ```
 
+## Debug CLI
+
+For development and testing, you can use the built-in debug CLI to test bot functionality without connecting to Discord:
+
+```bash
+python debug.py
+```
+
+The debug CLI allows you to:
+- Test all bot commands in a simulated environment
+- See detailed logs of bot operations
+- Test rate limiting and database functionality
+- Simulate different users and scenarios
+
+See [DEBUG_CLI_README.md](DEBUG_CLI_README.md) for detailed documentation.
+
 ## Discord Developer Portal Setup
 
 To use the message content intent, you need to enable it in the Discord Developer Portal:
