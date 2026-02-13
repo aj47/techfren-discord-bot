@@ -59,6 +59,20 @@ class DiscordFormatter:
 
         normalized = []
         for citation in citations:
+            # Handle dict-wrapped citations recursively
+            if isinstance(citation, dict):
+                # If this dict has a nested 'citations' key, process those too
+                if 'citations' in citation and isinstance(citation['citations'], list):
+                    # Recursively extract all nested citations first
+                    nested_results = DiscordFormatter._normalize_citations(citation['citations'])
+                    normalized.extend(nested_results)
+                    # Also add the parent citation if it has a URL
+                    if 'url' in citation:
+                        normalized_citation = DiscordFormatter._normalize_single_citation(citation)
+                        if normalized_citation:
+                            normalized.append(normalized_citation)
+                    continue
+
             normalized_citation = DiscordFormatter._normalize_single_citation(citation)
             if normalized_citation:
                 normalized.append(normalized_citation)

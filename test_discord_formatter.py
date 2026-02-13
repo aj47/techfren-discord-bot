@@ -63,10 +63,38 @@ class TestNormalizeCitations:
             ]
         }
         result = DiscordFormatter._normalize_citations(citations)
-        assert len(result) == 1
-        # Should flatten inner citations
-        # Note: The implementation preserves outer structure and inner citations
-        assert 'url' in result[0]
+        # Should extract BOTH parent and nested citations
+        assert len(result) == 3
+        # Verify nested citations are extracted
+        urls = [c['url'] for c in result]
+        assert "https://example.com/article1" in urls
+        assert "https://example.com/sub1" in urls
+        assert "https://example.com/sub2" in urls
+
+    def test_deeply_nested_citations(self):
+        """Test deeply nested citation structures (3+ levels)."""
+        citations = {
+            "citations": [
+                {
+                    "url": "https://example.com/level1",
+                    "citations": [
+                        {
+                            "url": "https://example.com/level2",
+                            "citations": [
+                                {"url": "https://example.com/level3"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        result = DiscordFormatter._normalize_citations(citations)
+        # Should extract all 3 levels
+        assert len(result) == 3
+        urls = [c['url'] for c in result]
+        assert "https://example.com/level1" in urls
+        assert "https://example.com/level2" in urls
+        assert "https://example.com/level3" in urls
 
     def test_alternate_wrapper_keys(self):
         """Test dict wrappers with alternate keys."""
