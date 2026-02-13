@@ -16,6 +16,10 @@ from typing import List, Dict, Any, Optional
 DB_DIRECTORY = "data"
 DB_FILE = os.path.join(DB_DIRECTORY, "discord_messages.db")
 
+# Table names (extracted for maintainability)
+TABLE_MESSAGES = "messages"
+TABLE_CHANNEL_SUMMARIES = "channel_summaries"
+
 def get_connection() -> sqlite3.Connection:
     """Get a connection to the SQLite database."""
     if not os.path.exists(DB_FILE):
@@ -31,11 +35,11 @@ def list_recent_messages(limit: int = 10) -> None:
     conn = get_connection()
     cursor = conn.cursor()
 
-    query = """
+    query = f"""
     SELECT id, author_name, channel_name, guild_name,
            substr(content, 1, 50) as content_preview,
            created_at, is_command, command_type
-    FROM messages
+    FROM {TABLE_MESSAGES}
     ORDER BY created_at DESC
     LIMIT ?
     """
@@ -71,26 +75,26 @@ def get_message_stats() -> None:
     cursor = conn.cursor()
 
     # Total message count
-    cursor.execute("SELECT COUNT(*) FROM messages")
+    cursor.execute(f"SELECT COUNT(*) FROM {TABLE_MESSAGES}")
     total_count = cursor.fetchone()[0]
 
     # Command count
-    cursor.execute("SELECT COUNT(*) FROM messages WHERE is_command = 1")
+    cursor.execute(f"SELECT COUNT(*) FROM {TABLE_MESSAGES} WHERE is_command = 1")
     command_count = cursor.fetchone()[0]
 
     # Command type breakdown
-    cursor.execute("""
+    cursor.execute(f"""
     SELECT command_type, COUNT(*) as count
-    FROM messages
+    FROM {TABLE_MESSAGES}
     WHERE is_command = 1
     GROUP BY command_type
     """)
     command_types = cursor.fetchall()
 
     # User message count
-    cursor.execute("""
+    cursor.execute(f"""
     SELECT author_name, COUNT(*) as count
-    FROM messages
+    FROM {TABLE_MESSAGES}
     GROUP BY author_id
     ORDER BY count DESC
     LIMIT 10
@@ -98,9 +102,9 @@ def get_message_stats() -> None:
     top_users = cursor.fetchall()
 
     # Channel message count
-    cursor.execute("""
+    cursor.execute(f"""
     SELECT channel_name, COUNT(*) as count
-    FROM messages
+    FROM {TABLE_MESSAGES}
     GROUP BY channel_id
     ORDER BY count DESC
     LIMIT 10
@@ -139,11 +143,11 @@ def list_summaries(limit: int = 10, channel: Optional[str] = None, date: Optiona
     cursor = conn.cursor()
 
     # Build the query based on filters
-    query = """
+    query = f"""
     SELECT id, channel_name, guild_name, date,
            substr(summary_text, 1, 100) as summary_preview,
            message_count, active_users, created_at
-    FROM channel_summaries
+    FROM {TABLE_CHANNEL_SUMMARIES}
     """
 
     conditions = []
@@ -200,10 +204,10 @@ def view_summary(summary_id: int) -> None:
     cursor = conn.cursor()
 
     cursor.execute(
-        """
+        f"""
         SELECT channel_name, guild_name, date, summary_text,
                message_count, active_users, active_users_list, created_at, metadata
-        FROM channel_summaries
+        FROM {TABLE_CHANNEL_SUMMARIES}
         WHERE id = ?
         """,
         (summary_id,)
