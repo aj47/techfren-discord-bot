@@ -46,6 +46,25 @@ class TestIsDiscordMessageLink:
         assert is_discord_message_link("https://discord.com/channels/abc/456/789") is False
         assert is_discord_message_link("https://discord.com/channels/123/abc/789") is False
 
+    def test_trailing_slash(self):
+        """Test links with trailing slashes are rejected."""
+        assert is_discord_message_link("https://discord.com/channels/123/456/789/") is False
+
+    def test_large_numeric_ids(self):
+        """Test links with very large Discord IDs are accepted."""
+        # Discord snowflakes can be up to 19 digits
+        large_id = "1234567890123456789"
+        assert is_discord_message_link(f"https://discord.com/channels/{large_id}/{large_id}/{large_id}") is True
+
+    def test_whitespace_handling(self):
+        """Test URL with leading/trailing whitespace is stripped and accepted."""
+        # Whitespace is stripped, so URL should be accepted
+        url_with_space = " https://discord.com/channels/123/456/789"
+        assert is_discord_message_link(url_with_space) is True
+        # Trailing whitespace with trailing slash should be rejected
+        url_with_space_and_slash = " https://discord.com/channels/123/456/789/ "
+        assert is_discord_message_link(url_with_space_and_slash) is False
+
 
 class TestExtractMessageLinks:
     """Test cases for extract_message_links function."""
@@ -79,6 +98,37 @@ class TestExtractMessageLinks:
     def test_mixed_content(self):
         """Test extracting links from mixed content."""
         text = "Check https://example.com and https://discord.com/channels/123/456/789 also https://google.com"
+        result = extract_message_links(text)
+        assert result == ["https://discord.com/channels/123/456/789"]
+
+    def test_links_at_boundaries(self):
+        """Test extracting links at start and end of text."""
+        text = "https://discord.com/channels/111/222/333 in the middle"
+        result = extract_message_links(text)
+        assert result == ["https://discord.com/channels/111/222/333"]
+
+    def test_links_at_start_end(self):
+        """Test extracting links at start and end of text."""
+        text = "https://discord.com/channels/111/222/333"
+        result = extract_message_links(text)
+        assert result == ["https://discord.com/channels/111/222/333"]
+
+    def test_multiple_links_same_line(self):
+        """Test extracting multiple links on the same line."""
+        text = "Links: https://discord.com/channels/1/2/3 and https://discord.com/channels/4/5/6"
+        result = extract_message_links(text)
+        assert len(result) == 2
+        assert "https://discord.com/channels/1/2/3" in result
+        assert "https://discord.com/channels/4/5/6" in result
+
+    def test_empty_text(self):
+        """Test extracting links from empty text."""
+        result = extract_message_links("")
+        assert result == []
+
+    def test_links_with_unicode_content(self):
+        """Test extracting links from text with unicode characters."""
+        text = "Check this out: https://discord.com/channels/123/456/789 日本語テスト 🎉"
         result = extract_message_links(text)
         assert result == ["https://discord.com/channels/123/456/789"]
 

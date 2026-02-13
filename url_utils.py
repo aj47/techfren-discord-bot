@@ -25,6 +25,11 @@ def is_discord_message_link(url: str) -> bool:
         return False
 
     try:
+        # Strip leading/trailing whitespace
+        url = url.strip()
+        # Reject URLs with trailing slashes (not a valid message link)
+        if url.endswith('/'):
+            return False
         parsed = urlparse(url)
     except Exception:
         return False
