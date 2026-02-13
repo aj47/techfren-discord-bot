@@ -82,3 +82,83 @@ def generate_discord_message_link(guild_id: str, channel_id: str, message_id: st
     else:
         # For DMs, use @me instead of guild_id
         return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
+
+
+def sanitize_url(url: str) -> str | None:
+    """Sanitize and normalize a URL by stripping whitespace and common junk.
+
+    Args:
+        url: The URL to sanitize
+
+    Returns:
+        Sanitized URL string, or None if invalid
+    """
+    if not url:
+        return None
+
+    url = url.strip()
+
+    # Remove common junk characters and trailing slashes
+    url = url.rstrip('.,;:!?)]}\'/')
+
+    # Remove leading/trailing quotes that often get attached
+    url = url.strip('"\'')
+
+    if not url:
+        return None
+
+    try:
+        parsed = urlparse(url)
+        # Require a scheme for valid URLs
+        if not parsed.scheme:
+            return None
+        # Reject empty netloc (e.g., just "http://")
+        if not parsed.netloc and not parsed.path:
+            return None
+    except Exception:
+        return None
+
+    return url
+
+
+def extract_urls(text: str) -> List[str]:
+    """Extract all URLs from text, not just Discord links.
+
+    Args:
+        text: Text to search for URLs
+
+    Returns:
+        List of URLs found in the text
+    """
+    # Pattern matches common URL formats
+    pattern = r'https?://[^\s<>"\')}\]]+'
+    return re.findall(pattern, text)
+
+
+def is_valid_url(url: str) -> bool:
+    """Check if a string is a valid URL.
+
+    Args:
+        url: The URL to validate
+
+    Returns:
+        True if valid URL, False otherwise
+    """
+    if not url:
+        return False
+
+    sanitized = sanitize_url(url)
+    if not sanitized:
+        return False
+
+    try:
+        parsed = urlparse(sanitized)
+        # Must have http or https scheme
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        # Must have a netloc (domain)
+        if not parsed.netloc:
+            return False
+        return True
+    except Exception:
+        return False

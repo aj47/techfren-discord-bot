@@ -7,7 +7,10 @@ import pytest
 from url_utils import (
     is_discord_message_link,
     extract_message_links,
-    generate_discord_message_link
+    generate_discord_message_link,
+    sanitize_url,
+    extract_urls,
+    is_valid_url
 )
 
 
@@ -150,6 +153,184 @@ class TestGenerateDiscordMessageLink:
         """Test generating DM link with None guild ID."""
         link = generate_discord_message_link(None, "123456", "789012")
         assert link == "https://discord.com/channels/@me/123456/789012"
+
+
+class TestSanitizeUrl:
+    """Test cases for sanitize_url function."""
+
+    def test_valid_https_url(self):
+        """Test sanitizing a valid HTTPS URL."""
+        url = sanitize_url("https://example.com/path?query=value")
+        assert url == "https://example.com/path?query=value"
+
+    def test_valid_http_url(self):
+        """Test sanitizing a valid HTTP URL."""
+        url = sanitize_url("http://example.com")
+        assert url == "http://example.com"
+
+    def test_strips_whitespace(self):
+        """Test stripping leading/trailing whitespace."""
+        url = sanitize_url("  https://example.com  ")
+        assert url == "https://example.com"
+
+    def test_strips_trailing_punctuation(self):
+        """Test stripping trailing punctuation."""
+        url = sanitize_url("https://example.com/page,")
+        assert url == "https://example.com/page"
+        url = sanitize_url("https://example.com/page.")
+        assert url == "https://example.com/page"
+        url = sanitize_url("https://example.com/page;")
+        assert url == "https://example.com/page"
+        url = sanitize_url("https://example.com/page!")
+        assert url == "https://example.com/page"
+
+    def test_strips_quotes(self):
+        """Test stripping leading/trailing quotes."""
+        url = sanitize_url('"https://example.com"')
+        assert url == "https://example.com"
+        url = sanitize_url("'https://example.com'")
+        assert url == "https://example.com"
+
+    def test_none_input(self):
+        """Test None input returns None."""
+        assert sanitize_url(None) is None
+
+    def test_empty_string(self):
+        """Test empty string returns None."""
+        assert sanitize_url("") is None
+
+    def test_whitespace_only(self):
+        """Test whitespace-only string returns None."""
+        assert sanitize_url("   ") is None
+
+    def test_url_without_scheme(self):
+        """Test URL without scheme returns None."""
+        assert sanitize_url("example.com") is None
+
+    def test_url_with_trailing_slash(self):
+        """Test URL with trailing slash is stripped."""
+        url = sanitize_url("https://example.com/")
+        assert url == "https://example.com"
+
+    def test_url_with_multiple_trailing_slashes(self):
+        """Test URL with multiple trailing slashes is stripped."""
+        url = sanitize_url("https://example.com///")
+        assert url == "https://example.com"
+
+
+class TestExtractUrls:
+    """Test cases for extract_urls function."""
+
+    def test_single_url(self):
+        """Test extracting a single URL."""
+        text = "Visit https://example.com for more info"
+        result = extract_urls(text)
+        assert result == ["https://example.com"]
+
+    def test_multiple_urls(self):
+        """Test extracting multiple URLs."""
+        text = "Check https://example.com and https://google.com"
+        result = extract_urls(text)
+        assert len(result) == 2
+        assert "https://example.com" in result
+        assert "https://google.com" in result
+
+    def test_http_url(self):
+        """Test extracting HTTP URLs."""
+        text = "Link: http://example.com"
+        result = extract_urls(text)
+        assert result == ["http://example.com"]
+
+    def test_no_urls(self):
+        """Test text with no URLs."""
+        text = "Just a regular message without any links"
+        result = extract_urls(text)
+        assert result == []
+
+    def test_url_with_query_params(self):
+        """Test extracting URLs with query parameters."""
+        text = "Search: https://google.com/search?q=test&t=123"
+        result = extract_urls(text)
+        assert result == ["https://google.com/search?q=test&t=123"]
+
+    def test_url_with_fragment(self):
+        """Test extracting URLs with fragments."""
+        text = "Anchor: https://example.com/page#section"
+        result = extract_urls(text)
+        assert result == ["https://example.com/page#section"]
+
+    def test_url_at_start(self):
+        """Test extracting URL at start of text."""
+        text = "https://example.com is the link"
+        result = extract_urls(text)
+        assert result == ["https://example.com"]
+
+    def test_url_at_end(self):
+        """Test extracting URL at end of text."""
+        text = "Click here: https://example.com"
+        result = extract_urls(text)
+        assert result == ["https://example.com"]
+
+    def test_mixed_discord_and_regular_urls(self):
+        """Test extracting regular URLs when Discord links are present."""
+        text = "Check https://example.com and https://discord.com/channels/123/456/789"
+        result = extract_urls(text)
+        assert "https://example.com" in result
+        # Discord links should also be extracted
+        assert "https://discord.com/channels/123/456/789" in result
+
+    def test_empty_text(self):
+        """Test extracting URLs from empty text."""
+        result = extract_urls("")
+        assert result == []
+
+    def test_urls_with_unicode_in_text(self):
+        """Test extracting URLs from text with unicode."""
+        text = "Link: https://example.com 日本語 🎉"
+        result = extract_urls(text)
+        assert result == ["https://example.com"]
+
+
+class TestIsValidUrl:
+    """Test cases for is_valid_url function."""
+
+    def test_valid_https_url(self):
+        """Test valid HTTPS URL returns True."""
+        assert is_valid_url("https://example.com") is True
+
+    def test_valid_http_url(self):
+        """Test valid HTTP URL returns True."""
+        assert is_valid_url("http://example.com") is True
+
+    def test_url_with_path(self):
+        """Test valid URL with path."""
+        assert is_valid_url("https://example.com/path/to/page") is True
+
+    def test_url_with_query(self):
+        """Test valid URL with query string."""
+        assert is_valid_url("https://example.com?search=test") is True
+
+    def test_none_input(self):
+        """Test None input returns False."""
+        assert is_valid_url(None) is False
+
+    def test_empty_string(self):
+        """Test empty string returns False."""
+        assert is_valid_url("") is False
+
+    def test_url_without_scheme(self):
+        """Test URL without scheme returns False."""
+        assert is_valid_url("example.com") is False
+
+    def test_url_with_invalid_scheme(self):
+        """Test URL with non-http(s) scheme returns False."""
+        assert is_valid_url("ftp://example.com") is False
+        assert is_valid_url("file:///path/to/file") is False
+
+    def test_malformed_url(self):
+        """Test malformed URL returns False."""
+        assert is_valid_url("not a url") is False
+        assert is_valid_url("https://") is False
 
 
 if __name__ == "__main__":
