@@ -21,6 +21,7 @@ class DiscordFormatter:
 
         Handles:
         - Perplexity format: List of URL strings
+        - Perplexity nested format: {"citations": [{"url": "..."}]}
         - Exa format: List of objects with url, title, publishedDate, author, etc.
 
         Args:
@@ -31,6 +32,10 @@ class DiscordFormatter:
         """
         if not citations:
             return []
+
+        # Handle Perplexity's nested dict format: {"citations": [...]}
+        if isinstance(citations, dict) and 'citations' in citations:
+            citations = citations['citations']
 
         normalized = []
         for citation in citations:
