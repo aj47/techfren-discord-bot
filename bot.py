@@ -1292,7 +1292,7 @@ _summarized_message_ids = {}
 _SUMMARIZED_TTL_SECONDS = 24 * 60 * 60  # 24 hours
 
 # Track messages currently being processed to prevent race conditions
-# This prevents duplicate summarizations when multiple 👍 events arrive close together
+# This prevents duplicate summarizations when multiple 🔍 events arrive close together
 _processing_message_ids = set()
 
 
@@ -1357,11 +1357,11 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     Using on_raw_reaction_add instead of on_reaction_add ensures this works
     for messages not in the bot's cache (e.g., older messages or after restart).
 
-    Links are summarized when a thumbs up (👍) reaction is added to a message containing links.
+    Links are summarized when a magnifying glass (🔍) reaction is added to a message containing links.
     This ensures only community-approved links are summarized.
     """
-    # Only process thumbs up reactions
-    if str(payload.emoji) != '👍':
+    # Only process magnifying glass reactions
+    if str(payload.emoji) != '🔍':
         return
 
     # Skip if already successfully processed this message
@@ -1395,20 +1395,20 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if not urls:
         return
 
-    # Count thumbs up reactions
-    thumbs_up_count = 0
+    # Count magnifying glass reactions
+    mag_count = 0
     for r in message.reactions:
-        if str(r.emoji) == '👍':
-            thumbs_up_count = r.count
+        if str(r.emoji) == '🔍':
+            mag_count = r.count
             break
 
-    # Check trigger condition: 1+ thumbs up reaction
-    community_triggered = thumbs_up_count >= 1
+    # Check trigger condition: 1+ magnifying glass reaction
+    community_triggered = mag_count >= 1
 
     if not community_triggered:
         return
 
-    trigger_reason = f"{thumbs_up_count} thumbs up"
+    trigger_reason = f"{mag_count} mag reaction(s)"
     logger.info(f"Link summarization triggered by {trigger_reason} for message {message.id}")
 
     # Mark as processing to prevent race conditions from concurrent reaction events
