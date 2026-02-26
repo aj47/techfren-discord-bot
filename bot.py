@@ -661,6 +661,10 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         if message.author.bot:
             return False
 
+        # Allow system messages (thread creation notifications, pins, etc.)
+        if message.type not in (discord.MessageType.default, discord.MessageType.reply):
+            return False
+
         # Check for URLs in the message content using the same regex as process_url
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[^\s]*)?(?:\?[^\s]*)?'
         urls = re.findall(url_pattern, message.content)
