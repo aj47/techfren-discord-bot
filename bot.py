@@ -27,6 +27,7 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from auto_thread import init_auto_thread, handle_message_for_auto_thread  # Import auto-thread handler
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -801,6 +802,9 @@ async def on_ready():
         daily_role_color_charging.start()
         logger.info("Started daily role color charging task")
 
+    # Initialize auto-thread handler for automatic conversation threading
+    init_auto_thread(bot)
+
     # Log details about each connected guild
     for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
@@ -1238,6 +1242,15 @@ async def on_message(message):
         # This saves resources and ensures only community-approved links are summarized.
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+
+    # Check for auto-threading (when 2 users have extended back-and-forth conversation)
+    try:
+        thread_created = await handle_message_for_auto_thread(message)
+        if thread_created:
+            # Thread was created and original messages deleted, stop processing
+            return
+    except Exception as e:
+        logger.error(f"Error in auto-thread handling: {e}", exc_info=True)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
