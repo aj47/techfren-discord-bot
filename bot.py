@@ -27,6 +27,11 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from anti_promo_bot import (
+    is_anti_promo_enabled,
+    analyze_message_for_spam,
+    handle_suspicious_message
+)
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -830,6 +835,29 @@ async def on_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return
+
+    # Anti-promo bot detection - check for spam/promo bots
+    # This runs early to catch and remove spam before any other processing
+    if is_anti_promo_enabled() and message.guild:
+        try:
+            member = message.author
+            # Get member's server join time (may be None for cached users)
+            member_joined_at = getattr(member, 'joined_at', None)
+
+            analysis = analyze_message_for_spam(
+                content=message.content,
+                user_created_at=member.created_at,
+                member_joined_at=member_joined_at,
+                is_bot=member.bot,
+                user_id=str(member.id)
+            )
+
+            if analysis['is_suspicious']:
+                handled = await handle_suspicious_message(message, analysis, bot.user)
+                if handled:
+                    return  # Message was handled by anti-promo (deleted/kicked/banned), stop processing
+        except Exception as e:
+            logger.error(f"Error in anti-promo check: {e}", exc_info=True)
 
     # Handle links dump channel logic first
     # This needs to happen before storing in database to avoid storing deleted messages
