@@ -21,7 +21,11 @@ class DiscordFormatter:
 
         Handles:
         - Perplexity format: List of URL strings
+        - Perplexity nested format: {"citations": [{"url": "..."}]}
+        - Perplexity double-nested format: {"citations": [{"url": "...", "citations": [...]}]}
         - Exa format: List of objects with url, title, publishedDate, author, etc.
+        - Dict-wrapped citations: {"items": [...]} or other wrapper keys
+        - Citations with alternate url field names: link, source_url, href
 
         Args:
             citations: Citations in either format
@@ -32,21 +36,86 @@ class DiscordFormatter:
         if not citations:
             return []
 
+        # Handle various dict wrapper formats
+        if isinstance(citations, dict):
+            # Try common wrapper keys
+            for wrapper_key in ['citations', 'items', 'sources', 'results', 'data']:
+                if wrapper_key in citations and isinstance(citations[wrapper_key], list):
+                    citations = citations[wrapper_key]
+                    break
+            else:
+                # Dict but no recognized wrapper - try to extract url if present
+                if 'url' in citations:
+                    return [citations]
+                logger.warning(f"Unrecognized citation dict format: {citations}")
+                return []
+
+        # Handle list of lists (nested citations)
+        if isinstance(citations, list) and len(citations) > 0:
+            # Check if all elements are lists (nested citations)
+            if all(isinstance(item, list) for item in citations):
+                # Flatten nested lists
+                citations = [item for sublist in citations for item in sublist]
+
         normalized = []
         for citation in citations:
-            if isinstance(citation, str):
-                # Perplexity format: simple URL string
-                normalized.append({'url': citation})
-            elif isinstance(citation, dict):
-                # Exa format: object with url and other metadata
-                if 'url' in citation:
-                    normalized.append(citation)
-                else:
-                    logger.warning(f"Citation object missing 'url' field: {citation}")
-            else:
-                logger.warning(f"Unknown citation format: {type(citation)}")
+            # Handle dict-wrapped citations recursively
+            if isinstance(citation, dict):
+                # If this dict has a nested 'citations' key, process those too
+                if 'citations' in citation and isinstance(citation['citations'], list):
+                    # Recursively extract all nested citations first
+                    nested_results = DiscordFormatter._normalize_citations(citation['citations'])
+                    normalized.extend(nested_results)
+                    # Also add the parent citation if it has a URL
+                    if 'url' in citation:
+                        normalized_citation = DiscordFormatter._normalize_single_citation(citation)
+                        if normalized_citation:
+                            normalized.append(normalized_citation)
+                    continue
+
+            normalized_citation = DiscordFormatter._normalize_single_citation(citation)
+            if normalized_citation:
+                normalized.append(normalized_citation)
 
         return normalized
+
+    @staticmethod
+    def _normalize_single_citation(citation: Any) -> Optional[Dict[str, Any]]:
+        """
+        Normalize a single citation from any format.
+
+        Args:
+            citation: Single citation in any format
+
+        Returns:
+            Citation dictionary with 'url' key, or None if invalid
+        """
+        if isinstance(citation, str):
+            # Perplexity format: simple URL string
+            return {'url': citation}
+        elif isinstance(citation, dict):
+            # Exa format: object with url and other metadata
+            # Try to find URL in common fields
+            url = None
+            for url_field in ['url', 'link', 'source_url', 'href', 'source']:
+                if url_field in citation:
+                    url = citation[url_field]
+                    break
+
+            if url:
+                # Build normalized citation, preserving all metadata
+                normalized = {'url': url}
+                # Copy other fields except wrapper keys
+                for key, value in citation.items():
+                    if key not in ['url', 'link', 'source_url', 'href', 'source', 'citations', 'items']:
+                        normalized[key] = value
+                return normalized
+            else:
+                logger.warning(f"Citation object missing URL field: {citation}")
+                return None
+        else:
+            logger.warning(f"Unknown citation format: {type(citation)} - {citation}")
+            return None
 
     @staticmethod
     def _format_citation_link(index: int, citation: Dict[str, Any]) -> str:

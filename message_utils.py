@@ -4,52 +4,12 @@ from typing import Optional, Dict, Any
 import logging
 from urllib.parse import urlparse
 
-def generate_discord_message_link(guild_id: str, channel_id: str, message_id: str) -> str:
-    """Generate a Discord message link from guild ID, channel ID, and message ID.
-
-    Args:
-        guild_id (str): The Discord guild (server) ID
-        channel_id (str): The Discord channel ID
-        message_id (str): The Discord message ID
-
-    Returns:
-        str: The Discord message link
-    """
-    if guild_id:
-        return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
-    else:
-        # For DMs, use @me instead of guild_id
-        return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
-
-
-def is_discord_message_link(url: str) -> bool:
-    """Return True if the URL is a Discord message permalink.
-
-    We use this to avoid treating internal Discord message links as
-    external web pages for auto link summaries or scraping.
-    """
-    if not url:
-        return False
-
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-
-    hostname = (parsed.hostname or "").lower()
-    if hostname not in ("discord.com", "discordapp.com"):
-        return False
-
-    path_parts = (parsed.path or "").strip("/").split("/")
-    # Expect: /channels/{guild_id|@me}/{channel_id}/{message_id}
-    if len(path_parts) != 4 or path_parts[0] != "channels":
-        return False
-
-    _, channel_id, message_id = path_parts[1], path_parts[2], path_parts[3]
-    if not (channel_id.isdigit() and message_id.isdigit()):
-        return False
-
-    return True
+# Import URL utilities from dedicated module
+from url_utils import (
+    generate_discord_message_link,
+    is_discord_message_link,
+    extract_message_links
+)
 
 
 async def split_long_message(message, max_length=1900):
@@ -231,18 +191,6 @@ async def fetch_message_from_link(link: str, bot: discord.Client) -> Optional[di
 
     return None
 
-def extract_message_links(text: str) -> list[str]:
-    """
-    Extract Discord message links from text.
-
-    Args:
-        text (str): Text to search for Discord message links
-
-    Returns:
-        list[str]: List of Discord message links found
-    """
-    pattern = r'https://discord\.com/channels/(?:@me|\d+)/\d+/\d+'
-    return re.findall(pattern, text)
 
 async def get_message_context(message: discord.Message, bot: discord.Client) -> Dict[str, Any]:
     """
