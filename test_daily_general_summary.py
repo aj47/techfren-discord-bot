@@ -37,6 +37,20 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
                 "guild_name": "TechFren",
                 "message_count": 1,
             },
+            {
+                "channel_id": "bot_id",
+                "channel_name": "bot-updates",
+                "guild_id": "guild_id",
+                "guild_name": "TechFren",
+                "message_count": 1,
+            },
+            {
+                "channel_id": "other_id",
+                "channel_name": "other-general",
+                "guild_id": "other_guild_id",
+                "guild_name": "Other Guild",
+                "message_count": 1,
+            },
         ]
         messages_by_channel = {
             "general_id": {
@@ -47,6 +61,12 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
             },
             "dev_id": {
                 "messages": [self._message("d1", "Casey", "Dev discussion")]
+            },
+            "bot_id": {
+                "messages": [self._message("b1", "Summary Bot", "Yesterday's digest", is_bot=True)]
+            },
+            "other_id": {
+                "messages": [self._message("o1", "Devin", "Other guild discussion")]
             },
         }
 
@@ -90,16 +110,21 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
             set(metadata["included_channel_names"]),
             {"general", "links-dump", "dev-chat"},
         )
+        self.assertEqual(
+            set(metadata["included_channel_ids"]),
+            {"general_id", "links_id", "dev_id"},
+        )
+        self.assertEqual(metadata["included_guild_id"], "guild_id")
 
-    def _message(self, message_id, author_name, content):
+    def _message(self, message_id, author_name, content, is_bot=False, is_command=False):
         return {
             "id": message_id,
             "author_id": f"{author_name}_id",
             "author_name": author_name,
             "content": content,
             "created_at": datetime(2026, 4, 13, 11, 0, tzinfo=timezone.utc),
-            "is_bot": False,
-            "is_command": False,
+            "is_bot": is_bot,
+            "is_command": is_command,
             "scraped_url": None,
             "scraped_content_summary": None,
             "scraped_content_key_points": None,
