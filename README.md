@@ -125,6 +125,7 @@ The bot automatically generates summaries for all active channels once per day:
 
 - Runs at a configurable time (default: midnight UTC)
 - Summarizes messages from the past 24 hours for each active channel
+- The summary posted in the configured general channel is a server-wide digest of all active channels
 - Stores summaries in a dedicated database table with metadata including:
   - Channel information
   - Message count
@@ -140,7 +141,7 @@ To configure the automated summarization:
 # In .env file or environment variables
 SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
 SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
-SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict daily summaries to specific channels (comma-separated)
+SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict per-channel daily summaries (general digest still uses all active channels)
 ```
 
 ## Database

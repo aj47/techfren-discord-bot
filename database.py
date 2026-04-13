@@ -893,7 +893,7 @@ def delete_messages_older_than(cutoff_time: datetime) -> int:
 
 def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
     """
-    Get a list of channels that have had activity in the last specified hours.
+    Get channels with non-bot, non-command activity in the last specified hours.
 
     Args:
         hours (int): Number of hours to look back for activity
@@ -919,6 +919,8 @@ def get_active_channels(hours: int = 24) -> List[Dict[str, Any]]:
                     COUNT(*) as message_count
                 FROM messages
                 WHERE created_at >= ?
+                AND is_bot = 0
+                AND is_command = 0
                 GROUP BY channel_id
                 ORDER BY message_count DESC
                 """,

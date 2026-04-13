@@ -16,6 +16,29 @@ def set_discord_client(client_instance):
     global discord_client
     discord_client = client_instance
 
+def _format_daily_summary_message(msg, channel_data):
+    """Normalize a stored message for the daily summary/points LLM calls."""
+    return {
+        'id': msg.get('id', ''),
+        'author_id': msg.get('author_id', ''),
+        'author_name': msg['author_name'],
+        'content': msg['content'],
+        'created_at': msg['created_at'],
+        'is_bot': msg.get('is_bot', False),
+        'is_command': False,
+        'guild_id': channel_data['guild_id'],
+        'channel_id': channel_data['channel_id'],
+        'channel_name': channel_data['channel_name'],
+        'scraped_url': msg.get('scraped_url'),
+        'scraped_content_summary': msg.get('scraped_content_summary'),
+        'scraped_content_key_points': msg.get('scraped_content_key_points'),
+        'image_descriptions': msg.get('image_descriptions')
+    }
+
+def _is_human_summary_message(msg):
+    """Return True for messages that should be summarized in automated digests."""
+    return not msg.get('is_command', False) and not msg.get('is_bot', False)
+
 async def run_daily_summarization_once(now: datetime | None = None):
     """Run the daily channel summarization logic a single time.
 
@@ -34,11 +57,16 @@ async def run_daily_summarization_once(now: datetime | None = None):
         yesterday = now - timedelta(hours=24)
 
         # Get active channels from the past 24 hours
-        active_channels = database.get_active_channels(hours=24)
+        all_active_channels = database.get_active_channels(hours=24)
 
-        if not active_channels:
+        if not all_active_channels:
             logger.info("No active channels found in the past 24 hours. Skipping summarization.")
             return
+
+        # These are the per-channel summary targets. The general-channel summary
+        # is handled specially below and uses all_active_channels so it can act as
+        # a server-wide digest even when per-channel summaries are allowlisted.
+        active_channels = list(all_active_channels)
 
         # If specific channels are configured, filter to just those
         summary_channel_ids = getattr(config, 'summary_channel_ids', None)
@@ -50,8 +78,7 @@ async def run_daily_summarization_once(now: datetime | None = None):
             ]
 
             if not active_channels:
-                logger.info("No configured summary channels had activity in the past 24 hours. Skipping summarization.")
-                return
+                logger.info("No configured summary channels had activity in the past 24 hours. Will still attempt the all-channel general summary.")
 
         logger.info(f"Found {len(active_channels)} active channels to summarize")
 
@@ -66,12 +93,11 @@ async def run_daily_summarization_once(now: datetime | None = None):
         all_messages_for_points = []
 
         # First pass: collect all messages for point analysis
-        for channel_data in active_channels:
+        for channel_data in all_active_channels:
             channel_id = channel_data['channel_id']
-            channel_name = channel_data['channel_name']
 
             if channel_id not in messages_by_channel:
-                logger.warning(f"No messages found for channel {channel_name} ({channel_id}) despite being marked as active")
+                logger.warning(f"No messages found for channel {channel_data['channel_name']} ({channel_id}) despite being marked as active")
                 continue
 
             channel_messages = messages_by_channel[channel_id]['messages']
@@ -79,24 +105,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
             if not channel_messages:
                 continue
 
-            guild_id = channel_data['guild_id']
-
             for msg in channel_messages:
-                if not msg.get('is_command', False) and not msg.get('is_bot', False):
-                    formatted_msg = {
-                        'id': msg.get('id', ''),
-                        'author_id': msg.get('author_id', ''),
-                        'author_name': msg['author_name'],
-                        'content': msg['content'],
-                        'created_at': msg['created_at'],
-                        'is_bot': msg.get('is_bot', False),
-                        'is_command': False,
-                        'guild_id': guild_id,
-                        'channel_id': channel_id,
-                        'scraped_url': msg.get('scraped_url'),
-                        'scraped_content_summary': msg.get('scraped_content_summary'),
-                        'scraped_content_key_points': msg.get('scraped_content_key_points')
-                    }
+                if _is_human_summary_message(msg):
+                    formatted_msg = _format_daily_summary_message(msg, channel_data)
                     all_messages_for_points.append(formatted_msg)
 
         # Award points based on contributions from the past 24 hours BEFORE posting summaries
@@ -177,53 +188,146 @@ async def run_daily_summarization_once(now: datetime | None = None):
 
         # Now process each channel and post summaries (with point awards appended to general channel)
         general_channel_id = getattr(config, 'general_channel_id', None)
+        general_channel_data = None
+        general_guild_id = None
+        general_guild_name = None
+
+        if general_channel_id:
+            general_channel_data = next(
+                (ch for ch in all_active_channels if str(ch['channel_id']) == str(general_channel_id)),
+                None
+            )
+            if general_channel_data:
+                general_guild_id = str(general_channel_data.get('guild_id')) if general_channel_data.get('guild_id') else None
+                general_guild_name = general_channel_data.get('guild_name')
 
         # If GENERAL_CHANNEL_ID is not configured, try to find a channel named "general"
-        if not general_channel_id and active_channels:
-            for channel_data in active_channels:
+        if not general_channel_id and all_active_channels:
+            for channel_data in all_active_channels:
                 if channel_data['channel_name'].lower() == 'general':
                     general_channel_id = channel_data['channel_id']
+                    general_channel_data = channel_data
+                    general_guild_id = str(channel_data.get('guild_id')) if channel_data.get('guild_id') else None
+                    general_guild_name = channel_data.get('guild_name')
                     logger.info(f"GENERAL_CHANNEL_ID not configured. Auto-detected general channel: {general_channel_id}")
                     break
 
+        has_human_summary_messages = any(
+            channel_data['channel_id'] in messages_by_channel and any(
+                _is_human_summary_message(msg)
+                for msg in messages_by_channel[channel_data['channel_id']]['messages']
+            )
+            for channel_data in all_active_channels
+        )
+
         # If still not found, use the first active channel
-        if not general_channel_id and active_channels and point_awards_result:
-            general_channel_id = active_channels[0]['channel_id']
-            logger.info(f"GENERAL_CHANNEL_ID not configured. Using first active channel for point awards: {general_channel_id}")
+        if not general_channel_id and all_active_channels and (point_awards_result or has_human_summary_messages):
+            general_channel_data = all_active_channels[0]
+            general_channel_id = general_channel_data['channel_id']
+            general_guild_id = str(general_channel_data.get('guild_id')) if general_channel_data.get('guild_id') else None
+            general_guild_name = general_channel_data.get('guild_name')
+            logger.info(f"GENERAL_CHANNEL_ID not configured. Using first active channel for daily digest/point awards: {general_channel_id}")
+
+        if general_channel_id and not general_guild_id:
+            try:
+                general_discord_channel = discord_client.get_channel(int(general_channel_id))
+            except (TypeError, ValueError):
+                general_discord_channel = None
+
+            general_discord_guild = getattr(general_discord_channel, 'guild', None) if general_discord_channel else None
+            if general_discord_guild and getattr(general_discord_guild, 'id', None):
+                general_guild_id = str(general_discord_guild.id)
+                general_guild_name = getattr(general_discord_guild, 'name', None)
+                if not general_channel_data:
+                    general_channel_data = {
+                        'channel_id': str(general_channel_id),
+                        'channel_name': getattr(general_discord_channel, 'name', 'general'),
+                        'guild_id': general_guild_id,
+                        'guild_name': general_guild_name,
+                        'message_count': 0
+                    }
+
+        # Build a server-wide message list for the summary posted in #general.
+        # This intentionally uses all active channels in the target guild (not
+        # SUMMARY_CHANNEL_IDS), so #general serves as a same-server daily digest
+        # without mixing content across guilds.
+        all_channel_summary_messages = []
+        all_channel_summary_channels = []
+        all_channel_names = []
+        if general_channel_id and general_guild_id:
+            for channel_data in all_active_channels:
+                if str(channel_data.get('guild_id')) != str(general_guild_id):
+                    continue
+
+                channel_id = channel_data['channel_id']
+                if channel_id not in messages_by_channel:
+                    continue
+
+                channel_messages = messages_by_channel[channel_id]['messages']
+                channel_formatted_messages = []
+                for msg in channel_messages:
+                    if _is_human_summary_message(msg):
+                        channel_formatted_messages.append(_format_daily_summary_message(msg, channel_data))
+
+                if channel_formatted_messages:
+                    all_channel_summary_messages.extend(channel_formatted_messages)
+                    all_channel_summary_channels.append(channel_data)
+                    all_channel_names.append(channel_data['channel_name'])
+        elif general_channel_id:
+            logger.warning(
+                f"Could not determine guild for general channel {general_channel_id}; "
+                "skipping all-channel general digest to avoid cross-guild content leakage."
+            )
+
+        # Ensure the general channel gets a digest even if SUMMARY_CHANNEL_IDS does
+        # not include it or if it had no messages of its own in the past 24 hours.
+        if general_channel_id and all_channel_summary_messages:
+            has_general_target = any(str(ch['channel_id']) == str(general_channel_id) for ch in active_channels)
+            if not has_general_target:
+                active_channels.append({
+                    'channel_id': str(general_channel_id),
+                    'channel_name': general_channel_data['channel_name'] if general_channel_data else 'general',
+                    'guild_id': general_guild_id,
+                    'guild_name': general_guild_name,
+                    'message_count': 0
+                })
 
         for channel_data in active_channels:
             channel_id = channel_data['channel_id']
             channel_name = channel_data['channel_name']
 
-            if channel_id not in messages_by_channel:
-                continue
-
-            channel_messages = messages_by_channel[channel_id]['messages']
-
-            if not channel_messages:
-                continue
-
             guild_id = channel_data['guild_id']
             guild_name = channel_data['guild_name']
 
-            formatted_messages = []
-            for msg in channel_messages:
-                if not msg.get('is_command', False):
-                    formatted_msg = {
-                        'id': msg.get('id', ''),
-                        'author_id': msg.get('author_id', ''),
-                        'author_name': msg['author_name'],
-                        'content': msg['content'],
-                        'created_at': msg['created_at'],
-                        'is_bot': msg.get('is_bot', False),
-                        'is_command': False,
-                        'guild_id': guild_id,
-                        'channel_id': channel_id,
-                        'scraped_url': msg.get('scraped_url'),
-                        'scraped_content_summary': msg.get('scraped_content_summary'),
-                        'scraped_content_key_points': msg.get('scraped_content_key_points')
-                    }
-                    formatted_messages.append(formatted_msg)
+            is_general_summary = general_channel_id and str(channel_id) == str(general_channel_id)
+
+            if channel_id not in messages_by_channel and not (is_general_summary and all_channel_summary_messages):
+                continue
+
+            if is_general_summary and all_channel_summary_messages:
+                formatted_messages = all_channel_summary_messages
+                summary_llm_channel_name = 'all active channels'
+                metadata_scope = 'all_active_channels'
+                logger.info(
+                    f"Generating general digest from {len(formatted_messages)} messages across "
+                    f"{len(all_channel_names)} channel(s): {', '.join(all_channel_names)}"
+                )
+            else:
+                if channel_id not in messages_by_channel:
+                    continue
+
+                channel_messages = messages_by_channel[channel_id]['messages']
+
+                if not channel_messages:
+                    continue
+
+                formatted_messages = []
+                for msg in channel_messages:
+                    if not msg.get('is_command', False):
+                        formatted_messages.append(_format_daily_summary_message(msg, channel_data))
+
+                summary_llm_channel_name = channel_name
+                metadata_scope = 'single_channel'
 
             if not formatted_messages:
                 logger.info(f"No non-command messages found for channel {channel_name}. Skipping summarization.")
@@ -232,12 +336,17 @@ async def run_daily_summarization_once(now: datetime | None = None):
             active_users = list(set(msg['author_name'] for msg in formatted_messages))
 
             try:
-                summary_text = await call_llm_for_summary(formatted_messages, channel_name, yesterday)
+                summary_text = await call_llm_for_summary(formatted_messages, summary_llm_channel_name, yesterday)
                 metadata = {
                     'start_time': yesterday.isoformat(),
                     'end_time': now.isoformat(),
-                    'summary_type': 'automated_daily'
+                    'summary_type': 'automated_daily',
+                    'summary_scope': metadata_scope
                 }
+                if metadata_scope == 'all_active_channels':
+                    metadata['included_channel_ids'] = [ch['channel_id'] for ch in all_channel_summary_channels]
+                    metadata['included_channel_names'] = all_channel_names
+                    metadata['included_guild_id'] = general_guild_id
                 success = database.store_channel_summary(
                     channel_id=channel_id,
                     channel_name=channel_name,

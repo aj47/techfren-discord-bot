@@ -94,7 +94,8 @@ summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
 general_channel_id = os.getenv('GENERAL_CHANNEL_ID')
 
-# Optional: restrict daily summaries to specific channel IDs (comma-separated list of IDs)
+# Optional: restrict per-channel daily summaries to specific channel IDs (comma-separated list of IDs).
+# The daily summary posted in GENERAL_CHANNEL_ID still uses all active channels as a server-wide digest.
 _summary_channel_ids_raw = os.getenv('SUMMARY_CHANNEL_IDS')
 if _summary_channel_ids_raw:
     summary_channel_ids = [cid.strip() for cid in _summary_channel_ids_raw.split(',') if cid.strip()]
