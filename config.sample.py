@@ -56,5 +56,5 @@ apify_api_token = "YOUR_APIFY_API_TOKEN"
 summary_hour = 0
 summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"  # For channel summaries
-general_channel_id = "YOUR_GENERAL_CHANNEL_ID"  # For daily point awards
-summary_channel_ids = ["YOUR_CHANNEL_ID_1", "YOUR_CHANNEL_ID_2"]  # Optional: restrict summaries to specific channels
+general_channel_id = "YOUR_GENERAL_CHANNEL_ID"  # For the server-wide daily digest and point awards
+summary_channel_ids = ["YOUR_CHANNEL_ID_1", "YOUR_CHANNEL_ID_2"]  # Optional: restrict per-channel summaries

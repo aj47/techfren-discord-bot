@@ -417,6 +417,10 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             message_id = msg.get('id', '')
             guild_id = msg.get('guild_id', '')
             channel_id = msg.get('channel_id', '')
+            message_channel_name = msg.get('channel_name')
+            channel_prefix = ""
+            if message_channel_name and str(message_channel_name).lower() != str(channel_name).lower():
+                channel_prefix = f"#{message_channel_name} | "
 
             # Generate Discord message link
             message_link = ""
@@ -437,9 +441,9 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
             timestamp_marker = f" [TIMESTAMP:{discord_timestamp}]" if discord_timestamp else ""
             if message_link:
                 # Format as clickable Discord link that the LLM will understand
-                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content} [Jump to message]({message_link})"
+                message_text = f"[{time_str}]{timestamp_marker} {channel_prefix}{author_name}: {content} [Jump to message]({message_link})"
             else:
-                message_text = f"[{time_str}]{timestamp_marker} {author_name}: {content}"
+                message_text = f"[{time_str}]{timestamp_marker} {channel_prefix}{author_name}: {content}"
 
             # If there are image descriptions, add them inline to the message
             if image_descriptions:
@@ -488,7 +492,8 @@ async def call_llm_for_summary(messages, channel_name, date, hours=24):
 
         # Create the prompt for the LLM
         time_period = "24 hours" if hours == 24 else f"{hours} hours" if hours != 1 else "1 hour"
-        prompt = f"""Summarize the #{channel_name} channel for the past {time_period}. Extract SIGNAL from noise.
+        summary_subject = "all active channels" if channel_name == "all active channels" else f"#{channel_name} channel"
+        prompt = f"""Summarize {summary_subject} for the past {time_period}. Extract SIGNAL from noise.
 
 PRIORITIZE (in order):
 1. New tech news, product launches, announcements
