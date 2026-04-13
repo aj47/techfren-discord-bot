@@ -148,6 +148,23 @@ try:
 except (ValueError, TypeError):
     ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
 
+# Role names/keywords eligible for one free color change per week
+# Comma-separated list, matched case-insensitively against Discord role names
+_free_role_keywords_raw = os.getenv('ROLE_COLOR_FREE_CHANGE_ROLE_KEYWORDS', 'legend,mvp')
+ROLE_COLOR_FREE_CHANGE_ROLE_KEYWORDS = tuple(
+    keyword.strip().lower()
+    for keyword in _free_role_keywords_raw.split(',')
+    if keyword.strip()
+)
+
+# Cooldown in days for free role color changes
+try:
+    ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS = int(os.getenv('ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', '7'))
+    if ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS < 1:
+        ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS = 7
+except (ValueError, TypeError):
+    ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS = 7
+
 # GIF Bypass Configuration
 # Points required to bypass GIF rate limits
 try:

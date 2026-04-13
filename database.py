@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS user_role_colors (
 );
 """
 
+CREATE_ROLE_COLOR_FREE_CHANGE_TABLE = """
+CREATE TABLE IF NOT EXISTS role_color_free_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    last_free_change_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id)
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -114,6 +125,7 @@ CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_da
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
+CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_color_free_changes_author_guild ON role_color_free_changes (author_id, guild_id);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
 INSERT_MESSAGE = """
@@ -162,8 +174,10 @@ def migrate_database() -> None:
             # Always ensure the reply_to index exists (handles both new DBs and migrated DBs)
             # CREATE INDEX IF NOT EXISTS is idempotent, so this is safe to run always
             cursor.execute(CREATE_INDEX_REPLY_TO)
+            cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
+            cursor.execute(CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD)
             conn.commit()
-            logger.debug("Ensured reply_to_message_id index exists")
+            logger.debug("Ensured migration tables/indexes exist")
 
     except Exception as e:
         logger.error(f"Error running database migrations: {str(e)}", exc_info=True)
@@ -194,6 +208,7 @@ def init_database() -> None:
             cursor.execute(CREATE_USER_POINTS_TABLE)
             cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
+            cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -217,6 +232,7 @@ def init_database() -> None:
             # Create indexes for user_role_colors table
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
+            cursor.execute(CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -1850,6 +1866,76 @@ def update_role_color_last_charged(author_id: str, guild_id: str, date_str: str)
         return rows_affected > 0
     except Exception as e:
         logger.error(f"Error updating last charged date for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def can_use_free_role_color_change(author_id: str, guild_id: str, cooldown_days: int = 7) -> bool:
+    """
+    Check whether the user can claim a free role color change based on cooldown.
+
+    Args:
+        author_id: Discord user ID
+        guild_id: Discord guild ID
+        cooldown_days: Cooldown window in days
+
+    Returns:
+        bool: True if the user can use a free change now, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT last_free_change_at
+                FROM role_color_free_changes
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (author_id, guild_id)
+            )
+            row = cursor.fetchone()
+
+        if not row:
+            return True
+
+        last_free_change = datetime.fromisoformat(row['last_free_change_at'])
+        if last_free_change.tzinfo is None:
+            last_free_change = last_free_change.replace(tzinfo=timezone.utc)
+
+        next_available = last_free_change + timedelta(days=max(1, cooldown_days))
+        return datetime.now(timezone.utc) >= next_available
+    except Exception as e:
+        logger.error(f"Error checking free role color change eligibility for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def record_free_role_color_change(author_id: str, guild_id: str) -> bool:
+    """
+    Record usage of a free role color change for cooldown tracking.
+
+    Args:
+        author_id: Discord user ID
+        guild_id: Discord guild ID
+
+    Returns:
+        bool: True if recorded successfully, False otherwise
+    """
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO role_color_free_changes (author_id, guild_id, last_free_change_at, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(author_id, guild_id) DO UPDATE SET
+                    last_free_change_at = excluded.last_free_change_at
+                """,
+                (author_id, guild_id, now, now)
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error recording free role color change for user {author_id}: {str(e)}", exc_info=True)
         return False
 
 
