@@ -1908,6 +1908,61 @@ def can_use_free_role_color_change(author_id: str, guild_id: str, cooldown_days:
         return False
 
 
+def claim_free_role_color_change(author_id: str, guild_id: str, cooldown_days: int = 7) -> bool:
+    """
+    Atomically claim a free role color change if eligible.
+    Checks cooldown and records usage in a single transaction to prevent
+    concurrent calls from both getting a free change within the cooldown window.
+
+    Args:
+        author_id: Discord user ID
+        guild_id: Discord guild ID
+        cooldown_days: Cooldown window in days
+
+    Returns:
+        bool: True if claimed successfully, False if not eligible or error
+    """
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+
+            cursor.execute(
+                """
+                SELECT last_free_change_at
+                FROM role_color_free_changes
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (author_id, guild_id)
+            )
+            row = cursor.fetchone()
+
+            if row:
+                last_free_change = datetime.fromisoformat(row['last_free_change_at'])
+                if last_free_change.tzinfo is None:
+                    last_free_change = last_free_change.replace(tzinfo=timezone.utc)
+                next_available = last_free_change + timedelta(days=max(1, cooldown_days))
+                if datetime.now(timezone.utc) < next_available:
+                    conn.rollback()
+                    return False
+
+            cursor.execute(
+                """
+                INSERT INTO role_color_free_changes (author_id, guild_id, last_free_change_at, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(author_id, guild_id) DO UPDATE SET
+                    last_free_change_at = excluded.last_free_change_at
+                """,
+                (author_id, guild_id, now, now)
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error claiming free role color change for user {author_id}: {str(e)}", exc_info=True)
+        return False
+
+
 def record_free_role_color_change(author_id: str, guild_id: str) -> bool:
     """
     Record usage of a free role color change for cooldown tracking.

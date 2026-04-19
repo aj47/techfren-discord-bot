@@ -2134,7 +2134,7 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         free_change_eligible = _member_has_free_weekly_color_change_role(member)
         free_change_cooldown_days = getattr(config, 'ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', 7)
 
-        if free_change_eligible and database.can_use_free_role_color_change(user_id, guild_id, free_change_cooldown_days):
+        if free_change_eligible and database.claim_free_role_color_change(user_id, guild_id, free_change_cooldown_days):
             points_to_charge_now = 0
             free_change_used = True
 
@@ -2205,8 +2205,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             )
             return
 
-        if free_change_used and not database.record_free_role_color_change(user_id, guild_id):
-            logger.warning(f"Failed to record free weekly color change usage for {user_name} ({user_id})")
+        if free_change_used:
+            logger.info(f"Free role color change claimed for {user_name} ({user_id})")
 
         # After all steps succeed, remove old role if user had one (but not if same role)
         if existing_color:
@@ -2222,11 +2222,11 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
                         logger.warning(f"Could not remove old color role {old_role.name} from {user_name} - insufficient permissions")
 
         remaining_points = current_points - points_to_charge_now
-        upfront_cost_text = (
-            f"Cost right now: {points_to_charge_now} point(s)"
-            if not free_change_used
-            else f"Cost right now: 0 point(s) (free weekly change for eligible role)"
-        )
+        if not free_change_used:
+            upfront_cost_text = f"Cost right now: {points_to_charge_now} point(s)"
+        else:
+            cooldown_label = f"{free_change_cooldown_days} day(s)" if free_change_cooldown_days != 7 else "weekly"
+            upfront_cost_text = f"Cost right now: 0 point(s) (free {cooldown_label} change for eligible role)"
         await interaction.followup.send(
             f"Your name color has been set to **{color_lower}**!\n"
             f"{upfront_cost_text}\n"
