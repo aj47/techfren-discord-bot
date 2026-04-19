@@ -2176,7 +2176,7 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         try:
             await member.add_roles(role, reason="Custom color set via /color-set")
             logger.info(f"Assigned role {role.name} (position {role.position}) to {member.name}")
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException):
             if free_change_used:
                 database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.followup.send(
@@ -2264,6 +2264,11 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
 
     except Exception as e:
         logger.error(f"Error in /color-set command: {str(e)}", exc_info=True)
+        if free_change_used:
+            try:
+                database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
+            except Exception:
+                pass
         try:
             await interaction.followup.send(
                 "An error occurred while setting your color. Please try again later.",
