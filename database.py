@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS user_role_colors (
     color_hex TEXT NOT NULL,
     color_name TEXT NOT NULL,
     points_per_day INTEGER NOT NULL,
+    free_change_started_at TIMESTAMP,
     started_at TIMESTAMP NOT NULL,
     last_charged_date TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL,
@@ -176,6 +177,16 @@ def migrate_database() -> None:
             cursor.execute(CREATE_INDEX_REPLY_TO)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
             cursor.execute(CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD)
+
+            # Ensure free_change_started_at column exists on user_role_colors
+            cursor.execute("PRAGMA table_info(user_role_colors)")
+            role_color_columns = [column[1] for column in cursor.fetchall()]
+            if 'free_change_started_at' not in role_color_columns:
+                logger.info("Adding free_change_started_at column to user_role_colors table")
+                cursor.execute("ALTER TABLE user_role_colors ADD COLUMN free_change_started_at TIMESTAMP")
+                conn.commit()
+                logger.info("Successfully added free_change_started_at column")
+
             conn.commit()
             logger.debug("Ensured migration tables/indexes exist")
 
@@ -1656,7 +1667,8 @@ def set_user_role_color(
     role_id: str,
     color_hex: str,
     color_name: str,
-    points_per_day: int
+    points_per_day: int,
+    free_change_started_at: Optional[str] = None
 ) -> bool:
     """
     Set or update a user's active role color.
@@ -1669,6 +1681,7 @@ def set_user_role_color(
         color_hex: The hex color code (e.g., "#FF5733")
         color_name: Human-readable color name
         points_per_day: Points to deduct per day
+        free_change_started_at: ISO timestamp when the free weekly change was claimed (None if paid)
 
     Returns:
         bool: True if successful, False otherwise
@@ -1684,22 +1697,23 @@ def set_user_role_color(
                 """
                 INSERT INTO user_role_colors (
                     author_id, author_name, guild_id, role_id, color_hex,
-                    color_name, points_per_day, started_at, last_charged_date, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    color_name, points_per_day, free_change_started_at, started_at, last_charged_date, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(author_id, guild_id) DO UPDATE SET
                     author_name = ?,
                     role_id = ?,
                     color_hex = ?,
                     color_name = ?,
                     points_per_day = ?,
+                    free_change_started_at = ?,
                     started_at = ?,
                     last_charged_date = ?
                 """,
                 (
                     author_id, author_name, guild_id, role_id, color_hex,
-                    color_name, points_per_day, now.isoformat(), today_str, now.isoformat(),
+                    color_name, points_per_day, free_change_started_at, now.isoformat(), today_str, now.isoformat(),
                     author_name, role_id, color_hex, color_name, points_per_day,
-                    now.isoformat(), today_str
+                    free_change_started_at, now.isoformat(), today_str
                 )
             )
 
@@ -1730,7 +1744,7 @@ def get_user_role_color(author_id: str, guild_id: str) -> Optional[Dict[str, Any
             cursor.execute(
                 """
                 SELECT author_id, author_name, guild_id, role_id, color_hex,
-                       color_name, points_per_day, started_at, last_charged_date, created_at
+                       color_name, points_per_day, free_change_started_at, started_at, last_charged_date, created_at
                 FROM user_role_colors
                 WHERE author_id = ? AND guild_id = ?
                 """,
@@ -1747,6 +1761,7 @@ def get_user_role_color(author_id: str, guild_id: str) -> Optional[Dict[str, Any
                     'color_hex': row['color_hex'],
                     'color_name': row['color_name'],
                     'points_per_day': row['points_per_day'],
+                    'free_change_started_at': row['free_change_started_at'],
                     'started_at': row['started_at'],
                     'last_charged_date': row['last_charged_date'],
                     'created_at': row['created_at']
@@ -1806,7 +1821,7 @@ def get_all_active_role_colors(guild_id: str) -> List[Dict[str, Any]]:
             cursor.execute(
                 """
                 SELECT author_id, author_name, guild_id, role_id, color_hex,
-                       color_name, points_per_day, started_at, last_charged_date, created_at
+                       color_name, points_per_day, free_change_started_at, started_at, last_charged_date, created_at
                 FROM user_role_colors
                 WHERE guild_id = ?
                 """,
@@ -1823,6 +1838,7 @@ def get_all_active_role_colors(guild_id: str) -> List[Dict[str, Any]]:
                     'color_hex': row['color_hex'],
                     'color_name': row['color_name'],
                     'points_per_day': row['points_per_day'],
+                    'free_change_started_at': row['free_change_started_at'],
                     'started_at': row['started_at'],
                     'last_charged_date': row['last_charged_date'],
                     'created_at': row['created_at']

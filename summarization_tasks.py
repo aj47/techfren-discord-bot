@@ -611,10 +611,30 @@ async def process_daily_role_color_charges():
                 role_id = color_record['role_id']
                 points_per_day = color_record['points_per_day']
                 last_charged = color_record['last_charged_date']
+                free_change_started_at = color_record.get('free_change_started_at')
 
                 # Skip if already charged today
                 if last_charged == today_str:
                     logger.debug(f"User {author_name} already charged today, skipping")
+                    continue
+
+                free_change_cooldown_days = getattr(config, 'ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', 7)
+                is_free_period_active = False
+                if free_change_started_at:
+                    try:
+                        free_start = datetime.fromisoformat(free_change_started_at)
+                        if free_start.tzinfo is None:
+                            free_start = free_start.replace(tzinfo=timezone.utc)
+                        free_end = free_start + timedelta(days=max(1, free_change_cooldown_days))
+                        if datetime.now(timezone.utc) < free_end:
+                            is_free_period_active = True
+                    except Exception:
+                        pass
+
+                if is_free_period_active:
+                    database.update_role_color_last_charged(author_id, guild_id, today_str)
+                    total_charged += 1
+                    logger.info(f"Skipped charge for {author_name} — free weekly color change active")
                     continue
 
                 # Check if user has enough points

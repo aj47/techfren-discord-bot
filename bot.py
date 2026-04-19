@@ -2199,6 +2199,10 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
                 return
 
         # Save to database
+        free_change_started_at = None
+        if free_change_used:
+            free_change_started_at = datetime.now(timezone.utc).isoformat()
+
         if not database.set_user_role_color(
             author_id=user_id,
             author_name=user_name,
@@ -2206,7 +2210,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             role_id=str(role.id),
             color_hex=color_hex,
             color_name=color_lower,
-            points_per_day=points_per_day
+            points_per_day=points_per_day,
+            free_change_started_at=free_change_started_at
         ):
             # Rollback - remove role and refund points if DB write failed
             await member.remove_roles(role, reason="Database write failed - rollback")
@@ -2239,15 +2244,19 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         remaining_points = current_points - points_to_charge_now
         if not free_change_used:
             upfront_cost_text = f"Cost right now: {points_to_charge_now} point(s)"
+            daily_cost_text = f"Daily cost: {points_per_day} point(s) per day"
+            remove_hint = "Use `/color-remove` to remove your color and stop the daily charge."
         else:
             cooldown_label = f"{free_change_cooldown_days} day(s)" if free_change_cooldown_days != 7 else "weekly"
             upfront_cost_text = f"Cost right now: 0 point(s) (free {cooldown_label} change for eligible role)"
+            daily_cost_text = f"Daily cost: 0 points during your free {cooldown_label} period"
+            remove_hint = f"Use `/color-remove` to remove your color. The free period lasts {cooldown_label}."
         await interaction.followup.send(
             f"Your name color has been set to **{color_lower}**!\n"
             f"{upfront_cost_text}\n"
-            f"Daily cost: {points_per_day} point(s) per day\n"
+            f"{daily_cost_text}\n"
             f"Remaining points: {remaining_points}\n\n"
-            f"Use `/color-remove` to remove your color and stop the daily charge.",
+            f"{remove_hint}",
             ephemeral=True
         )
 
