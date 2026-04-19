@@ -148,7 +148,7 @@ try:
 except (ValueError, TypeError):
     ROLE_COLOR_POINTS_PER_DAY = 1  # Default to 1 if invalid value
 
-# Role names/keywords eligible for one free color change per week
+# Role names/keywords eligible for one free color change per cooldown window
 # Comma-separated list, matched case-insensitively against Discord role names
 _free_role_keywords_raw = os.getenv('ROLE_COLOR_FREE_CHANGE_ROLE_KEYWORDS', 'legend,mvp')
 ROLE_COLOR_FREE_CHANGE_ROLE_KEYWORDS = tuple(
