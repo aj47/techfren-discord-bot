@@ -126,7 +126,6 @@ CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_da
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
-CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_color_free_changes_author_guild ON role_color_free_changes (author_id, guild_id);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
 INSERT_MESSAGE = """
@@ -176,7 +175,6 @@ def migrate_database() -> None:
             # CREATE INDEX IF NOT EXISTS is idempotent, so this is safe to run always
             cursor.execute(CREATE_INDEX_REPLY_TO)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
-            cursor.execute(CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD)
 
             # Ensure free_change_started_at column exists on user_role_colors
             cursor.execute("PRAGMA table_info(user_role_colors)")
@@ -243,7 +241,6 @@ def init_database() -> None:
             # Create indexes for user_role_colors table
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
-            cursor.execute(CREATE_INDEX_ROLE_COLOR_FREE_CHANGE_AUTHOR_GUILD)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
