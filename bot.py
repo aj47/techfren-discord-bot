@@ -2230,6 +2230,10 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         if free_change_used:
             logger.info(f"Free role color change claimed for {user_name} ({user_id})")
 
+        # Mark as successful immediately after DB commit so later UI/role cleanup
+        # errors don't roll back the free claim.
+        color_change_successful = True
+
         # After all steps succeed, remove old role if user had one (but not if same role)
         if existing_color:
             old_role_id = existing_color['role_id']
@@ -2262,7 +2266,6 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             ephemeral=True
         )
 
-        color_change_successful = True
         logger.info(f"User {user_name} ({user_id}) set color to {color_lower} in guild {guild_id}")
 
     except Exception as e:
