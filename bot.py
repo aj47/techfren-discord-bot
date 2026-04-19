@@ -2133,14 +2133,21 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         free_change_used = False
         free_change_eligible = _member_has_free_weekly_color_change_role(member)
         free_change_cooldown_days = getattr(config, 'ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', 7)
+        free_change_prev_ts: Optional[str] = None
 
-        if free_change_eligible and database.claim_free_role_color_change(user_id, guild_id, free_change_cooldown_days):
-            points_to_charge_now = 0
-            free_change_used = True
+        if free_change_eligible:
+            claimed, free_change_prev_ts = database.claim_free_role_color_change_with_rollback(
+                user_id, guild_id, free_change_cooldown_days
+            )
+            if claimed:
+                points_to_charge_now = 0
+                free_change_used = True
 
         # Check if user has enough points for this color change
         current_points = database.get_user_points(user_id, guild_id)
         if current_points < points_to_charge_now:
+            if free_change_used:
+                database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.response.send_message(
                 f"You need at least {points_to_charge_now} points to set a color. You have {current_points} points.",
                 ephemeral=True
@@ -2157,6 +2164,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
         role = await get_or_create_color_role(interaction.guild, color_lower, color_hex)
 
         if not role:
+            if free_change_used:
+                database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.followup.send(
                 "Failed to create color role. The bot may not have permission to manage roles.",
                 ephemeral=True
@@ -2165,9 +2174,11 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
 
         # Assign the role to the user
         try:
-            await member.add_roles(role, reason=f"Custom color set via /color-set")
+            await member.add_roles(role, reason="Custom color set via /color-set")
             logger.info(f"Assigned role {role.name} (position {role.position}) to {member.name}")
         except discord.Forbidden:
+            if free_change_used:
+                database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.followup.send(
                 "Failed to assign the role. The bot may not have permission or the role is higher than the bot's highest role.",
                 ephemeral=True
@@ -2179,6 +2190,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             if not database.deduct_user_points(user_id, guild_id, points_to_charge_now):
                 # Rollback - remove role if points deduction failed
                 await member.remove_roles(role, reason="Points deduction failed")
+                if free_change_used:
+                    database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
                 await interaction.followup.send(
                     "Failed to deduct points. Please try again.",
                     ephemeral=True
@@ -2199,6 +2212,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             await member.remove_roles(role, reason="Database write failed - rollback")
             if points_to_charge_now > 0:
                 database.award_points_to_user(user_id, user_name, guild_id, points_to_charge_now)
+            if free_change_used:
+                database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.followup.send(
                 "Failed to save color settings. Your points have been refunded. Please try again.",
                 ephemeral=True

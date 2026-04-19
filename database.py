@@ -9,7 +9,7 @@ import logging
 import json
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 # Set up logging
 logger = logging.getLogger('discord_bot.database')
@@ -1922,6 +1922,34 @@ def claim_free_role_color_change(author_id: str, guild_id: str, cooldown_days: i
     Returns:
         bool: True if claimed successfully, False if not eligible or error
     """
+    claimed, _ = claim_free_role_color_change_with_rollback(author_id, guild_id, cooldown_days)
+    return claimed
+
+
+def claim_free_role_color_change_with_rollback(
+    author_id: str, guild_id: str, cooldown_days: int = 7
+) -> Tuple[bool, Optional[str]]:
+    """
+    Atomically claim a free role color change if eligible.
+    Checks cooldown and records usage in a single transaction to prevent
+    concurrent calls from both getting a free change within the cooldown window.
+
+    Returns the previous last_free_change_at timestamp so callers can rollback
+    on later failures (e.g. role creation / DB write) to avoid burning the
+    cooldown when the color change does not fully succeed.
+
+    Args:
+        author_id: Discord user ID
+        guild_id: Discord guild ID
+        cooldown_days: Cooldown window in days
+
+    Returns:
+        Tuple[bool, Optional[str]]:
+            (True, previous_timestamp) if claimed successfully.
+            (False, None) if not eligible or error.
+            previous_timestamp is the old last_free_change_at (or None if no
+            prior record existed).
+    """
     try:
         now = datetime.now(timezone.utc).isoformat()
         with get_connection() as conn:
@@ -1938,14 +1966,16 @@ def claim_free_role_color_change(author_id: str, guild_id: str, cooldown_days: i
             )
             row = cursor.fetchone()
 
+            previous_timestamp: Optional[str] = None
             if row:
-                last_free_change = datetime.fromisoformat(row['last_free_change_at'])
+                previous_timestamp = row['last_free_change_at']
+                last_free_change = datetime.fromisoformat(previous_timestamp)
                 if last_free_change.tzinfo is None:
                     last_free_change = last_free_change.replace(tzinfo=timezone.utc)
                 next_available = last_free_change + timedelta(days=max(1, cooldown_days))
                 if datetime.now(timezone.utc) < next_available:
                     conn.rollback()
-                    return False
+                    return False, None
 
             cursor.execute(
                 """
@@ -1957,9 +1987,54 @@ def claim_free_role_color_change(author_id: str, guild_id: str, cooldown_days: i
                 (author_id, guild_id, now, now)
             )
             conn.commit()
-        return True
+        return True, previous_timestamp
     except Exception as e:
         logger.error(f"Error claiming free role color change for user {author_id}: {str(e)}", exc_info=True)
+        return False, None
+
+
+def rollback_free_role_color_change(author_id: str, guild_id: str, previous_timestamp: Optional[str]) -> bool:
+    """
+    Rollback a previously claimed free role color change.
+
+    If previous_timestamp is None the row did not exist before the claim,
+    so we delete the newly inserted row.
+    If previous_timestamp is set we restore it so the original cooldown
+    remains intact.
+
+    Args:
+        author_id: Discord user ID
+        guild_id: Discord guild ID
+        previous_timestamp: The last_free_change_at value before the claim,
+                            or None if there was no prior record.
+
+    Returns:
+        bool: True if rollback succeeded, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            if previous_timestamp is None:
+                cursor.execute(
+                    """
+                    DELETE FROM role_color_free_changes
+                    WHERE author_id = ? AND guild_id = ?
+                    """,
+                    (author_id, guild_id)
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE role_color_free_changes
+                    SET last_free_change_at = ?
+                    WHERE author_id = ? AND guild_id = ?
+                    """,
+                    (previous_timestamp, author_id, guild_id)
+                )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error rolling back free role color change for user {author_id}: {str(e)}", exc_info=True)
         return False
 
 
