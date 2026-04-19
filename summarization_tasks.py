@@ -635,7 +635,8 @@ async def process_daily_role_color_charges():
                 if is_free_period_active:
                     database.update_role_color_last_charged(author_id, guild_id, today_str)
                     total_skipped += 1
-                    logger.info(f"Skipped charge for {author_name} — free weekly color change active")
+                    cooldown_label = f"{free_change_cooldown_days} day(s)" if free_change_cooldown_days != 7 else "weekly"
+                    logger.info(f"Skipped charge for {author_name} — free {cooldown_label} color change active")
                     continue
 
                 # Check if user has enough points
