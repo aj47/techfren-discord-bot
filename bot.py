@@ -2089,6 +2089,10 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
     """
     import config
 
+    free_change_used = False
+    free_change_prev_ts: Optional[str] = None
+    color_change_successful = False
+
     try:
         # Validate guild context
         if not interaction.guild:
@@ -2130,10 +2134,8 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             )
             return
 
-        free_change_used = False
         free_change_eligible = _member_has_free_weekly_color_change_role(member)
         free_change_cooldown_days = getattr(config, 'ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', 7)
-        free_change_prev_ts: Optional[str] = None
 
         if free_change_eligible:
             claimed, free_change_prev_ts = database.claim_free_role_color_change_with_rollback(
@@ -2260,11 +2262,12 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             ephemeral=True
         )
 
+        color_change_successful = True
         logger.info(f"User {user_name} ({user_id}) set color to {color_lower} in guild {guild_id}")
 
     except Exception as e:
         logger.error(f"Error in /color-set command: {str(e)}", exc_info=True)
-        if free_change_used:
+        if free_change_used and not color_change_successful:
             try:
                 database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             except Exception:
