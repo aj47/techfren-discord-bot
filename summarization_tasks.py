@@ -599,6 +599,7 @@ async def process_daily_role_color_charges():
             return
 
         total_charged = 0
+        total_skipped = 0
         total_removed = 0
 
         for guild_id in guild_ids:
@@ -633,7 +634,7 @@ async def process_daily_role_color_charges():
 
                 if is_free_period_active:
                     database.update_role_color_last_charged(author_id, guild_id, today_str)
-                    total_charged += 1
+                    total_skipped += 1
                     logger.info(f"Skipped charge for {author_name} — free weekly color change active")
                     continue
 
@@ -693,7 +694,7 @@ async def process_daily_role_color_charges():
                         database.remove_user_role_color(author_id, guild_id)
                         total_removed += 1
 
-        logger.info(f"Daily role color charging complete. Charged: {total_charged}, Removed: {total_removed}")
+        logger.info(f"Daily role color charging complete. Charged: {total_charged}, Skipped (free period): {total_skipped}, Removed: {total_removed}")
 
     except Exception as e:
         logger.error(f"Error processing daily role color charges: {str(e)}", exc_info=True)
