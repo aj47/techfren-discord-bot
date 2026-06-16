@@ -88,6 +88,25 @@ def message_contains_gif(message: discord.Message) -> bool:
     return False
 
 
+def _is_points_admin(user) -> bool:
+    """Return True when a Discord user may run admin-only point commands."""
+    user_id = str(user.id)
+    configured_admin_ids = getattr(config, 'ADMIN_USER_IDS', ())
+    if configured_admin_ids:
+        return user_id in configured_admin_ids
+
+    fallback_username = getattr(config, 'ADMIN_FALLBACK_USERNAME', 'techfren')
+    fallback_username = (fallback_username or '').strip().lower()
+    if not fallback_username:
+        return False
+
+    candidate_names = {
+        getattr(user, 'name', ''),
+        getattr(user, 'display_name', ''),
+        getattr(user, 'global_name', ''),
+    }
+    return any(name and name.lower() == fallback_username for name in candidate_names)
+
 def _member_has_free_weekly_color_change_role(member: discord.Member) -> bool:
     """
     Check whether a member has an eligible role for free weekly color changes.
@@ -1587,6 +1606,74 @@ async def points_slash(interaction: discord.Interaction, user: discord.User = No
         logger.error(f"Error in /points command: {str(e)}", exc_info=True)
         await interaction.response.send_message(
             "❌ An error occurred while retrieving points. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="award-points", description="Admin-only: manually award points to a user")
+async def award_points_slash(interaction: discord.Interaction, user: discord.User, points: int, reason: str = "Manual admin award"):
+    """Slash command for the configured admin to manually award points."""
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        if not _is_points_admin(interaction.user):
+            await interaction.response.send_message(
+                "❌ Only the configured admin can manually award points.",
+                ephemeral=True
+            )
+            logger.warning(
+                f"Unauthorized /award-points attempt by {interaction.user} "
+                f"({interaction.user.id}) in guild {interaction.guild.id}"
+            )
+            return
+
+        if points <= 0:
+            await interaction.response.send_message(
+                "❌ Points must be a positive whole number.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        target_user_id = str(user.id)
+        target_name = user.display_name
+
+        success = database.manually_award_points_to_user(
+            target_user_id,
+            target_name,
+            guild_id,
+            points
+        )
+        if not success:
+            await interaction.response.send_message(
+                "❌ Failed to award points. Please try again later.",
+                ephemeral=True
+            )
+            return
+
+        new_total = database.get_user_points(target_user_id, guild_id)
+        safe_reason = reason.strip() if reason and reason.strip() else "Manual admin award"
+        await interaction.response.send_message(
+            f"✅ Awarded {points} point(s) to **{target_name}**.\n"
+            f"🏆 New total: {new_total} point(s).\n"
+            f"📝 Reason: {safe_reason}",
+            ephemeral=True
+        )
+        logger.info(
+            f"Admin {interaction.user} ({interaction.user.id}) manually awarded "
+            f"{points} points to {target_name} ({target_user_id}) in guild {guild_id}. "
+            f"Reason: {safe_reason}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /award-points command: {str(e)}", exc_info=True)
+        await interaction.response.send_message(
+            "❌ An error occurred while awarding points. Please try again later.",
             ephemeral=True
         )
 

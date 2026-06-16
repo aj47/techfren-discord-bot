@@ -1092,6 +1092,58 @@ def award_points_to_user(
         logger.error(f"Error awarding points to user {author_id}: {str(e)}", exc_info=True)
         return False
 
+def manually_award_points_to_user(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    points: int
+) -> bool:
+    """
+    Manually award any positive number of points to a user.
+
+    This is intended for trusted admin commands and intentionally does not use
+    the daily automated-award 20 point clamp in award_points_to_user().
+    """
+    try:
+        if not author_id or not author_id.strip():
+            logger.error("Cannot manually award points: author_id is empty or None")
+            return False
+
+        if points <= 0:
+            logger.warning(f"Skipping manual point award for {author_name}: points={points} (must be > 0)")
+            return False
+
+        now = datetime.now().isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_points (author_id, author_name, guild_id, total_points, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(author_id, guild_id) DO UPDATE SET
+                    total_points = total_points + ?,
+                    author_name = ?,
+                    last_updated = ?
+                """,
+                (
+                    author_id,
+                    author_name,
+                    guild_id,
+                    points,
+                    now,
+                    points,
+                    author_name,
+                    now
+                )
+            )
+            conn.commit()
+
+        logger.info(f"Manually awarded {points} points to user {author_name} ({author_id}) in guild {guild_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error manually awarding points to user {author_id}: {str(e)}", exc_info=True)
+        return False
+
 def get_user_points(author_id: str, guild_id: str) -> int:
     """
     Get the total points for a specific user in a guild.
