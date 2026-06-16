@@ -163,3 +163,29 @@ def test_database_deduct_insufficient_points(setup_database):
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
+def test_database_manual_award_points_is_not_daily_clamped(setup_database):
+    """Test that manual admin awards can assign more than the automated daily clamp."""
+    import uuid
+
+    user_id = f"manual_user_{uuid.uuid4()}"
+    guild_id = f"guild_{uuid.uuid4()}"
+
+    success = database.manually_award_points_to_user(user_id, "ManualUser", guild_id, 75)
+    assert success is True
+    assert database.get_user_points(user_id, guild_id) == 75
+
+    success = database.manually_award_points_to_user(user_id, "ManualUser", guild_id, 30)
+    assert success is True
+    assert database.get_user_points(user_id, guild_id) == 105
+
+
+def test_database_manual_award_rejects_non_positive_points(setup_database):
+    """Test that manual admin awards reject zero and negative point values."""
+    import uuid
+
+    user_id = f"manual_user_{uuid.uuid4()}"
+    guild_id = f"guild_{uuid.uuid4()}"
+
+    assert database.manually_award_points_to_user(user_id, "ManualUser", guild_id, 0) is False
+    assert database.manually_award_points_to_user(user_id, "ManualUser", guild_id, -5) is False
+    assert database.get_user_points(user_id, guild_id) == 0

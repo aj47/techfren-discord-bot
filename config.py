@@ -60,6 +60,17 @@ perplexity = os.getenv('PERPLEXITY_API_KEY')
 # Default model is "sonar" for Perplexity
 llm_model = os.getenv('LLM_MODEL', 'sonar')
 
+# Admin Configuration
+# Comma-separated Discord user IDs allowed to use admin-only point commands.
+# If unset, a Discord username/display name of "techfren" is allowed as a fallback.
+_admin_user_ids_raw = os.getenv('ADMIN_USER_IDS', '')
+ADMIN_USER_IDS = tuple(
+    user_id.strip()
+    for user_id in _admin_user_ids_raw.split(',')
+    if user_id.strip()
+)
+ADMIN_FALLBACK_USERNAME = os.getenv('ADMIN_FALLBACK_USERNAME', 'techfren').strip().lower()
+
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
 # Default values: 10 seconds cooldown, 6 requests per minute
