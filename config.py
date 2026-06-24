@@ -52,19 +52,6 @@ xai_api_key = os.getenv('XAI_API_KEY')
 xai_base_url = os.getenv('XAI_BASE_URL', 'https://api.x.ai/v1')
 grok_model = os.getenv('GROK_MODEL', 'grok-4-1-fast-non-reasoning')
 
-# =============================================================================
-# FALLBACK API CONFIGURATION (Perplexity)
-# =============================================================================
-
-# Perplexity API Key (optional - fallback provider)
-# Environment variable: PERPLEXITY_API_KEY
-perplexity = os.getenv('PERPLEXITY_API_KEY')
-
-# LLM Model Configuration (optional)
-# Environment variable: LLM_MODEL
-# Default model is "sonar" for Perplexity
-llm_model = os.getenv('LLM_MODEL', 'sonar')
-
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
 # Default values: 10 seconds cooldown, 6 requests per minute
@@ -111,11 +98,6 @@ else:
 # Environment variable: LINKS_DUMP_CHANNEL_ID
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
-
-# LLM API Configuration (optional)
-# Environment variable: PERPLEXITY_BASE_URL
-# Base URL for Perplexity API (or compatible API)
-perplexity_base_url = os.getenv('PERPLEXITY_BASE_URL', 'https://api.perplexity.ai')
 
 # HTTP Headers Configuration (optional)
 # Environment variables: HTTP_REFERER, X_TITLE

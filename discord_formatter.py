@@ -20,7 +20,7 @@ class DiscordFormatter:
         Normalize citations from different API formats into a unified format.
 
         Handles:
-        - Perplexity format: List of URL strings
+        - Provider format: List of URL strings
         - Exa format: List of objects with url, title, publishedDate, author, etc.
 
         Args:
@@ -35,7 +35,7 @@ class DiscordFormatter:
         normalized = []
         for citation in citations:
             if isinstance(citation, str):
-                # Perplexity format: simple URL string
+                # Provider format: simple URL string
                 normalized.append({'url': citation})
             elif isinstance(citation, dict):
                 # Exa format: object with url and other metadata
@@ -130,7 +130,7 @@ class DiscordFormatter:
 
         Args:
             content: The raw LLM response content
-            citations: Optional list of citations (supports both Perplexity URL strings
+            citations: Optional list of citations (supports both URL strings
                       and Exa citation objects with url, title, author, etc.)
 
         Returns:

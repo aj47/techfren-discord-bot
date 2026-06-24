@@ -610,9 +610,9 @@ async def summarize_url_with_exa(url: str) -> Optional[str]:
         return None
 
 
-# Keep old function name as alias for backward compatibility
-async def summarize_url_with_perplexity(url: str) -> Optional[str]:
-    """Deprecated: Use summarize_url_with_exa instead. Kept for backward compatibility."""
+# Summarize a URL with the configured summarization path.
+async def summarize_url_with_llm(url: str) -> Optional[str]:
+    """Summarize a URL using Exa first, then the configured Wafer LLM if needed."""
     return await summarize_url_with_exa(url)
 
 
