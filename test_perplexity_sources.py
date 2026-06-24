@@ -8,20 +8,23 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Get API key
-api_key = os.getenv('PERPLEXITY_API_KEY')
+api_key = os.getenv('WAFER_API_KEY')
+if not api_key:
+    import pytest
+    pytest.skip("WAFER_API_KEY not configured", allow_module_level=True)
 
 # Initialize client
 client = OpenAI(
-    base_url="https://api.perplexity.ai",
+    base_url="https://pass.wafer.ai/v1",
     api_key=api_key,
 )
 
-print("Testing Perplexity 'sonar' model with sources...")
+print("Testing Wafer 'deepseek-v4-flash' model with sources...")
 print("-" * 50)
 
 try:
     response = client.chat.completions.create(
-        model="sonar",
+        model="deepseek-v4-flash",
         messages=[
             {"role": "user", "content": "What are the latest AI developments in 2024? Please provide sources."}
         ],

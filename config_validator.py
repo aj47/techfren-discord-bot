@@ -76,14 +76,14 @@ def validate_config(config_module):
 
     update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute)
     
-    # Check for optional LLM model
-    if hasattr(config_module, 'llm_model') and config_module.llm_model:
-        if isinstance(config_module.llm_model, str) and len(config_module.llm_model.strip()) > 0:
-            logger.info(f"Using custom LLM model from config: {config_module.llm_model}")
+    # Check for optional Wafer LLM model
+    if hasattr(config_module, 'wafer_model') and config_module.wafer_model:
+        if isinstance(config_module.wafer_model, str) and len(config_module.wafer_model.strip()) > 0:
+            logger.info(f"Using Wafer LLM model from config: {config_module.wafer_model}")
         else:
-            logger.warning(f"llm_model in config.py is present but invalid. Using default model.")
+            logger.warning("wafer_model in config.py is present but invalid. Using default model.")
     else:
-        logger.info("No custom llm_model in config.py. Using default model.")
+        logger.info("No custom wafer_model in config.py. Using default model.")
 
     # Check for optional reports channel ID
     if hasattr(config_module, 'reports_channel_id') and config_module.reports_channel_id:

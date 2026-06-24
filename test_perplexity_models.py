@@ -7,35 +7,25 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Get API key
-api_key = os.getenv('PERPLEXITY_API_KEY')
+api_key = os.getenv('WAFER_API_KEY')
 
 if not api_key:
-    print("Error: PERPLEXITY_API_KEY not found in .env file")
-    exit(1)
+    import pytest
+    pytest.skip("WAFER_API_KEY not configured", allow_module_level=True)
 
 # Initialize client
 client = OpenAI(
-    base_url="https://api.perplexity.ai",
+    base_url="https://pass.wafer.ai/v1",
     api_key=api_key,
 )
 
 # Test different model names
 test_models = [
-    "sonar",
-    "sonar-small-chat",
-    "sonar-small-online",
-    "sonar-medium-chat",
-    "sonar-medium-online",
-    "codellama-70b-instruct",
-    "mistral-7b-instruct",
-    "llama-2-70b-chat",
-    "pplx-7b-chat",
-    "pplx-70b-chat",
-    "pplx-7b-online",
-    "pplx-70b-online",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
 ]
 
-print("Testing Perplexity models...")
+print("Testing Wafer models...")
 print("-" * 50)
 
 for model in test_models:

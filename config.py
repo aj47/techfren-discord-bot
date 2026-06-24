@@ -19,7 +19,7 @@ if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
 # =============================================================================
-# PRIMARY API CONFIGURATION (Exa + xAI Grok)
+# PRIMARY API CONFIGURATION (Exa + Wafer DeepSeek)
 # =============================================================================
 
 # Exa API Key (required for Exa search - primary search provider)
@@ -32,19 +32,24 @@ if not exa_api_key:
 # Environment variable: EXA_BASE_URL
 exa_base_url = os.getenv('EXA_BASE_URL', 'https://api.exa.ai')
 
-# xAI Grok API Key (required for Grok LLM - primary LLM provider)
-# Environment variable: XAI_API_KEY
+# Wafer API Key (required for DeepSeek LLM - primary LLM provider)
+# Environment variable: WAFER_API_KEY
+wafer_api_key = os.getenv('WAFER_API_KEY')
+if not wafer_api_key:
+    raise ValueError("WAFER_API_KEY environment variable is required")
+
+# Wafer OpenAI-compatible API Base URL
+# Environment variable: WAFER_BASE_URL
+wafer_base_url = os.getenv('WAFER_BASE_URL', 'https://pass.wafer.ai/v1')
+
+# Wafer DeepSeek Model Configuration
+# Environment variable: WAFER_MODEL
+# Default model is "deepseek-v4-flash" for fast, cost-efficient tasks
+wafer_model = os.getenv('WAFER_MODEL', 'deepseek-v4-flash')
+
+# Optional xAI settings are kept only for features that still explicitly need xAI.
 xai_api_key = os.getenv('XAI_API_KEY')
-if not xai_api_key:
-    raise ValueError("XAI_API_KEY environment variable is required")
-
-# xAI Grok API Base URL
-# Environment variable: XAI_BASE_URL
 xai_base_url = os.getenv('XAI_BASE_URL', 'https://api.x.ai/v1')
-
-# Grok Model Configuration
-# Environment variable: GROK_MODEL
-# Default model is "grok-4-1-fast-non-reasoning" for non-reasoning tasks
 grok_model = os.getenv('GROK_MODEL', 'grok-4-1-fast-non-reasoning')
 
 # =============================================================================
@@ -83,7 +88,7 @@ firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
 
-# NOTE: xai_api_key is already defined above in the PRIMARY API CONFIGURATION section
+# NOTE: xai_api_key is optional and only used by xAI-specific features
 
 
 # Daily Summary Configuration (optional)

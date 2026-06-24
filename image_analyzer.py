@@ -1,9 +1,8 @@
 """
-Image analysis module using xAI Grok (multimodal) API.
+Image analysis module using an optional xAI multimodal API.
 
-This module analyzes images from Discord attachments using xAI's
-Grok models to generate descriptive text that can be included in
-message summaries.
+This module analyzes images from Discord attachments using a vision-capable
+model to generate descriptive text that can be included in message summaries.
 """
 
 import base64
@@ -21,11 +20,11 @@ logger = logging.getLogger(__name__)
 xai_client: Optional[AsyncOpenAI] = None
 if getattr(config, "xai_api_key", None):
     xai_client = AsyncOpenAI(
-        base_url="https://api.x.ai/v1",
+        base_url=config.xai_base_url,
         api_key=config.xai_api_key,
         timeout=60.0,
     )
-    logger.info("xAI Grok image analysis client initialized")
+    logger.info("xAI image analysis client initialized")
 else:
     logger.warning("xAI API key not configured - image analysis will be disabled")
 
@@ -94,7 +93,7 @@ def is_supported_image(content_type: str) -> bool:
 
 async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "image") -> Optional[str]:
     """
-    Analyze an image using xAI Grok multimodal models.
+    Analyze an image using xAI multimodal models.
 
     Args:
         image_bytes: The image data as bytes
@@ -126,8 +125,8 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             "Keep it informative but brief (2-3 sentences)."
         )
 
-        # Use Grok 4.1 Fast for image analysis (supports vision/multimodal)
-        model = "grok-4-1-fast-non-reasoning"
+        # Use the configured xAI vision model for image analysis (supports vision/multimodal)
+        model = getattr(config, "grok_model", "grok-4-1-fast-non-reasoning")
 
         completion = await xai_client.chat.completions.create(
             model=model,
@@ -164,11 +163,11 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             logger.warning(f"No content in xAI response for {filename}")
             return None
 
-        logger.info(f"Successfully analyzed image with xAI Grok: {filename}")
+        logger.info(f"Successfully analyzed image with xAI: {filename}")
         return str(description).strip()
 
     except Exception as e:
-        logger.exception(f"Error analyzing image {filename} with xAI Grok: {e}")
+        logger.exception(f"Error analyzing image {filename} with xAI: {e}")
         return None
 
 
