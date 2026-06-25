@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
+import fcntl
 import re
 import time
 from urllib.parse import urlparse
@@ -32,6 +33,23 @@ GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
 _gif_warned_users = {}
+
+_instance_lock_file = None
+
+
+def acquire_single_instance_lock(lock_path: str = "/tmp/techfren-discord-bot.lock") -> bool:
+    """Return True after acquiring the bot process lock, False if another copy is running."""
+    global _instance_lock_file
+
+    _instance_lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(_instance_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+
+    _instance_lock_file.write(str(os.getpid()))
+    _instance_lock_file.flush()
+    return True
 
 
 
@@ -2484,6 +2502,14 @@ try:
 
     # Validate configuration using the imported function
     validate_config(config)
+
+    lock_path = os.getenv("BOT_INSTANCE_LOCK_PATH", "/tmp/techfren-discord-bot.lock")
+    if not acquire_single_instance_lock(lock_path):
+        logger.critical(
+            "Another techfren Discord bot process is already running "
+            f"(lock held at {lock_path}). Exiting to avoid duplicate Discord events."
+        )
+        raise SystemExit(1)
 
     # Log startup (but mask the actual token)
     token_preview = config.token[:5] + "..." + config.token[-5:] if len(config.token) > 10 else "***masked***"
