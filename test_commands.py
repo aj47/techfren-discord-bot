@@ -76,7 +76,7 @@ class TestBotCommands(unittest.TestCase):
         self.config_patcher = patch('bot.config')
         self.mock_config = self.config_patcher.start()
         self.mock_config.token = "test_token"
-        self.mock_config.wafer_api_key = "test_wafer_key"
+        self.mock_config.openrouter_api_key = "test_openrouter_key"
 
         # Mock call_llm_api and call_llm_for_summary
         self.call_llm_api_patcher = patch('bot.call_llm_api')

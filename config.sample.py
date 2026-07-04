@@ -11,10 +11,10 @@
 #
 # Environment variable names:
 # DISCORD_BOT_TOKEN=your_discord_bot_token
-# WAFER_API_KEY=your_wafer_api_key
+# OPENROUTER_API_KEY=your_openrouter_api_key
 # FIRECRAWL_API_KEY=your_firecrawl_api_key
 # APIFY_API_TOKEN=your_apify_api_token
-# WAFER_MODEL=qwen3.7-max
+# LLM_MODEL=deepseek/deepseek-v4-flash
 # RATE_LIMIT_SECONDS=10
 # MAX_REQUESTS_PER_MINUTE=6
 # SUMMARY_HOUR=0
@@ -30,14 +30,14 @@
 # Environment variable: DISCORD_BOT_TOKEN
 token = "YOUR_DISCORD_BOT_TOKEN"
 
-# Wafer API Key (required)
-# Environment variable: WAFER_API_KEY
-wafer_api_key = "YOUR_WAFER_API_KEY"
+# OpenRouter API Key (required)
+# Environment variable: OPENROUTER_API_KEY
+openrouter_api_key = "YOUR_OPENROUTER_API_KEY"
 
-# Wafer Model Configuration (optional)
-# Environment variable: WAFER_MODEL
-wafer_base_url = "https://pass.wafer.ai/v1"
-wafer_model = "qwen3.7-max"
+# OpenRouter Model Configuration (optional)
+# Environment variables: OPENROUTER_BASE_URL, LLM_MODEL
+openrouter_base_url = "https://openrouter.ai/api/v1"
+llm_model = "deepseek/deepseek-v4-flash"
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE

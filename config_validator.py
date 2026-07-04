@@ -23,14 +23,14 @@ def validate_config(config_module):
         # This is a warning, not a critical error, as token length can vary.
         logger.warning("Discord token in config.py appears to be invalid (too short or not a string).")
 
-    # Check Wafer API key
-    if not hasattr(config_module, 'wafer_api_key') or not config_module.wafer_api_key:
-        logger.error("Wafer API key not found in config.py or is empty")
-        raise ValueError("Wafer API key is missing or empty in config.py")
+    # Check OpenRouter API key
+    if not hasattr(config_module, 'openrouter_api_key') or not config_module.openrouter_api_key:
+        logger.error("OpenRouter API key not found in config.py or is empty")
+        raise ValueError("OpenRouter API key is missing or empty in config.py")
 
-    if not isinstance(config_module.wafer_api_key, str) or len(config_module.wafer_api_key) < 10:
+    if not isinstance(config_module.openrouter_api_key, str) or len(config_module.openrouter_api_key) < 10:
         # This is a warning.
-        logger.warning("Wafer API key in config.py appears to be invalid (too short or not a string).")
+        logger.warning("OpenRouter API key in config.py appears to be invalid (too short or not a string).")
         
     # Check Firecrawl API key
     if not hasattr(config_module, 'firecrawl_api_key') or not config_module.firecrawl_api_key:
@@ -76,14 +76,14 @@ def validate_config(config_module):
 
     update_rate_limit_config(new_rate_limit_seconds, new_max_requests_per_minute)
     
-    # Check for optional Wafer LLM model
-    if hasattr(config_module, 'wafer_model') and config_module.wafer_model:
-        if isinstance(config_module.wafer_model, str) and len(config_module.wafer_model.strip()) > 0:
-            logger.info(f"Using Wafer LLM model from config: {config_module.wafer_model}")
+    # Check for optional LLM model
+    if hasattr(config_module, 'llm_model') and config_module.llm_model:
+        if isinstance(config_module.llm_model, str) and len(config_module.llm_model.strip()) > 0:
+            logger.info(f"Using OpenRouter LLM model from config: {config_module.llm_model}")
         else:
-            logger.warning("wafer_model in config.py is present but invalid. Using default model.")
+            logger.warning("llm_model in config.py is present but invalid. Using default model.")
     else:
-        logger.info("No custom wafer_model in config.py. Using default model.")
+        logger.info("No custom llm_model in config.py. Using default model.")
 
     # Check for optional reports channel ID
     if hasattr(config_module, 'reports_channel_id') and config_module.reports_channel_id:

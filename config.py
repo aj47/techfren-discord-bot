@@ -19,7 +19,7 @@ if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
 # =============================================================================
-# PRIMARY API CONFIGURATION (Exa + Wafer)
+# PRIMARY API CONFIGURATION (Exa + OpenRouter)
 # =============================================================================
 
 # Exa API Key (required for Exa search - primary search provider)
@@ -32,20 +32,19 @@ if not exa_api_key:
 # Environment variable: EXA_BASE_URL
 exa_base_url = os.getenv('EXA_BASE_URL', 'https://api.exa.ai')
 
-# Wafer API Key (required for DeepSeek LLM - primary LLM provider)
-# Environment variable: WAFER_API_KEY
-wafer_api_key = os.getenv('WAFER_API_KEY')
-if not wafer_api_key:
-    raise ValueError("WAFER_API_KEY environment variable is required")
+# OpenRouter API Key (required for primary LLM provider)
+# Environment variable: OPENROUTER_API_KEY
+openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
+if not openrouter_api_key:
+    raise ValueError("OPENROUTER_API_KEY environment variable is required")
 
-# Wafer OpenAI-compatible API Base URL
-# Environment variable: WAFER_BASE_URL
-wafer_base_url = os.getenv('WAFER_BASE_URL', 'https://pass.wafer.ai/v1')
+# OpenRouter OpenAI-compatible API Base URL
+# Environment variable: OPENROUTER_BASE_URL
+openrouter_base_url = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
 
-# Wafer Model Configuration
-# Environment variable: WAFER_MODEL
-# Default model must be available on the configured Wafer Pass endpoint.
-wafer_model = os.getenv('WAFER_MODEL', 'qwen3.7-max')
+# LLM Model Configuration
+# Environment variable: LLM_MODEL
+llm_model = os.getenv('LLM_MODEL', 'deepseek/deepseek-v4-flash')
 
 # Optional xAI settings are kept only for features that still explicitly need xAI.
 xai_api_key = os.getenv('XAI_API_KEY')
