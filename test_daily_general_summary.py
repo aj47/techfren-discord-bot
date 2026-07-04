@@ -155,6 +155,39 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
         mock_post.assert_not_awaited()
         mock_delete.assert_not_called()
 
+    async def test_daily_role_color_charge_skips_exempt_role_members(self):
+        role = MagicMock()
+        role.name = "MVP"
+        member = MagicMock()
+        member.roles = [role]
+        guild = MagicMock()
+
+        color_record = {
+            "author_id": "user_id",
+            "author_name": "Alice",
+            "guild_id": "123",
+            "role_id": "role_id",
+            "points_per_day": 1,
+            "last_charged_date": "2026-01-01",
+            "free_change_started_at": None,
+        }
+
+        summarization_tasks.discord_client.get_guild.return_value = guild
+
+        with (
+            patch.object(summarization_tasks.config, "ROLE_COLOR_DAILY_CHARGE_EXEMPT_ROLE_KEYWORDS", ("mvp",)),
+            patch.object(summarization_tasks.database, "get_all_guilds_with_role_colors", return_value=["123"]),
+            patch.object(summarization_tasks.database, "get_all_active_role_colors", return_value=[color_record]),
+            patch.object(summarization_tasks, "_get_guild_member", new=AsyncMock(return_value=member)),
+            patch.object(summarization_tasks.database, "update_role_color_last_charged", return_value=True) as mock_update,
+            patch.object(summarization_tasks.database, "deduct_user_points", return_value=True) as mock_deduct,
+            patch.object(summarization_tasks.database, "get_user_points", return_value=10),
+        ):
+            await summarization_tasks.process_daily_role_color_charges()
+
+        mock_update.assert_called_once()
+        mock_deduct.assert_not_called()
+
     def _message(self, message_id, author_name, content, is_bot=False, is_command=False):
         return {
             "id": message_id,

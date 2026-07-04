@@ -50,6 +50,28 @@ def _is_summary_generation_failure(summary_text):
         "sorry, i encountered an error while generating the summary. please try again later.",
     }
 
+def _member_has_daily_charge_exempt_role(member: discord.Member) -> bool:
+    """Return True if a member's current roles exempt them from daily color charges."""
+    keywords = getattr(config, 'ROLE_COLOR_DAILY_CHARGE_EXEMPT_ROLE_KEYWORDS', ())
+    if not keywords:
+        return False
+
+    for role in getattr(member, 'roles', []):
+        role_name = getattr(role, 'name', '').lower()
+        if any(keyword in role_name for keyword in keywords):
+            return True
+    return False
+
+async def _get_guild_member(guild, author_id):
+    """Get a guild member from cache or fetch it from Discord."""
+    try:
+        member = guild.get_member(int(author_id))
+        if member:
+            return member
+        return await guild.fetch_member(int(author_id))
+    except Exception:
+        return None
+
 async def run_daily_summarization_once(now: datetime | None = None):
     """Run the daily channel summarization logic a single time.
 
@@ -652,6 +674,18 @@ async def process_daily_role_color_charges():
                     total_skipped += 1
                     cooldown_label = f"{free_change_cooldown_days} day(s)" if free_change_cooldown_days != 7 else "weekly"
                     logger.info(f"Skipped charge for {author_name} — free {cooldown_label} color change active")
+                    continue
+
+                try:
+                    guild = discord_client.get_guild(int(guild_id))
+                except (TypeError, ValueError):
+                    guild = None
+                    logger.warning(f"Invalid guild_id for role color charge record: {guild_id}")
+                member = await _get_guild_member(guild, author_id) if guild else None
+                if member and _member_has_daily_charge_exempt_role(member):
+                    database.update_role_color_last_charged(author_id, guild_id, today_str)
+                    total_skipped += 1
+                    logger.info(f"Skipped charge for {author_name} — member has daily charge exempt role")
                     continue
 
                 # Check if user has enough points

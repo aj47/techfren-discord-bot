@@ -143,6 +143,18 @@ ROLE_COLOR_FREE_CHANGE_ROLE_KEYWORDS = tuple(
     if keyword.strip()
 )
 
+# Role names/keywords exempt from daily color-role point charges.
+# Defaults to the same special roles that get free color changes.
+_daily_charge_exempt_role_keywords_raw = os.getenv(
+    'ROLE_COLOR_DAILY_CHARGE_EXEMPT_ROLE_KEYWORDS',
+    _free_role_keywords_raw
+)
+ROLE_COLOR_DAILY_CHARGE_EXEMPT_ROLE_KEYWORDS = tuple(
+    keyword.strip().lower()
+    for keyword in _daily_charge_exempt_role_keywords_raw.split(',')
+    if keyword.strip()
+)
+
 # Cooldown in days for free role color changes
 try:
     ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS = int(os.getenv('ROLE_COLOR_FREE_CHANGE_COOLDOWN_DAYS', '7'))

@@ -15,6 +15,7 @@
 # FIRECRAWL_API_KEY=your_firecrawl_api_key
 # APIFY_API_TOKEN=your_apify_api_token
 # LLM_MODEL=deepseek/deepseek-v4-flash
+# ROLE_COLOR_DAILY_CHARGE_EXEMPT_ROLE_KEYWORDS=legend,mvp
 # RATE_LIMIT_SECONDS=10
 # MAX_REQUESTS_PER_MINUTE=6
 # SUMMARY_HOUR=0
