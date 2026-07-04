@@ -12,7 +12,7 @@ from discord_formatter import DiscordFormatter
 from gif_utils import is_gif_url, is_discord_emoji_url
 import httpx  # For Exa API calls
 
-# Initialize Wafer DeepSeek client (OpenAI-compatible)
+# Initialize Wafer client (OpenAI-compatible)
 wafer_client = AsyncOpenAI(
     base_url=config.wafer_base_url,  # 'https://pass.wafer.ai/v1'
     api_key=config.wafer_api_key,
@@ -524,9 +524,9 @@ Format: [Title](link) - why it matters - `username` TIMESTAMP
 
 Skip sections if nothing noteworthy. No fluff. No introductions. Start directly with ## Highlights."""
         
-        logger.info(f"Calling Wafer DeepSeek for channel summary: #{channel_name} for the past {time_period}")
+        logger.info(f"Calling Wafer model {config.wafer_model} for channel summary: #{channel_name} for the past {time_period}")
 
-        # Make the API request with Wafer DeepSeek (higher token limit for summaries)
+        # Make the API request with Wafer (higher token limit for summaries)
         completion = await llm_client.chat.completions.create(
             model=config.wafer_model,
             messages=[
@@ -552,15 +552,15 @@ Skip sections if nothing noteworthy. No fluff. No introductions. Start directly 
         # Enhance specific sections in the summary
         formatted_summary = DiscordFormatter._enhance_summary_sections(formatted_summary)
 
-        logger.info(f"Wafer DeepSeek summary received: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
+        logger.info(f"Wafer summary received: {formatted_summary[:50]}{'...' if len(formatted_summary) > 50 else ''}")
 
         return formatted_summary
 
     except asyncio.TimeoutError:
-        logger.error("Wafer DeepSeek request timed out during summary generation")
+        logger.error("Wafer request timed out during summary generation")
         return "Sorry, the summary request timed out. Please try again later."
     except Exception as e:
-        logger.error(f"Error calling Wafer DeepSeek for summary: {str(e)}", exc_info=True)
+        logger.error(f"Error calling Wafer for summary: {str(e)}", exc_info=True)
         return "Sorry, I encountered an error while generating the summary. Please try again later."
 
 async def summarize_url_with_exa(url: str) -> Optional[str]:
@@ -599,7 +599,7 @@ async def summarize_url_with_exa(url: str) -> Optional[str]:
         if summary:
             formatted_response = DiscordFormatter.format_llm_response(summary)
         else:
-            # If no summary, use Wafer DeepSeek to summarize the text
+            # If no summary, use Wafer to summarize the text
             formatted_response = await summarize_scraped_content(text, url)
 
         logger.info(f"Exa URL summary: {formatted_response[:50] if formatted_response else 'None'}...")
@@ -620,7 +620,7 @@ async def summarize_scraped_content(markdown_content: str, url: str, use_exa: bo
     """
     Summarize scraped content from a URL.
 
-    Can optionally use Exa /contents to re-fetch and summarize, or use Wafer DeepSeek
+    Can optionally use Exa /contents to re-fetch and summarize, or use Wafer
     to summarize the already-scraped markdown content.
 
     Args:
@@ -643,18 +643,18 @@ async def summarize_scraped_content(markdown_content: str, url: str, use_exa: bo
                 formatted_response = DiscordFormatter.format_llm_response(summary)
                 logger.info(f"Exa summary: {formatted_response[:50]}...")
                 return formatted_response
-            # If Exa didn't return a summary, fall through to Wafer DeepSeek
+            # If Exa didn't return a summary, fall through to Wafer
 
-        # Use Wafer DeepSeek to summarize the markdown content
+        # Use Wafer to summarize the markdown content
         # Truncate content if it's too long (to avoid token limits)
         max_content_length = 15000  # Adjust based on model's context window
         truncated_content = markdown_content[:max_content_length]
         if len(markdown_content) > max_content_length:
             truncated_content += "\n\n[Content truncated due to length...]"
 
-        logger.info(f"Summarizing content from URL with Wafer DeepSeek: {url}")
+        logger.info(f"Summarizing content from URL with Wafer model {config.wafer_model}: {url}")
 
-        # Create the prompt for Wafer DeepSeek
+        # Create the prompt for Wafer
         prompt = f"""Analyze and summarize this content from {url}:
 
 {truncated_content}
@@ -664,7 +664,7 @@ Format your response as plain text with bullet points (use - for bullets).
 Do not include an introductory paragraph or title.
 Keep the summary brief and focused on the most important information."""
 
-        # Make the API request using Wafer DeepSeek
+        # Make the API request using Wafer
         completion = await llm_client.chat.completions.create(
             model=config.wafer_model,
             messages=[
@@ -683,7 +683,7 @@ Keep the summary brief and focused on the most important information."""
 
         # Extract the response
         response_text = completion.choices[0].message.content
-        logger.info(f"Wafer DeepSeek summary received: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
+        logger.info(f"Wafer summary received: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
 
         # Clean up the response
         cleaned_response = response_text.strip()
@@ -706,7 +706,7 @@ Keep the summary brief and focused on the most important information."""
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error(f"Wafer DeepSeek request timed out while summarizing content from URL {url}")
+        logger.error(f"Wafer request timed out while summarizing content from URL {url}")
         return None
     except Exception as e:
         logger.error(f"Error summarizing content from URL {url}: {str(e)}", exc_info=True)
@@ -944,9 +944,9 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
                 logger.warning(f"Prompt still exceeds limit after truncation ({len(prompt)} > {max_prompt_length}), hard truncating")
                 prompt = prompt[:max_prompt_length]
 
-        logger.info(f"Calling Wafer DeepSeek for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
+        logger.info(f"Calling Wafer model {config.wafer_model} for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
 
-        # Make the API request using Wafer DeepSeek
+        # Make the API request using Wafer
         completion = await llm_client.chat.completions.create(
             model=config.wafer_model,
             messages=[
@@ -965,7 +965,7 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
 
         # Extract the response
         response_text = completion.choices[0].message.content
-        logger.info(f"Wafer DeepSeek point analysis received: {response_text[:100]}...")
+        logger.info(f"Wafer point analysis received: {response_text[:100]}...")
 
         # Parse the JSON response
         try:
@@ -1142,7 +1142,7 @@ async def call_llm_with_database_context(
 ) -> str:
     """
     Answer a question using context from database messages.
-    Uses Wafer DeepSeek for LLM processing.
+    Uses Wafer for LLM processing.
 
     Args:
         query: The user's question
@@ -1153,7 +1153,7 @@ async def call_llm_with_database_context(
         str: The LLM's response
     """
     try:
-        logger.info(f"Calling Wafer DeepSeek with database context for query: {query[:50]}...")
+        logger.info(f"Calling Wafer model {config.wafer_model} with database context for query: {query[:50]}...")
 
         # Format the messages as context
         if not messages:
@@ -1224,7 +1224,7 @@ Instructions:
 - Be concise and direct
 - If multiple people discussed the topic, summarize their different perspectives"""
 
-        # Use Wafer DeepSeek for database context queries
+        # Use Wafer for database context queries
         completion = await llm_client.chat.completions.create(
             model=config.wafer_model,
             messages=[
@@ -1244,13 +1244,13 @@ Instructions:
         response = completion.choices[0].message.content
 
         formatted_response = DiscordFormatter.format_llm_response(response)
-        logger.info(f"Wafer DeepSeek database context query answered successfully")
+        logger.info("Wafer database context query answered successfully")
 
         return formatted_response
 
     except asyncio.TimeoutError:
-        logger.error("Wafer DeepSeek request timed out during database context query")
+        logger.error("Wafer request timed out during database context query")
         return "Sorry, the request timed out. Please try again."
     except Exception as e:
-        logger.error(f"Error answering query with Wafer DeepSeek database context: {str(e)}", exc_info=True)
+        logger.error(f"Error answering query with Wafer database context: {str(e)}", exc_info=True)
         return "Sorry, an error occurred while processing your question."

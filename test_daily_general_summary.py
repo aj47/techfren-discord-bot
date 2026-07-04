@@ -116,6 +116,45 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(metadata["included_guild_id"], "guild_id")
 
+    async def test_failed_summary_response_is_not_stored_or_posted(self):
+        now = datetime(2026, 7, 4, 0, 0, tzinfo=timezone.utc)
+        active_channels = [
+            {
+                "channel_id": "general_id",
+                "channel_name": "general",
+                "guild_id": "guild_id",
+                "guild_name": "TechFren",
+                "message_count": 1,
+            }
+        ]
+        messages_by_channel = {
+            "general_id": {
+                "messages": [self._message("g1", "Alice", "General update")]
+            }
+        }
+
+        with (
+            patch.object(summarization_tasks.config, "summary_channel_ids", ["general_id"]),
+            patch.object(summarization_tasks.config, "general_channel_id", "general_id"),
+            patch.object(summarization_tasks.database, "get_active_channels", return_value=active_channels),
+            patch.object(summarization_tasks.database, "get_messages_for_time_range", return_value=messages_by_channel),
+            patch.object(summarization_tasks.database, "get_user_engagement_metrics", return_value={}),
+            patch.object(summarization_tasks, "analyze_messages_for_points", new=AsyncMock(return_value=None)),
+            patch.object(
+                summarization_tasks,
+                "call_llm_for_summary",
+                new=AsyncMock(return_value="Sorry, I encountered an error while generating the summary. Please try again later."),
+            ),
+            patch.object(summarization_tasks.database, "store_channel_summary", return_value=True) as mock_store,
+            patch.object(summarization_tasks.database, "delete_messages_older_than", return_value=0) as mock_delete,
+            patch.object(summarization_tasks, "post_summary_to_reports_channel", new=AsyncMock()) as mock_post,
+        ):
+            await summarization_tasks.run_daily_summarization_once(now=now)
+
+        mock_store.assert_not_called()
+        mock_post.assert_not_awaited()
+        mock_delete.assert_not_called()
+
     def _message(self, message_id, author_name, content, is_bot=False, is_command=False):
         return {
             "id": message_id,

@@ -19,7 +19,7 @@ if not token:
     raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
 
 # =============================================================================
-# PRIMARY API CONFIGURATION (Exa + Wafer DeepSeek)
+# PRIMARY API CONFIGURATION (Exa + Wafer)
 # =============================================================================
 
 # Exa API Key (required for Exa search - primary search provider)
@@ -42,10 +42,10 @@ if not wafer_api_key:
 # Environment variable: WAFER_BASE_URL
 wafer_base_url = os.getenv('WAFER_BASE_URL', 'https://pass.wafer.ai/v1')
 
-# Wafer DeepSeek Model Configuration
+# Wafer Model Configuration
 # Environment variable: WAFER_MODEL
-# Default model is "deepseek-v4-flash" for fast, cost-efficient tasks
-wafer_model = os.getenv('WAFER_MODEL', 'deepseek-v4-flash')
+# Default model must be available on the configured Wafer Pass endpoint.
+wafer_model = os.getenv('WAFER_MODEL', 'qwen3.7-max')
 
 # Optional xAI settings are kept only for features that still explicitly need xAI.
 xai_api_key = os.getenv('XAI_API_KEY')

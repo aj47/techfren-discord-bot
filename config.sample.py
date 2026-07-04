@@ -14,7 +14,7 @@
 # WAFER_API_KEY=your_wafer_api_key
 # FIRECRAWL_API_KEY=your_firecrawl_api_key
 # APIFY_API_TOKEN=your_apify_api_token
-# WAFER_MODEL=deepseek-v4-flash
+# WAFER_MODEL=qwen3.7-max
 # RATE_LIMIT_SECONDS=10
 # MAX_REQUESTS_PER_MINUTE=6
 # SUMMARY_HOUR=0
@@ -34,10 +34,10 @@ token = "YOUR_DISCORD_BOT_TOKEN"
 # Environment variable: WAFER_API_KEY
 wafer_api_key = "YOUR_WAFER_API_KEY"
 
-# Wafer DeepSeek Model Configuration (optional)
+# Wafer Model Configuration (optional)
 # Environment variable: WAFER_MODEL
 wafer_base_url = "https://pass.wafer.ai/v1"
-wafer_model = "deepseek-v4-flash"
+wafer_model = "qwen3.7-max"
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE

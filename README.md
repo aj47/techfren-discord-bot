@@ -4,7 +4,7 @@ A simple Discord bot built with discord.py.
 
 ## Features
 
-- Processes queries via mentions (`@botname <query>`) anywhere in messages and responds with AI-generated answers using Wafer DeepSeek by default
+- Processes queries via mentions (`@botname <query>`) anywhere in messages and responds with AI-generated answers using Wafer by default
 - Summarizes channel conversations with `/sum-day` command to get a summary of the day's messages
 - Summarizes channel conversations with `/sum-hr <hours>` command to get a summary of the past N hours
 - Automatically generates daily summaries for all active channels at a scheduled time
@@ -65,7 +65,7 @@ A simple Discord bot built with discord.py.
 
    **Optional environment variables:**
    ```bash
-   WAFER_MODEL=deepseek-v4-flash  # Default Wafer DeepSeek model
+   WAFER_MODEL=qwen3.7-max  # Default Wafer model
    APIFY_API_TOKEN=your_apify_token  # For Twitter/X.com link processing
    RATE_LIMIT_SECONDS=10  # Time between allowed requests per user
    MAX_REQUESTS_PER_MINUTE=6  # Maximum requests per user per minute

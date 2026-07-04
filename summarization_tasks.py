@@ -39,6 +39,17 @@ def _is_human_summary_message(msg):
     """Return True for messages that should be summarized in automated digests."""
     return not msg.get('is_command', False) and not msg.get('is_bot', False)
 
+def _is_summary_generation_failure(summary_text):
+    """Return True when the LLM helper returned a user-facing failure message."""
+    if not isinstance(summary_text, str):
+        return True
+
+    normalized = summary_text.strip().lower()
+    return normalized in {
+        "sorry, the summary request timed out. please try again later.",
+        "sorry, i encountered an error while generating the summary. please try again later.",
+    }
+
 async def run_daily_summarization_once(now: datetime | None = None):
     """Run the daily channel summarization logic a single time.
 
@@ -337,6 +348,10 @@ async def run_daily_summarization_once(now: datetime | None = None):
 
             try:
                 summary_text = await call_llm_for_summary(formatted_messages, summary_llm_channel_name, yesterday)
+                if _is_summary_generation_failure(summary_text):
+                    logger.error(f"Skipping stored/posted daily summary for {channel_name} because summary generation failed.")
+                    continue
+
                 metadata = {
                     'start_time': yesterday.isoformat(),
                     'end_time': now.isoformat(),
