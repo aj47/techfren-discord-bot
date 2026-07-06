@@ -512,7 +512,7 @@ Format (be CONCISE - aim for brevity):
 
 ## 🔥 Highlights
 5-8 bullet points MAX. One line each. Start with the topic, not filler words.
-Format: **Topic** - brief context - `username` TIMESTAMP [→](discord_message_link)
+Format: **Topic** - brief context - `username` TIMESTAMP [source](discord_message_link)
 - Messages with timestamps have a [TIMESTAMP:<t:unix:t>] marker. Copy the <t:unix:t> part EXACTLY as the TIMESTAMP in your output when available.
 - These timestamps automatically display in the reader's local timezone. Omit TIMESTAMP if not available.
 Include image descriptions inline if relevant to tech content.
@@ -532,7 +532,7 @@ Skip sections if nothing noteworthy. No fluff. No introductions. Start directly 
             messages=[
                 {
                     "role": "system",
-                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [→](url). CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
+                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [source](url). CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
                 },
                 {
                     "role": "user",
