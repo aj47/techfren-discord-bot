@@ -21,6 +21,55 @@ openrouter_client = AsyncOpenAI(
 
 llm_client = openrouter_client
 
+POINT_ANALYSIS_TOKEN_LIMITS = (4000, 8000)
+
+
+def _point_analysis_response_format(max_points: int) -> Dict[str, Any]:
+    """Return the strict JSON schema expected from point analysis."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "community_point_analysis",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "awards": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "author_id": {"type": "string"},
+                                "author_name": {"type": "string"},
+                                "points": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 20,
+                                },
+                                "reason": {"type": "string"},
+                            },
+                            "required": [
+                                "author_id",
+                                "author_name",
+                                "points",
+                                "reason",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "total_awarded": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": max_points,
+                    },
+                    "summary": {"type": "string"},
+                },
+                "required": ["awards", "total_awarded", "summary"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
 
 async def call_exa_answer(query: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -946,29 +995,43 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
 
         logger.info(f"Calling OpenRouter model {config.llm_model} for point analysis of {len(messages)} messages (prompt length: {len(prompt)} chars)")
 
-        # Make the API request using OpenRouter
-        completion = await llm_client.chat.completions.create(
-            model=config.llm_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"You are an AI that analyzes Discord community contributions and awards points fairly. You have a daily pool of {max_points} points to distribute based on value provided to the community. Be discerning - only award points for genuine contributions. Respond with valid JSON only."
+        request_messages = [
+            {
+                "role": "system",
+                "content": f"You are an AI that analyzes Discord community contributions and awards points fairly. You have a daily pool of {max_points} points to distribute based on value provided to the community. Be discerning - only award points for genuine contributions. Respond with valid JSON only."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+
+        result = None
+        for attempt, token_limit in enumerate(POINT_ANALYSIS_TOKEN_LIMITS, start=1):
+            # Point analysis needs more output headroom than ordinary summaries.
+            # Strict structured output prevents markdown or malformed field shapes,
+            # while low reasoning effort reserves most of the budget for the JSON.
+            completion = await llm_client.chat.completions.create(
+                model=config.llm_model,
+                messages=request_messages,
+                response_format=_point_analysis_response_format(max_points),
+                max_tokens=token_limit,
+                temperature=0.3,
+                extra_body={
+                    "provider": {"require_parameters": True},
+                    "reasoning": {"effort": "low", "exclude": True},
                 },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=1500,
-            temperature=0.3  # Lower temperature for more consistent analysis
-        )
+            )
 
-        # Extract the response
-        response_text = completion.choices[0].message.content
-        logger.info(f"OpenRouter point analysis received: {response_text[:100]}...")
+            choice = completion.choices[0]
+            response_text = choice.message.content or ""
+            finish_reason = getattr(choice, "finish_reason", None)
+            logger.info(
+                "OpenRouter point analysis received "
+                f"(attempt {attempt}, finish_reason={finish_reason}, "
+                f"response_length={len(response_text)}): {response_text[:100]}..."
+            )
 
-        # Parse the JSON response
-        try:
             # Find JSON between triple backticks if present
             if "```json" in response_text and "```" in response_text.split("```json", 1)[1]:
                 json_str = response_text.split("```json", 1)[1].split("```", 1)[0].strip()
@@ -978,9 +1041,28 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
                 # If no backticks, try to parse the whole response
                 json_str = response_text.strip()
 
-            # Parse the JSON
-            result = json.loads(json_str)
+            try:
+                result = json.loads(json_str)
+                break
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "Failed to parse JSON from LLM point analysis "
+                    f"(attempt {attempt}, finish_reason={finish_reason}, "
+                    f"token_limit={token_limit}): {e}"
+                )
+                logger.error(f"Raw response: {response_text}")
+                if attempt < len(POINT_ANALYSIS_TOKEN_LIMITS):
+                    logger.warning(
+                        "Retrying point analysis with a larger output token limit"
+                    )
 
+        if result is None:
+            return {
+                'awards': [],
+                'summary': 'Failed to analyze messages for points due to parsing error.'
+            }
+
+        try:
             # Validate structure
             if "awards" not in result:
                 logger.warning(f"LLM response missing 'awards' field: {result}")
@@ -1119,9 +1201,8 @@ Make sure the JSON is valid and parseable. Only award points to users who made m
             logger.info(f"Successfully parsed point awards: {len(result['awards'])} users, {result.get('total_awarded', 0)} total points (after anti-gaming mitigations)")
             return result
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from LLM point analysis: {e}", exc_info=True)
-            logger.error(f"Raw response: {response_text}")
+        except (AttributeError, TypeError) as e:
+            logger.error(f"Invalid structured point analysis response: {e}", exc_info=True)
             return {
                 'awards': [],
                 'summary': 'Failed to analyze messages for points due to parsing error.'
