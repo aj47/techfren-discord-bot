@@ -2504,13 +2504,100 @@ async def color_status_slash(interaction: discord.Interaction):
         logger.error(f"Error in /color-status command: {str(e)}", exc_info=True)
         await interaction.response.send_message(
             "An error occurred while checking your status. Please try again later.",
+            "An error occurred while checking your status. Please try again later.",
             ephemeral=True
         )
 
 
+@bot.tree.command(name="ask-fred", description="Ask Fred a question (costs 1 point)")
+async def ask_fred_command(interaction: discord.Interaction, prompt: str):
+    """
+    Slash command to ask Fred/Hermes a question.
+    Costs 1 point and returns Hermes's response in a thread.
+
+    Args:
+        interaction: The Discord interaction
+        prompt: The question/prompt to send to Hermes
+    """
+    try:
+        if not prompt.strip():
+            await interaction.response.send_message("Please provide a prompt for Fred.", ephemeral=True)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        user_id = str(interaction.user.id)
+        guild_id = str(interaction.guild.id)
+        prompt_text = prompt.strip()
+
+        points_before = database.get_user_points(user_id, guild_id)
+        if points_before < 1:
+            await interaction.response.send_message(
+                f"You need 1 point to ask Fred, but you only have {points_before} points.",
+                ephemeral=True
+            )
+            return
+
+        success = database.deduct_user_points(user_id, guild_id, 1)
+        if not success:
+            remaining = database.get_user_points(user_id, guild_id)
+            await interaction.response.send_message(
+                f"Point deduction failed. You have {remaining} points.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message("Fred is thinking…", ephemeral=True)
+        original_response = await interaction.original_response()
+
+        def call_hermes_blocking(prompt_text: str) -> str:
+            import subprocess
+            env = os.environ.copy()
+            result = subprocess.run(
+                [
+                    "/opt/hermes/.venv/bin/hermes",
+                    "chat", "-q", prompt_text,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if result.returncode != 0:
+                return f"Error: Fred returned non-zero exit code {result.returncode}. stderr: {result.stderr[-2000:]}"
+            stdout = result.stdout or ""
+            return stdout.strip() or "(empty response)"
+
+        try:
+            answer = await asyncio.to_thread(call_hermes_blocking, prompt_text)
+        except Exception as e:
+            logger.error(f"ask-fred subprocess failed for {user_id}: {e}", exc_info=True)
+            await original_response.edit(content="Sorry, Fred is unavailable right now. Your point was not refunded.")
+            return
+
+        if not answer:
+            answer = "(Fred returned an empty response.)"
+
+        messages = split_long_message(answer)
+        first = True
+        for msg in messages:
+            if first:
+                await original_response.edit(content=msg)
+                first = False
+            else:
+                await interaction.channel.send(msg)
+
+        logger.info(f"User {interaction.user.name} ({user_id}) used /ask-fred in guild {guild_id}; prompt_len={len(prompt_text)}")
+
+    except Exception as e:
+        logger.error(f"Error in /ask-fred command: {str(e)}", exc_info=True)
+        await interaction.response.send_message("An error occurred. Please try again later.", ephemeral=True)
+
+
 try:
     logger.info("Starting bot...")
-    import config # Assuming config.py is in the same directory or accessible
+    import config  # Assuming config.py is in the same directory or accessible
 
     # Validate configuration using the imported function
     validate_config(config)
