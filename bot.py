@@ -29,11 +29,6 @@ import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
 
-HERMES_HOOK_ENABLED = bool(os.getenv("HERMES_HOOK_ENABLED", "").lower() in ("1","true","yes","on"))
-HERMES_HOOK_BIND = os.getenv("HERMES_HOOK_BIND", "127.0.0.1")
-HERMES_HOOK_PORT = int(os.getenv("HERMES_HOOK_PORT", "9090"))
-HERMES_HOOK_SECRET = os.getenv("HERMES_HOOK_SECRET", "")
-
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
@@ -839,13 +834,6 @@ async def on_ready():
     if not daily_role_color_charging.is_running():
         daily_role_color_charging.start()
         logger.info("Started daily role color charging task")
-
-    # Start optional Hermes validation hook
-    try:
-        from hermes_hook import start_if_enabled
-        await start_if_enabled()
-    except Exception as e:
-        logger.error(f'Failed to start Hermes hook: {e}', exc_info=True)
 
     # Log details about each connected guild
     for guild in bot.guilds:
