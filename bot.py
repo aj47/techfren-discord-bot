@@ -2564,7 +2564,7 @@ async def ask_fred_command(interaction: discord.Interaction, prompt: str):
                 logger.error(f"ask-fred thread creation failed: {e}")
 
         target = thread or interaction.channel
-        await target.send(prompt_text)
+        await target.send(f"{interaction.user.mention} asked:\n{prompt_text}")
         logger.info(f"User {interaction.user.name} ({user_id}) used /ask-fred in guild {guild_id}; prompt_len={len(prompt_text)}")
 
     except Exception as e:
