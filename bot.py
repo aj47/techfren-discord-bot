@@ -2563,40 +2563,8 @@ async def ask_fred_command(interaction: discord.Interaction, prompt: str):
             else:
                 logger.error(f"ask-fred thread creation failed: {e}")
 
-        def call_hermes_blocking(prompt_text: str) -> str:
-            result = subprocess.run(
-                [
-                    "/opt/hermes/.venv/bin/hermes",
-                    "chat", "-q", prompt_text,
-                ],
-                capture_output=True,
-                text=True,
-                env=os.environ.copy(),
-            )
-            if result.returncode != 0:
-                return f"Error: Fred returned non-zero exit code {result.returncode}. stderr: {result.stderr[-2000:]}"
-            return (result.stdout or "").strip() or "(empty response)"
-
-        try:
-            answer = await asyncio.to_thread(call_hermes_blocking, prompt_text)
-        except Exception as e:
-            logger.error(f"ask-fred subprocess failed for {user_id}: {e}", exc_info=True)
-            await thinking_message.edit(content="Sorry, Fred is unavailable right now. Your point was not refunded.")
-            return
-
-        if not answer:
-            answer = "(Fred returned an empty response.)"
-
-        messages = split_long_message(answer)
         target = thread or interaction.channel
-        first = True
-        for msg in messages:
-            if first:
-                await thinking_message.edit(content=msg)
-                first = False
-            else:
-                await target.send(msg)
-
+        await target.send(prompt_text)
         logger.info(f"User {interaction.user.name} ({user_id}) used /ask-fred in guild {guild_id}; prompt_len={len(prompt_text)}")
 
     except Exception as e:
