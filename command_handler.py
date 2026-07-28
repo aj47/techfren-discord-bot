@@ -196,13 +196,13 @@ async def _handle_message_command_wrapper(message: discord.Message, client_user:
     """Unified wrapper for message command handling with error management."""
     try:
         from command_abstraction import (
-            create_context_from_message,
+            create_context_from_any_message,
             create_response_sender,
             create_thread_manager,
             handle_summary_command
         )
 
-        context = create_context_from_message(message)
+        context = create_context_from_any_message(message)
         response_sender = create_response_sender(message)
         thread_manager = create_thread_manager(message)
 
@@ -220,6 +220,8 @@ async def handle_sum_day_command(message: discord.Message, client_user: discord.
 
 async def handle_sum_hr_command(message: discord.Message, client_user: discord.ClientUser) -> None:
     """Handles the /sum-hr <num_hours> command using the abstraction layer."""
+    import config
+
     # Parse and validate hours parameter
     import config
     hours = _parse_and_validate_hours(message.content)
