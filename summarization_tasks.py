@@ -72,7 +72,7 @@ async def _get_guild_member(guild, author_id):
     except Exception:
         return None
 
-async def run_daily_summarization_once(now: datetime | None = None):
+async def run_daily_summarization_once(now: datetime | None = None, links_dump_channel_id: str | None = None):
     """Run the daily channel summarization logic a single time.
 
     This is used both by the scheduled daily task and by one-off scripts/tests.
@@ -112,6 +112,16 @@ async def run_daily_summarization_once(now: datetime | None = None):
 
             if not active_channels:
                 logger.info("No configured summary channels had activity in the past 24 hours. Will still attempt the all-channel general summary.")
+
+        if links_dump_channel_id:
+            links_dump_channel_id_str = str(links_dump_channel_id)
+            active_channels = [
+                ch for ch in active_channels
+                if str(ch.get('channel_id')) != links_dump_channel_id_str
+            ]
+            if not active_channels:
+                logger.info("Links dump channel was the only active channel. Skipping summarization.")
+                return
 
         logger.info(f"Found {len(active_channels)} active channels to summarize")
 
@@ -296,6 +306,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
                 if channel_id not in messages_by_channel:
                     continue
 
+                if links_dump_channel_id and str(channel_id) == str(links_dump_channel_id):
+                    continue
+
                 channel_messages = messages_by_channel[channel_id]['messages']
                 channel_formatted_messages = []
                 for msg in channel_messages:
@@ -425,7 +438,8 @@ async def run_daily_summarization_once(now: datetime | None = None):
 @tasks.loop(hours=24)
 async def daily_channel_summarization():
     """Scheduled task wrapper that runs the daily summarization once per day."""
-    await run_daily_summarization_once()
+    links_dump_channel_id = getattr(config, 'links_dump_channel_id', None)
+    await run_daily_summarization_once(links_dump_channel_id=links_dump_channel_id)
 
 async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text, point_awards_data=None):
     """
