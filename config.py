@@ -124,6 +124,17 @@ try:
 except (ValueError, TypeError):
     X_LINK_REWRITE_MAX_LINKS = 5
 
+# Seconds to wait before creating the thread for a fixed link.
+# Creating a thread the instant the message arrives races Discord's own message
+# processing and renders a glitched/empty thread, so give it a moment to settle.
+# Set to 0 to disable the delay.
+try:
+    X_LINK_REWRITE_THREAD_DELAY_SECONDS = float(os.getenv('X_LINK_REWRITE_THREAD_DELAY_SECONDS', '2'))
+    if X_LINK_REWRITE_THREAD_DELAY_SECONDS < 0:
+        X_LINK_REWRITE_THREAD_DELAY_SECONDS = 0.0
+except (ValueError, TypeError):
+    X_LINK_REWRITE_THREAD_DELAY_SECONDS = 2.0
+
 # Suppress the original message's (broken) embed after posting the fixed one.
 # Requires the Manage Messages permission; the original text is left untouched.
 X_LINK_SUPPRESS_ORIGINAL_EMBED = os.getenv('X_LINK_SUPPRESS_ORIGINAL_EMBED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')

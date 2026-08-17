@@ -104,6 +104,7 @@ Configuration (all optional, in `.env`):
 | `X_LINK_REWRITE_MODE` | `thread` | `thread` posts the fixed link in a thread on the original message, `reply` posts it as an in-channel reply, `off` disables the feature |
 | `X_LINK_REWRITE_DOMAIN` | `fixupx.com` | Mirror domain to use (e.g. `fxtwitter.com`, `vxtwitter.com`) |
 | `X_LINK_REWRITE_MAX_LINKS` | `5` | Maximum links rewritten per message |
+| `X_LINK_REWRITE_THREAD_DELAY_SECONDS` | `2` | Seconds to wait before creating the thread. Creating it the instant the message arrives races Discord's own processing and glitches the thread. `0` disables the delay |
 | `X_LINK_SUPPRESS_ORIGINAL_EMBED` | `false` | Hide the original (broken) X embed after posting the fixed one. Requires the Manage Messages permission; the message text is left untouched |
 
 Notes:

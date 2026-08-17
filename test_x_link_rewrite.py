@@ -212,9 +212,11 @@ def _make_message(content="https://x.com/user/status/123", message_id=42, is_bot
 
 
 @pytest.fixture
-def bot_module():
+def bot_module(monkeypatch):
     module = _import_bot()
     module._x_link_handled_messages.clear()
+    # Keep tests fast - the real delay is exercised in TestThreadCreationDelay
+    monkeypatch.setattr(module.config, 'X_LINK_REWRITE_THREAD_DELAY_SECONDS', 0, raising=False)
     return module
 
 
@@ -332,6 +334,15 @@ class TestHandleXLinkRewrite:
         message.edit.assert_awaited_once_with(suppress=True)
         message.delete.assert_not_awaited()
 
+    async def test_skips_silently_when_message_was_deleted(self, bot_module, monkeypatch):
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_MODE', 'reply', raising=False)
+        message = _make_message()
+        response = MagicMock(status=404, reason="Not Found")
+        message.reply.side_effect = discord.NotFound(response, "unknown message")
+
+        # Must not raise
+        await bot_module.handle_x_link_rewrite(message)
+
     async def test_uses_configured_mirror_domain(self, bot_module, monkeypatch):
         monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_MODE', 'reply', raising=False)
         monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_DOMAIN', 'vxtwitter.com', raising=False)
@@ -340,3 +351,62 @@ class TestHandleXLinkRewrite:
         await bot_module.handle_x_link_rewrite(message)
 
         assert "https://vxtwitter.com/user/status/123" in message.reply.await_args.args[0]
+
+
+@pytest.mark.asyncio
+class TestThreadCreationDelay:
+    """Creating the thread too soon glitches it, so the bot waits first."""
+
+    async def test_waits_before_creating_thread(self, bot_module, monkeypatch):
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_MODE', 'thread', raising=False)
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_THREAD_DELAY_SECONDS', 2, raising=False)
+
+        calls = []
+        message = _make_message()
+        message.create_thread.return_value = AsyncMock()
+        message.create_thread.side_effect = lambda *a, **kw: calls.append('create_thread')
+
+        async def fake_sleep(seconds):
+            calls.append(('sleep', seconds))
+
+        monkeypatch.setattr(bot_module.asyncio, 'sleep', fake_sleep)
+
+        await bot_module.handle_x_link_rewrite(message)
+
+        assert calls[0] == ('sleep', 2), "expected the delay to happen before thread creation"
+        assert 'create_thread' in calls
+
+    async def test_no_delay_when_disabled(self, bot_module, monkeypatch):
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_MODE', 'thread', raising=False)
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_THREAD_DELAY_SECONDS', 0, raising=False)
+
+        slept = []
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+
+        monkeypatch.setattr(bot_module.asyncio, 'sleep', fake_sleep)
+        message = _make_message()
+        message.create_thread.return_value = AsyncMock()
+
+        await bot_module.handle_x_link_rewrite(message)
+
+        assert slept == []
+        message.create_thread.assert_awaited_once()
+
+    async def test_no_delay_in_reply_mode(self, bot_module, monkeypatch):
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_MODE', 'reply', raising=False)
+        monkeypatch.setattr(bot_module.config, 'X_LINK_REWRITE_THREAD_DELAY_SECONDS', 5, raising=False)
+
+        slept = []
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+
+        monkeypatch.setattr(bot_module.asyncio, 'sleep', fake_sleep)
+        message = _make_message()
+
+        await bot_module.handle_x_link_rewrite(message)
+
+        assert slept == []
+        message.reply.assert_awaited_once()

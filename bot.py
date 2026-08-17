@@ -820,6 +820,12 @@ async def handle_x_link_rewrite(message: discord.Message) -> None:
         posted = False
         if mode == 'thread' and not isinstance(message.channel, discord.Thread):
             try:
+                # Creating the thread the instant the message arrives races Discord's
+                # own processing of it and produces a glitched thread, so settle first.
+                thread_delay = getattr(config, 'X_LINK_REWRITE_THREAD_DELAY_SECONDS', 2)
+                if thread_delay > 0 and message.thread is None:
+                    await asyncio.sleep(thread_delay)
+
                 thread = message.thread or await message.create_thread(
                     name=build_thread_name(author_display_name),
                     auto_archive_duration=1440,
@@ -870,6 +876,9 @@ async def handle_x_link_rewrite(message: discord.Message) -> None:
                     f"Failed to suppress embeds on message {message.id}: {suppress_error}"
                 )
 
+    except discord.NotFound:
+        # Message was deleted while we were waiting to post - nothing to fix up
+        logger.info(f"Message {message.id} no longer exists, skipping X link rewrite")
     except discord.Forbidden:
         logger.warning(f"No permission to post fixed X link for message {message.id}")
     except Exception as e:
@@ -1395,7 +1404,9 @@ async def on_message(message):
     # Post embed-friendly mirrors of any x.com/twitter.com links.
     # Runs after the message is stored so the author's own message (and the point
     # credit derived from it) is already recorded and stays untouched.
-    await handle_x_link_rewrite(message)
+    # Scheduled as a background task so its thread-creation delay doesn't hold up
+    # command handling below.
+    asyncio.create_task(handle_x_link_rewrite(message))
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
