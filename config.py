@@ -98,6 +98,36 @@ else:
 # Channel where only links are allowed - text messages will be auto-deleted
 links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
+# X/Twitter Link Rewriting Configuration (optional)
+# Environment variables: X_LINK_REWRITE_MODE, X_LINK_REWRITE_DOMAIN,
+#                        X_LINK_REWRITE_MAX_LINKS, X_LINK_SUPPRESS_ORIGINAL_EMBED
+#
+# When someone posts an x.com/twitter.com link, the bot posts the same link on an
+# embed-friendly mirror (fixupx.com by default). The original message is never
+# deleted or edited, so the author keeps authorship and their point credit.
+#
+# Modes:
+#   thread - create a thread on the original message and post the fixed link there (default)
+#   reply  - reply to the original message in-channel with the fixed link
+#   off    - disable the feature
+_x_link_rewrite_mode_raw = os.getenv('X_LINK_REWRITE_MODE', 'thread').strip().lower()
+X_LINK_REWRITE_MODE = _x_link_rewrite_mode_raw if _x_link_rewrite_mode_raw in ('thread', 'reply', 'off') else 'thread'
+
+# Mirror domain used for the rewritten links (e.g. fixupx.com, fxtwitter.com, vxtwitter.com)
+X_LINK_REWRITE_DOMAIN = os.getenv('X_LINK_REWRITE_DOMAIN', 'fixupx.com').strip() or 'fixupx.com'
+
+# Maximum number of links rewritten per message (keeps the bot reply short)
+try:
+    X_LINK_REWRITE_MAX_LINKS = int(os.getenv('X_LINK_REWRITE_MAX_LINKS', '5'))
+    if X_LINK_REWRITE_MAX_LINKS < 1:
+        X_LINK_REWRITE_MAX_LINKS = 1
+except (ValueError, TypeError):
+    X_LINK_REWRITE_MAX_LINKS = 5
+
+# Suppress the original message's (broken) embed after posting the fixed one.
+# Requires the Manage Messages permission; the original text is left untouched.
+X_LINK_SUPPRESS_ORIGINAL_EMBED = os.getenv('X_LINK_SUPPRESS_ORIGINAL_EMBED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
 # HTTP Headers Configuration (optional)
 # Environment variables: HTTP_REFERER, X_TITLE
 # Used in LLM API requests for tracking/identification

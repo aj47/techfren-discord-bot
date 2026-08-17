@@ -28,11 +28,24 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from x_link_utils import find_x_link_rewrites, build_rewrite_notice, build_thread_name  # X/Twitter link rewriting
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
 # Track users who have been warned about GIF limits (user_id -> expiry_time)
 _gif_warned_users = {}
+
+# Track messages whose X links have already been rewritten, so an edit that
+# re-enters on_message doesn't post the fixed link twice
+_X_LINK_HANDLED_CACHE_SIZE = 1000
+_x_link_handled_messages = {}
+
+
+def _remember_x_link_message(message_id: int) -> None:
+    """Record a message ID as already rewritten (bounded, oldest entries evicted)."""
+    _x_link_handled_messages[message_id] = True
+    while len(_x_link_handled_messages) > _X_LINK_HANDLED_CACHE_SIZE:
+        _x_link_handled_messages.pop(next(iter(_x_link_handled_messages)))
 
 _instance_lock_file = None
 
@@ -757,6 +770,112 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         return False
 
 
+async def handle_x_link_rewrite(message: discord.Message) -> None:
+    """
+    Post an embed-friendly mirror (fixupx.com) of any x.com/twitter.com links in a message.
+
+    The original message is never deleted or edited (except for optional embed
+    suppression), so the author keeps authorship, reactions, replies and their
+    point credit - point awards are derived from the stored message rows, which
+    are keyed to the human author and skip bot messages.
+
+    Depending on config.X_LINK_REWRITE_MODE the fixed link is posted either in a
+    thread hanging off the original message ("thread", default) or as a reply in
+    the channel ("reply").
+
+    Args:
+        message: The Discord message to check
+    """
+    try:
+        mode = getattr(config, 'X_LINK_REWRITE_MODE', 'thread')
+        if mode == 'off':
+            return
+
+        # Only rewrite links posted by humans in guilds (threads need a guild channel)
+        if message.author.bot or message.guild is None:
+            return
+
+        # on_message can be re-entered for the same message via on_message_edit,
+        # so make sure we only post the fixed link once
+        if message.id in _x_link_handled_messages:
+            return
+
+        rewrites = find_x_link_rewrites(
+            message.content,
+            rewrite_domain=getattr(config, 'X_LINK_REWRITE_DOMAIN', 'fixupx.com'),
+            max_links=getattr(config, 'X_LINK_REWRITE_MAX_LINKS', 5),
+        )
+        if not rewrites:
+            return
+
+        _remember_x_link_message(message.id)
+
+        author_display_name = (
+            message.author.display_name
+            if isinstance(message.author, discord.Member)
+            else message.author.name
+        )
+        notice = build_rewrite_notice(author_display_name, rewrites)
+
+        posted = False
+        if mode == 'thread' and not isinstance(message.channel, discord.Thread):
+            try:
+                thread = message.thread or await message.create_thread(
+                    name=build_thread_name(author_display_name),
+                    auto_archive_duration=1440,
+                )
+                await thread.send(notice)
+                posted = True
+                logger.info(
+                    f"Posted {len(rewrites)} fixed X link(s) in thread for message {message.id}"
+                )
+            except discord.Forbidden:
+                logger.warning(
+                    f"No permission to create a thread on message {message.id}, falling back to reply"
+                )
+            except discord.HTTPException as thread_error:
+                # 160004: another handler already opened a thread on this message.
+                # Threads created from a message share the message's ID.
+                existing_thread = None
+                if thread_error.code == 160004 and hasattr(message.channel, 'get_thread'):
+                    existing_thread = message.channel.get_thread(message.id)
+
+                if existing_thread:
+                    await existing_thread.send(notice)
+                    posted = True
+                    logger.info(
+                        f"Posted {len(rewrites)} fixed X link(s) in existing thread for message {message.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Could not create thread for message {message.id} ({thread_error}), falling back to reply"
+                    )
+
+        if not posted:
+            # "reply" mode, or the thread attempt failed / message is already in a thread
+            await message.reply(notice, mention_author=False)
+            logger.info(f"Replied with {len(rewrites)} fixed X link(s) to message {message.id}")
+
+        # Optionally hide the original (usually broken) X embed so the channel
+        # only shows the working one. Needs Manage Messages; content is untouched.
+        if getattr(config, 'X_LINK_SUPPRESS_ORIGINAL_EMBED', False):
+            try:
+                await message.edit(suppress=True)
+            except discord.Forbidden:
+                logger.warning(
+                    f"No permission to suppress embeds on message {message.id}"
+                )
+            except discord.HTTPException as suppress_error:
+                logger.warning(
+                    f"Failed to suppress embeds on message {message.id}: {suppress_error}"
+                )
+
+    except discord.Forbidden:
+        logger.warning(f"No permission to post fixed X link for message {message.id}")
+    except Exception as e:
+        logger.error(f"Error rewriting X links for message {message.id}: {e}", exc_info=True)
+
+
 # Global error handler for app commands (slash commands)
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1272,6 +1391,11 @@ async def on_message(message):
         # This saves resources and ensures only community-approved links are summarized.
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
+
+    # Post embed-friendly mirrors of any x.com/twitter.com links.
+    # Runs after the message is stored so the author's own message (and the point
+    # credit derived from it) is already recorded and stays untouched.
+    await handle_x_link_rewrite(message)
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'

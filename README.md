@@ -15,6 +15,7 @@ A simple Discord bot built with discord.py.
   - Uses Apify to scrape Twitter/X.com URLs, extracting tweet content, video URLs, and replies
   - Uses Firecrawl for all other URLs
   - Summarizes content and stores it in the database
+- Rewrites x.com/twitter.com links to an embed-friendly mirror (fixupx.com) so Discord renders the post properly - see [X/Twitter Link Rewriting](#xtwitter-link-rewriting)
 - Rate limiting to prevent abuse (10 seconds between requests, max 6 requests per minute)
 - Mention-based queries (e.g., `@botname <query>`) allow you to interact with the bot in any channel, with responses posted in threads attached to your original message. Mentions can appear anywhere in the message (beginning, middle, or end)
 - `/sum-day` command works in any channel
@@ -83,6 +84,35 @@ A simple Discord bot built with discord.py.
    ```
    python bot.py
    ```
+
+## X/Twitter Link Rewriting
+
+Discord's embeds for x.com posts are unreliable (no video, no images, often no text).
+When someone posts an x.com/twitter.com link, the bot posts the same link on an
+embed-friendly mirror (fixupx.com by default), which Discord renders properly.
+
+**The original message is never deleted or edited.** That matters because:
+
+- The author keeps authorship, reactions and replies on their own message
+- Daily point awards are calculated from the stored message rows, which are keyed to
+  the human author (bot messages are skipped) - so posting a link still earns credit
+
+Configuration (all optional, in `.env`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `X_LINK_REWRITE_MODE` | `thread` | `thread` posts the fixed link in a thread on the original message, `reply` posts it as an in-channel reply, `off` disables the feature |
+| `X_LINK_REWRITE_DOMAIN` | `fixupx.com` | Mirror domain to use (e.g. `fxtwitter.com`, `vxtwitter.com`) |
+| `X_LINK_REWRITE_MAX_LINKS` | `5` | Maximum links rewritten per message |
+| `X_LINK_SUPPRESS_ORIGINAL_EMBED` | `false` | Hide the original (broken) X embed after posting the fixed one. Requires the Manage Messages permission; the message text is left untouched |
+
+Notes:
+
+- In `thread` mode the bot needs the **Create Public Threads** permission. If thread
+  creation fails, or the message is already inside a thread, it falls back to a reply.
+- Links inside code blocks/inline code, and links the author wrapped in
+  `<angle brackets>` to suppress embeds, are left alone.
+- Links that already use a mirror (fixupx, fxtwitter, vxtwitter) are not touched.
 
 ## Discord Developer Portal Setup
 
