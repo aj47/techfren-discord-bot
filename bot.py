@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import os
 import json
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import database
 from logging_config import logger  # Import the logger from the new module
@@ -28,7 +28,13 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
-from x_link_utils import find_x_link_rewrites, build_rewrite_notice, build_thread_name  # X/Twitter link rewriting
+from x_link_utils import (  # X/Twitter link rewriting
+    find_x_link_rewrites,
+    rewrite_content_links,
+    build_rewrite_notice,
+    build_repost_content,
+    build_thread_name,
+)
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -41,11 +47,31 @@ _X_LINK_HANDLED_CACHE_SIZE = 1000
 _x_link_handled_messages = {}
 
 
+# Bot messages that are reposts of a human's X link message (repost message ID ->
+# original author ID). Summarization normally skips bot messages, but these carry
+# a person's words, so reactions on them are still honoured.
+_X_REPOST_CACHE_SIZE = 1000
+_x_repost_messages = {}
+
+
 def _remember_x_link_message(message_id: int) -> None:
     """Record a message ID as already rewritten (bounded, oldest entries evicted)."""
     _x_link_handled_messages[message_id] = True
     while len(_x_link_handled_messages) > _X_LINK_HANDLED_CACHE_SIZE:
         _x_link_handled_messages.pop(next(iter(_x_link_handled_messages)))
+
+
+def _remember_x_repost(repost_message_id: int, original_author_id: int) -> None:
+    """Record a bot repost so link summarization still treats it as human content."""
+    _x_repost_messages[repost_message_id] = original_author_id
+    while len(_x_repost_messages) > _X_REPOST_CACHE_SIZE:
+        _x_repost_messages.pop(next(iter(_x_repost_messages)))
+
+
+def is_x_link_repost(message: discord.Message) -> bool:
+    """Return True if this bot message is a repost of someone's X link message."""
+    return message.id in _x_repost_messages
+
 
 _instance_lock_file = None
 
@@ -378,8 +404,8 @@ async def handle_x_post_summary(message: discord.Message) -> bool:
         bool: True if an X post was found and processed, False otherwise
     """
     try:
-        # Skip bot messages
-        if message.author.bot:
+        # Skip bot messages, except the bot's own reposts of a human's X link message
+        if message.author.bot and not is_x_link_repost(message):
             return False
 
         # Extract URLs from message content
@@ -532,8 +558,8 @@ async def handle_link_summary(message: discord.Message) -> bool:
         bool: True if a link was found and processed, False otherwise
     """
     try:
-        # Skip bot messages
-        if message.author.bot:
+        # Skip bot messages, except the bot's own reposts of a human's X link message
+        if message.author.bot and not is_x_link_repost(message):
             return False
 
         # Extract URLs from message content
@@ -770,24 +796,195 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         return False
 
 
+def _repost_blocker(message: discord.Message) -> Optional[str]:
+    """Return why this message can't be reposted verbatim, or None if it can.
+
+    Reposting means deleting the author's message, so anything the bot cannot
+    reproduce exactly (stickers, polls, forwards, voice notes) disqualifies it -
+    better a thread with the fixed link than a message that lost content.
+    """
+    if message.stickers:
+        return "message has stickers"
+
+    if getattr(message, 'poll', None) is not None:
+        return "message has a poll"
+
+    if getattr(message, 'message_snapshots', None):
+        return "message is a forward"
+
+    if getattr(message.flags, 'voice', False):
+        return "message is a voice note"
+
+    # Deleting a message that anchors a thread takes the thread down with it
+    if message.thread is not None:
+        return "message has a thread"
+
+    # A thread's starter message shares the thread's ID
+    if isinstance(message.channel, discord.Thread) and message.id == message.channel.id:
+        return "message started a thread"
+
+    # Commands are answered later in on_message using this message - deleting it
+    # out from under that would break the reply
+    if bot.user and message.content.startswith((f'<@{bot.user.id}>', f'<@!{bot.user.id}>')):
+        return "message is a bot command"
+    if message.content.startswith('/'):
+        return "message is a command"
+
+    if message.guild.me is None:
+        return "bot member not cached"
+
+    permissions = message.channel.permissions_for(message.guild.me)
+    if not permissions.manage_messages:
+        return "missing Manage Messages"
+    if not permissions.send_messages:
+        return "missing Send Messages"
+    if message.attachments and not permissions.attach_files:
+        return "missing Attach Files"
+
+    return None
+
+
+async def _collect_repost_attachments(message: discord.Message) -> Optional[List[discord.File]]:
+    """Re-download the message's attachments so they survive the repost.
+
+    Returns None when the attachments can't be carried over (too many, too large,
+    or the download failed), which tells the caller to leave the original alone.
+    """
+    if not message.attachments:
+        return []
+
+    max_attachments = getattr(config, 'X_LINK_REPOST_MAX_ATTACHMENTS', 10)
+    if len(message.attachments) > max_attachments:
+        logger.info(
+            f"Skipping repost of message {message.id}: {len(message.attachments)} attachments "
+            f"exceeds the limit of {max_attachments}"
+        )
+        return None
+
+    upload_limit = getattr(message.guild, 'filesize_limit', None) or 8 * 1024 * 1024
+    total_size = sum(attachment.size for attachment in message.attachments)
+    if total_size > upload_limit:
+        logger.info(
+            f"Skipping repost of message {message.id}: attachments total {total_size} bytes, "
+            f"over the {upload_limit} byte upload limit"
+        )
+        return None
+
+    files = []
+    try:
+        for attachment in message.attachments:
+            files.append(
+                await attachment.to_file(use_cached=False, spoiler=attachment.is_spoiler())
+            )
+    except (discord.HTTPException, discord.NotFound) as e:
+        logger.warning(f"Could not re-download attachments for message {message.id}: {e}")
+        return None
+
+    return files
+
+
+async def _repost_with_fixed_links(message: discord.Message, author_display_name: str) -> bool:
+    """Repost the author's message under the bot with fixed links, then delete the original.
+
+    The bot's copy carries the full original text (links swapped for the mirror)
+    behind a plain-text attribution line, so the channel reads the same way it
+    would have if the embeds had worked in the first place.
+
+    Returns:
+        bool: True if the repost went out, False if the caller should fall back
+        to a non-destructive mode (the original is untouched in that case).
+    """
+    blocker = _repost_blocker(message)
+    if blocker:
+        logger.info(f"Not reposting message {message.id} ({blocker})")
+        return False
+
+    rewritten_content, rewrites = rewrite_content_links(
+        message.content,
+        rewrite_domain=getattr(config, 'X_LINK_REWRITE_DOMAIN', 'fixupx.com'),
+        max_links=getattr(config, 'X_LINK_REWRITE_MAX_LINKS', 5),
+    )
+    if not rewrites:
+        return False
+
+    content = build_repost_content(author_display_name, rewritten_content)
+    if content is None:
+        logger.info(f"Not reposting message {message.id}: content would exceed the message limit")
+        return False
+
+    files = await _collect_repost_attachments(message)
+    if files is None:
+        return False
+
+    # Keep a reply pointing at whatever the author was replying to
+    reference = None
+    if message.reference and message.reference.message_id:
+        reference = discord.MessageReference(
+            message_id=message.reference.message_id,
+            channel_id=message.reference.channel_id or message.channel.id,
+            guild_id=message.reference.guild_id,
+            fail_if_not_exists=False,
+        )
+
+    send_kwargs = {
+        # The bot speaks someone else's words here, so it must not ping on their behalf
+        'allowed_mentions': discord.AllowedMentions.none(),
+    }
+    if files:
+        send_kwargs['files'] = files
+    if reference is not None:
+        send_kwargs['reference'] = reference
+
+    try:
+        repost = await message.channel.send(content, **send_kwargs)
+    except discord.HTTPException as e:
+        logger.warning(f"Failed to repost message {message.id} with fixed links: {e}")
+        return False
+
+    _remember_x_repost(repost.id, message.author.id)
+    _remember_x_link_message(repost.id)
+
+    try:
+        await message.delete()
+    except discord.NotFound:
+        logger.debug(f"Original message {message.id} was already gone after reposting")
+    except (discord.Forbidden, discord.HTTPException) as e:
+        # The repost is already out; leaving the original up is noisy but harmless
+        logger.warning(f"Reposted message {message.id} but could not delete the original: {e}")
+        return True
+
+    # Point the author's stored row at the message that still exists, so their
+    # point credit stays with them and summary jump links keep working
+    try:
+        database.remap_message_id(str(message.id), str(repost.id))
+    except Exception as e:
+        logger.error(f"Failed to remap stored message {message.id} to {repost.id}: {e}", exc_info=True)
+
+    logger.info(
+        f"Reposted message {message.id} as {repost.id} with {len(rewrites)} fixed X link(s)"
+    )
+    return True
+
+
 async def handle_x_link_rewrite(message: discord.Message) -> None:
     """
-    Post an embed-friendly mirror (fixupx.com) of any x.com/twitter.com links in a message.
+    Serve any x.com/twitter.com links in a message through an embed-friendly mirror
+    (fixupx.com), because Discord's own x.com embeds drop videos, images and text.
 
-    The original message is never deleted or edited (except for optional embed
-    suppression), so the author keeps authorship, reactions, replies and their
-    point credit - point awards are derived from the stored message rows, which
-    are keyed to the human author and skip bot messages.
+    Depending on config.X_LINK_REWRITE_MODE the fix is delivered by:
+      repost - reposting the author's full text under the bot with the links
+               swapped, then deleting the original (default)
+      thread - a thread hanging off the original message
+      reply  - a reply in the channel
 
-    Depending on config.X_LINK_REWRITE_MODE the fixed link is posted either in a
-    thread hanging off the original message ("thread", default) or as a reply in
-    the channel ("reply").
+    In every mode the author's stored message row - which is what point awards are
+    derived from - stays keyed to them, so nobody loses credit for their post.
 
     Args:
         message: The Discord message to check
     """
     try:
-        mode = getattr(config, 'X_LINK_REWRITE_MODE', 'thread')
+        mode = getattr(config, 'X_LINK_REWRITE_MODE', 'repost')
         if mode == 'off':
             return
 
@@ -815,6 +1012,13 @@ async def handle_x_link_rewrite(message: discord.Message) -> None:
             if isinstance(message.author, discord.Member)
             else message.author.name
         )
+
+        if mode == 'repost':
+            if await _repost_with_fixed_links(message, author_display_name):
+                return
+            # Couldn't reproduce the message faithfully - keep it and thread instead
+            mode = 'thread'
+
         notice = build_rewrite_notice(author_display_name, rewrites)
 
         posted = False
@@ -1553,8 +1757,8 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         logger.error(f"Error fetching message for reaction: {str(e)}")
         return
 
-    # Skip bot messages
-    if message.author.bot:
+    # Skip bot messages, except the bot's own reposts - those carry a human's words
+    if message.author.bot and not is_x_link_repost(message):
         return
 
     # Check if this message contains any URLs

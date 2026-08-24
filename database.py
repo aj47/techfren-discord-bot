@@ -560,6 +560,55 @@ async def update_message_with_scraped_data(
         logger.error(f"Error updating message {message_id} with scraped data: {str(e)}", exc_info=True)
         return False
 
+def remap_message_id(old_message_id: str, new_message_id: str) -> bool:
+    """Move a stored message row onto a new Discord message ID.
+
+    Used when the bot reposts someone's message with fixed X links and deletes the
+    original: the row keeps the human author (and their point credit) but points at
+    the message that actually still exists, so jump links in summaries stay alive.
+
+    Args:
+        old_message_id: ID of the message that was deleted
+        new_message_id: ID of the bot's replacement message
+
+    Returns:
+        bool: True if a row was remapped, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # A row for the new ID would violate the primary key - bail out instead
+            cursor.execute("SELECT 1 FROM messages WHERE id = ?", (new_message_id,))
+            if cursor.fetchone():
+                logger.warning(
+                    f"Cannot remap message {old_message_id}: {new_message_id} already stored"
+                )
+                return False
+
+            cursor.execute(
+                "UPDATE messages SET id = ? WHERE id = ?",
+                (new_message_id, old_message_id)
+            )
+            rows_affected = cursor.rowcount
+
+            # Keep reply chains pointing at the surviving message
+            cursor.execute(
+                "UPDATE messages SET reply_to_message_id = ? WHERE reply_to_message_id = ?",
+                (new_message_id, old_message_id)
+            )
+
+            conn.commit()
+
+        return rows_affected > 0
+    except Exception as e:
+        logger.error(
+            f"Error remapping message {old_message_id} to {new_message_id}: {str(e)}",
+            exc_info=True
+        )
+        return False
+
+
 def get_message_count() -> int:
     """
     Get the total number of messages in the database.

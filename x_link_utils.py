@@ -6,8 +6,8 @@ text at all). Mirrors like fixupx.com serve the same post with proper OpenGraph
 tags so Discord renders a usable embed.
 
 These helpers are pure functions so they can be unit tested without Discord.
-The bot never edits or deletes the original message, which keeps the author's
-message row (and therefore their point credit) intact.
+The stored message row (and therefore the author's point credit) is always keyed
+to the human author, so reposting under the bot never costs anyone points.
 """
 
 import re
@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 DEFAULT_REWRITE_DOMAIN = "fixupx.com"
 
 # Hosts we rewrite (compared after stripping a leading "www.")
-_X_HOSTS = {
+X_POST_HOSTS = {
     "x.com",
     "twitter.com",
     "mobile.x.com",
@@ -28,7 +28,7 @@ _X_HOSTS = {
 }
 
 # Mirrors that already produce a working embed - never rewrite these
-_ALREADY_FIXED_HOSTS = {
+X_MIRROR_HOSTS = {
     "fixupx.com",
     "fxtwitter.com",
     "vxtwitter.com",
@@ -92,7 +92,7 @@ def is_rewritable_x_url(url: str) -> bool:
         return False
 
     host = _normalize_host(parts.hostname or "")
-    if host in _ALREADY_FIXED_HOSTS or host not in _X_HOSTS:
+    if host in X_MIRROR_HOSTS or host not in X_POST_HOSTS:
         return False
 
     path_segments = [segment for segment in parts.path.split("/") if segment]
@@ -119,31 +119,19 @@ def rewrite_x_url(url: str, rewrite_domain: str = DEFAULT_REWRITE_DOMAIN) -> Opt
     return urlunsplit(("https", rewrite_domain, parts.path, parts.query, parts.fragment))
 
 
-def find_x_link_rewrites(
-    content: str,
-    rewrite_domain: str = DEFAULT_REWRITE_DOMAIN,
-    max_links: int = 5,
-) -> List[Tuple[str, str]]:
-    """Find x.com/twitter.com links in message content and pair them with rewrites.
+def _iter_rewritable_spans(content: str, rewrite_domain: str, max_links: int):
+    """Yield (start, end, original_url, rewritten_url) for every link we rewrite.
 
     Skips links inside code blocks/inline code and links the author wrapped in
     <angle brackets> (that syntax means "don't embed this", so we respect it).
-
-    Args:
-        content: Raw Discord message content
-        rewrite_domain: Mirror domain to point the links at
-        max_links: Cap on how many links are returned, to keep replies short
-
-    Returns:
-        List of (original_url, rewritten_url) pairs, deduplicated, in order.
+    Offsets index into `content` itself, so callers can splice replacements in.
     """
     if not content:
-        return []
+        return
 
     masked = _mask_code_spans(content)
-
-    rewrites: List[Tuple[str, str]] = []
     seen = set()
+    found = 0
 
     for match in _URL_RE.finditer(masked):
         url = _strip_trailing_punctuation(match.group(0))
@@ -160,12 +148,86 @@ def find_x_link_rewrites(
             continue
 
         seen.add(rewritten)
+        yield start, end, url, rewritten
+
+        found += 1
+        if found >= max_links:
+            return
+
+
+def find_x_link_rewrites(
+    content: str,
+    rewrite_domain: str = DEFAULT_REWRITE_DOMAIN,
+    max_links: int = 5,
+) -> List[Tuple[str, str]]:
+    """Find x.com/twitter.com links in message content and pair them with rewrites.
+
+    Args:
+        content: Raw Discord message content
+        rewrite_domain: Mirror domain to point the links at
+        max_links: Cap on how many links are returned, to keep replies short
+
+    Returns:
+        List of (original_url, rewritten_url) pairs, deduplicated, in order.
+    """
+    return [
+        (url, rewritten)
+        for _, _, url, rewritten in _iter_rewritable_spans(content, rewrite_domain, max_links)
+    ]
+
+
+def rewrite_content_links(
+    content: str,
+    rewrite_domain: str = DEFAULT_REWRITE_DOMAIN,
+    max_links: int = 5,
+) -> Tuple[str, List[Tuple[str, str]]]:
+    """Swap every rewritable X link in `content` for its mirror, leaving the rest alone.
+
+    Returns:
+        (rewritten_content, rewrites) - `rewrites` is the same list
+        find_x_link_rewrites would return, so an empty list means nothing changed.
+    """
+    rewrites: List[Tuple[str, str]] = []
+    pieces: List[str] = []
+    cursor = 0
+
+    for start, end, url, rewritten in _iter_rewritable_spans(content, rewrite_domain, max_links):
+        pieces.append(content[cursor:start])
+        pieces.append(rewritten)
+        cursor = end
         rewrites.append((url, rewritten))
 
-        if len(rewrites) >= max_links:
-            break
+    if not rewrites:
+        return content, []
 
-    return rewrites
+    pieces.append(content[cursor:])
+    return "".join(pieces), rewrites
+
+
+def normalize_x_url(url: str) -> str:
+    """Point a mirror link (fixupx.com/...) back at x.com.
+
+    Scrapers and tweet-ID extraction only understand the real host, and the bot's
+    own reposts contain mirror links, so they have to be normalized before use.
+    Non-mirror URLs are returned unchanged.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+
+    if _normalize_host(parts.hostname or "") not in X_MIRROR_HOSTS:
+        return url
+
+    return urlunsplit(("https", "x.com", parts.path, parts.query, parts.fragment))
+
+
+def escape_display_name(name: str) -> str:
+    """Escape markdown in a display name so it can sit inside bold attribution."""
+    escaped = (name or "").replace("\\", "\\\\")
+    for char in "*_~`|":
+        escaped = escaped.replace(char, "\\" + char)
+    return escaped
 
 
 def build_rewrite_notice(author_display_name: str, rewrites: List[Tuple[str, str]]) -> str:
@@ -178,7 +240,7 @@ def build_rewrite_notice(author_display_name: str, rewrites: List[Tuple[str, str
         return ""
 
     label = "link" if len(rewrites) == 1 else "links"
-    lines = [f"🔗 Fixed embed for **{author_display_name}**'s X {label}:"]
+    lines = [f"🔗 Fixed embed for **{escape_display_name(author_display_name)}**'s X {label}:"]
     lines.extend(rewritten for _, rewritten in rewrites)
     return "\n".join(lines)
 
@@ -194,3 +256,29 @@ def build_thread_name(author_display_name: str, max_length: int = 100) -> str:
     overflow = len(name) - max_length
     trimmed = author_display_name[: max(1, len(author_display_name) - overflow)]
     return f"🔗 {trimmed}{suffix}"[:max_length]
+
+
+# Discord's hard cap on a single message's content
+DISCORD_MESSAGE_LIMIT = 2000
+
+
+def build_repost_content(
+    author_display_name: str,
+    rewritten_content: str,
+    max_length: int = DISCORD_MESSAGE_LIMIT,
+) -> Optional[str]:
+    """Build the bot's stand-in message: attribution line + the author's own text.
+
+    The original text is reproduced verbatim apart from the swapped links, so the
+    post reads the way the author wrote it. Returns None when the result wouldn't
+    fit in one Discord message - the caller then keeps the original message and
+    falls back to a non-destructive mode instead of truncating someone's words.
+    """
+    header = f"🔗 **{escape_display_name(author_display_name)}** posted:"
+    body = rewritten_content.strip()
+    content = f"{header}\n{body}" if body else header
+
+    if len(content) > max_length:
+        return None
+
+    return content

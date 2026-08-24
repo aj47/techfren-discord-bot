@@ -100,18 +100,32 @@ links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
 # X/Twitter Link Rewriting Configuration (optional)
 # Environment variables: X_LINK_REWRITE_MODE, X_LINK_REWRITE_DOMAIN,
-#                        X_LINK_REWRITE_MAX_LINKS, X_LINK_SUPPRESS_ORIGINAL_EMBED
+#                        X_LINK_REWRITE_MAX_LINKS, X_LINK_SUPPRESS_ORIGINAL_EMBED,
+#                        X_LINK_REPOST_MAX_ATTACHMENTS
 #
-# When someone posts an x.com/twitter.com link, the bot posts the same link on an
-# embed-friendly mirror (fixupx.com by default). The original message is never
-# deleted or edited, so the author keeps authorship and their point credit.
+# When someone posts an x.com/twitter.com link, the bot serves the same link on an
+# embed-friendly mirror (fixupx.com by default). The author's stored message row
+# (and therefore their point credit) is keyed to them in every mode.
 #
 # Modes:
-#   thread - create a thread on the original message and post the fixed link there (default)
+#   repost - post the author's full message under the bot with the links fixed
+#            ("<name> posted: ..."), then delete the original (default).
+#            Needs Manage Messages; falls back to thread mode when the message
+#            can't be reproduced faithfully.
+#   thread - create a thread on the original message and post the fixed link there
 #   reply  - reply to the original message in-channel with the fixed link
 #   off    - disable the feature
-_x_link_rewrite_mode_raw = os.getenv('X_LINK_REWRITE_MODE', 'thread').strip().lower()
-X_LINK_REWRITE_MODE = _x_link_rewrite_mode_raw if _x_link_rewrite_mode_raw in ('thread', 'reply', 'off') else 'thread'
+_x_link_rewrite_mode_raw = os.getenv('X_LINK_REWRITE_MODE', 'repost').strip().lower()
+X_LINK_REWRITE_MODE = _x_link_rewrite_mode_raw if _x_link_rewrite_mode_raw in ('repost', 'thread', 'reply', 'off') else 'repost'
+
+# Maximum number of attachments re-uploaded with a repost. A message carrying more
+# than this is left alone (repost falls back to thread mode) rather than losing files.
+try:
+    X_LINK_REPOST_MAX_ATTACHMENTS = int(os.getenv('X_LINK_REPOST_MAX_ATTACHMENTS', '10'))
+    if X_LINK_REPOST_MAX_ATTACHMENTS < 0:
+        X_LINK_REPOST_MAX_ATTACHMENTS = 0
+except (ValueError, TypeError):
+    X_LINK_REPOST_MAX_ATTACHMENTS = 10
 
 # Mirror domain used for the rewritten links (e.g. fixupx.com, fxtwitter.com, vxtwitter.com)
 X_LINK_REWRITE_DOMAIN = os.getenv('X_LINK_REWRITE_DOMAIN', 'fixupx.com').strip() or 'fixupx.com'
@@ -136,6 +150,7 @@ except (ValueError, TypeError):
     X_LINK_REWRITE_THREAD_DELAY_SECONDS = 2.0
 
 # Suppress the original message's (broken) embed after posting the fixed one.
+# Only applies to thread/reply mode - a repost deletes the original outright.
 # Requires the Manage Messages permission; the original text is left untouched.
 X_LINK_SUPPRESS_ORIGINAL_EMBED = os.getenv('X_LINK_SUPPRESS_ORIGINAL_EMBED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 

@@ -11,6 +11,7 @@ import re
 
 # Import config for API token
 import config
+from x_link_utils import X_POST_HOSTS, X_MIRROR_HOSTS, normalize_x_url
 
 # Set up logging
 logger = logging.getLogger('discord_bot.apify_handler')
@@ -161,6 +162,9 @@ def extract_tweet_id(url: str) -> Optional[str]:
         Optional[str]: The tweet ID or None if extraction failed
     """
     try:
+        # Mirror links carry the same path, so normalize them back to x.com first
+        url = normalize_x_url(url)
+
         # Pattern to match tweet IDs in Twitter/X.com URLs
         pattern = r'(?:twitter\.com|x\.com)/\w+/status/(\d+)'
         match = re.search(pattern, url)
@@ -242,6 +246,8 @@ async def scrape_twitter_content(url: str) -> Optional[Dict[str, Any]]:
         Optional[Dict[str, Any]]: A dictionary containing the scraped content or None if scraping failed
     """
     try:
+        # Apify's actors only understand the real host, not fixupx.com and friends
+        url = normalize_x_url(url)
         logger.info(f"Scraping Twitter/X.com URL: {url}")
 
         # Fetch the original tweet
@@ -334,6 +340,16 @@ def format_as_markdown(scraped_content: Dict[str, Any]) -> str:
         logger.error(f"Error formatting scraped content as markdown: {str(e)}", exc_info=True)
         return "Error formatting Twitter/X.com content."
 
+# Hosts that resolve to a tweet: x.com/twitter.com plus the embed-friendly mirrors.
+# Longest first so "mobile.x.com" wins over "x.com" when both could match.
+_TWITTER_HOSTS = sorted(X_POST_HOSTS | X_MIRROR_HOSTS, key=len, reverse=True)
+_TWITTER_HOST_ALTERNATION = "|".join(re.escape(host) for host in _TWITTER_HOSTS)
+_TWITTER_HOST_RE = re.compile(
+    rf'(?:^https?://|//)(?:www\.)?(?:{_TWITTER_HOST_ALTERNATION})(?:[/?#]|$)',
+    re.IGNORECASE,
+)
+
+
 async def is_twitter_url(url: str) -> bool:
     """
     Check if a URL is from Twitter/X.com.
@@ -344,6 +360,7 @@ async def is_twitter_url(url: str) -> bool:
     Returns:
         bool: True if the URL is from Twitter/X.com, False otherwise
     """
-    # More specific pattern to match Twitter/X.com domains
-    # This ensures we're matching the domain part of the URL, not just any occurrence of these strings
-    return bool(re.search(r'(?:^https?://(?:www\.)?(?:twitter\.com|x\.com))|(?://(?:www\.)?(?:twitter\.com|x\.com))', url))
+    # Match on the domain part of the URL, not just any occurrence of these strings.
+    # Mirrors (fixupx.com and friends) count too - the bot posts those itself, so a
+    # link summary reaction on one of its reposts has to resolve back to the tweet.
+    return bool(_TWITTER_HOST_RE.search(url))

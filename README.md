@@ -88,27 +88,47 @@ A simple Discord bot built with discord.py.
 ## X/Twitter Link Rewriting
 
 Discord's embeds for x.com posts are unreliable (no video, no images, often no text).
-When someone posts an x.com/twitter.com link, the bot posts the same link on an
+When someone posts an x.com/twitter.com link, the bot serves that link through an
 embed-friendly mirror (fixupx.com by default), which Discord renders properly.
 
-**The original message is never deleted or edited.** That matters because:
+By default (`repost` mode) the bot reposts the message as its own and deletes the
+original, so the channel shows one clean, working post:
 
-- The author keeps authorship, reactions and replies on their own message
-- Daily point awards are calculated from the stored message rows, which are keyed to
-  the human author (bot messages are skipped) - so posting a link still earns credit
+```
+🔗 techfren posted:
+check this out https://fixupx.com/cline/status/1925002086405832987
+```
+
+The text is reproduced verbatim apart from the swapped links, attachments are
+re-uploaded, and a reply stays a reply to the same message.
+
+**Nobody loses point credit.** Daily point awards are calculated from the stored
+message rows, which stay keyed to the human author - the repost just moves the row
+onto the message that still exists, so summary jump links keep working too.
+
+A message is only reposted when it can be reproduced exactly. The bot keeps the
+original and falls back to `thread` mode when it carries stickers, a poll, a forward
+or a voice note, when it started a thread, when the attachments are too large or too
+many, when the text wouldn't fit in one message, or when the bot lacks Manage Messages.
 
 Configuration (all optional, in `.env`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `X_LINK_REWRITE_MODE` | `thread` | `thread` posts the fixed link in a thread on the original message, `reply` posts it as an in-channel reply, `off` disables the feature |
+| `X_LINK_REWRITE_MODE` | `repost` | `repost` reposts the message under the bot with fixed links and deletes the original, `thread` posts the fixed link in a thread on the original message, `reply` posts it as an in-channel reply, `off` disables the feature |
 | `X_LINK_REWRITE_DOMAIN` | `fixupx.com` | Mirror domain to use (e.g. `fxtwitter.com`, `vxtwitter.com`) |
 | `X_LINK_REWRITE_MAX_LINKS` | `5` | Maximum links rewritten per message |
 | `X_LINK_REWRITE_THREAD_DELAY_SECONDS` | `2` | Seconds to wait before creating the thread. Creating it the instant the message arrives races Discord's own processing and glitches the thread. `0` disables the delay |
-| `X_LINK_SUPPRESS_ORIGINAL_EMBED` | `false` | Hide the original (broken) X embed after posting the fixed one. Requires the Manage Messages permission; the message text is left untouched |
+| `X_LINK_SUPPRESS_ORIGINAL_EMBED` | `false` | Hide the original (broken) X embed after posting the fixed one (`thread`/`reply` only). Requires the Manage Messages permission; the message text is left untouched |
+| `X_LINK_REPOST_MAX_ATTACHMENTS` | `10` | Most attachments a repost will re-upload. Messages with more are left alone |
 
 Notes:
 
+- In `repost` mode the bot needs **Manage Messages** (and **Attach Files** for messages
+  with attachments). It never pings on the author's behalf - mentions in a repost render
+  as text but notify nobody.
+- Reacting 🔍 to a repost still triggers link summarization, and mirror links
+  (fixupx.com and friends) are resolved back to the tweet before scraping.
 - In `thread` mode the bot needs the **Create Public Threads** permission. If thread
   creation fails, or the message is already inside a thread, it falls back to a reply.
 - Links inside code blocks/inline code, and links the author wrapped in
