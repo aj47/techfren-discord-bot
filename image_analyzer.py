@@ -1,5 +1,5 @@
 """
-Image analysis module using an optional xAI multimodal API.
+Image analysis module using OpenRouter's DeepSeek vision model.
 
 This module analyzes images from Discord attachments using a vision-capable
 model to generate descriptive text that can be included in message summaries.
@@ -16,17 +16,17 @@ import config
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Initialize xAI client for image analysis if API key is configured
-xai_client: Optional[AsyncOpenAI] = None
-if getattr(config, "xai_api_key", None):
-    xai_client = AsyncOpenAI(
-        base_url=config.xai_base_url,
-        api_key=config.xai_api_key,
+# Reuse the primary OpenRouter client for image analysis unless disabled
+vision_client: Optional[AsyncOpenAI] = None
+if getattr(config, "enable_image_analysis", True):
+    vision_client = AsyncOpenAI(
+        base_url=config.openrouter_base_url,
+        api_key=config.openrouter_api_key,
         timeout=60.0,
     )
-    logger.info("xAI image analysis client initialized")
+    logger.info("Vision image analysis client initialized (model: %s)", config.vision_model)
 else:
-    logger.warning("xAI API key not configured - image analysis will be disabled")
+    logger.info("Image analysis disabled via ENABLE_IMAGE_ANALYSIS")
 
 # Supported image formats
 SUPPORTED_IMAGE_TYPES = {
@@ -93,7 +93,7 @@ def is_supported_image(content_type: str) -> bool:
 
 async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "image") -> Optional[str]:
     """
-    Analyze an image using xAI multimodal models.
+    Analyze an image using the configured OpenRouter vision model.
 
     Args:
         image_bytes: The image data as bytes
@@ -103,8 +103,8 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
     Returns:
         Descriptive text about the image, or None if analysis failed
     """
-    if not xai_client:
-        logger.warning("Cannot analyze image: xAI API client not initialized")
+    if not vision_client:
+        logger.warning("Cannot analyze image: vision client not initialized")
         return None
 
     if not is_supported_image(content_type):
@@ -125,10 +125,10 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             "Keep it informative but brief (2-3 sentences)."
         )
 
-        # Use the configured xAI vision model for image analysis (supports vision/multimodal)
-        model = getattr(config, "grok_model", "grok-4-1-fast-non-reasoning")
+        # Use the configured OpenRouter vision model for image analysis
+        model = config.vision_model
 
-        completion = await xai_client.chat.completions.create(
+        completion = await vision_client.chat.completions.create(
             model=model,
             messages=[
                 {
@@ -148,7 +148,7 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
 
         description = completion.choices[0].message.content
 
-        # xAI responses are typically plain text, but handle list-of-parts just in case
+        # Responses are typically plain text, but handle list-of-parts just in case
         if isinstance(description, list):
             parts = []
             for part in description:
@@ -160,14 +160,14 @@ async def analyze_image(image_bytes: bytes, content_type: str, filename: str = "
             description = " ".join(parts)
 
         if not description:
-            logger.warning(f"No content in xAI response for {filename}")
+            logger.warning(f"No content in vision model response for {filename}")
             return None
 
-        logger.info(f"Successfully analyzed image with xAI: {filename}")
+        logger.info(f"Successfully analyzed image with {model}: {filename}")
         return str(description).strip()
 
     except Exception as e:
-        logger.exception(f"Error analyzing image {filename} with xAI: {e}")
+        logger.exception(f"Error analyzing image {filename} with vision model: {e}")
         return None
 
 
@@ -226,7 +226,7 @@ async def analyze_message_images(message) -> List[Dict[str, Any]]:
         List of analysis results for each image attachment
     """
     # Skip processing if image analysis is not configured
-    if xai_client is None:
+    if vision_client is None:
         return []
 
     if not hasattr(message, 'attachments') or not message.attachments:

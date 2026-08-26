@@ -46,10 +46,14 @@ openrouter_base_url = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/ap
 # Environment variable: LLM_MODEL
 llm_model = os.getenv('LLM_MODEL', 'deepseek/deepseek-v4-flash')
 
-# Optional xAI settings are kept only for features that still explicitly need xAI.
-xai_api_key = os.getenv('XAI_API_KEY')
-xai_base_url = os.getenv('XAI_BASE_URL', 'https://api.x.ai/v1')
-grok_model = os.getenv('GROK_MODEL', 'grok-4-1-fast-non-reasoning')
+# Vision Model Configuration (used for Discord image attachment analysis)
+# Runs through the same OpenRouter credentials as the primary LLM.
+# Environment variable: VISION_MODEL
+vision_model = os.getenv('VISION_MODEL', 'deepseek/deepseek-v4-flash-vision-exp')
+
+# Environment variable: ENABLE_IMAGE_ANALYSIS
+# Set to false to skip analyzing image attachments (saves on vision model usage)
+enable_image_analysis = os.getenv('ENABLE_IMAGE_ANALYSIS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 
 # Rate Limiting Configuration (optional)
 # Environment variables: RATE_LIMIT_SECONDS, MAX_REQUESTS_PER_MINUTE
@@ -73,8 +77,6 @@ firecrawl_timeout_ms = int(os.getenv('FIRECRAWL_TIMEOUT_MS', '900000'))
 # Environment variable: APIFY_API_TOKEN
 # If not provided, Twitter/X.com links will be processed using Firecrawl
 apify_api_token = os.getenv('APIFY_API_TOKEN')
-
-# NOTE: xai_api_key is optional and only used by xAI-specific features
 
 
 # Daily Summary Configuration (optional)
