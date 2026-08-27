@@ -27,6 +27,7 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url
+from bridge import start_bridge, handle_bridge_message, handle_bridge_message_edit, handle_bridge_message_delete, handle_bridge_reaction  # techfriendcommunity bridge
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -805,6 +806,9 @@ async def on_ready():
     for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) - {len(guild.members)} members')
 
+    # techfriendcommunity bridge (no-op unless BRIDGE_ENABLED)
+    await start_bridge(bot)
+
 @bot.event
 async def on_guild_join(guild):
     """Log when the bot joins a new guild"""
@@ -830,6 +834,9 @@ async def on_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return
+
+    # Mirror to techfriendcommunity (never raises; no-op unless enabled)
+    await handle_bridge_message(message)
 
     # Handle links dump channel logic first
     # This needs to happen before storing in database to avoid storing deleted messages
@@ -1272,6 +1279,7 @@ async def on_message(message):
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
     """Re-check edited messages for GIFs to prevent embed-based bypasses."""
+    await handle_bridge_message_edit(before, after)
     if after.author == bot.user or after.author.bot:
         return
 
@@ -1350,6 +1358,11 @@ def _mark_message_summarized(message_id: int):
 
 
 @bot.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    await handle_bridge_message_delete(payload)
+
+
+@bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     """
     Handle reaction-based link summarization using raw events.
@@ -1360,6 +1373,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     Links are summarized when a thumbs up (👍) reaction is added to a message containing links.
     This ensures only community-approved links are summarized.
     """
+    await handle_bridge_reaction(payload)
     # Only process thumbs up reactions
     if str(payload.emoji) != '👍':
         return
