@@ -27,6 +27,7 @@ LINK_RE = re.compile(r"^!link\s+([A-Za-z0-9]{6})\s*$")
 _MAX_BATCH = 100
 _FLUSH_INTERVAL = 1.0
 _MAX_RETRY_DELAY = 60.0
+_LEADERBOARD_INTERVAL = 600.0  # seconds between leaderboard pushes
 
 
 def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -52,6 +53,7 @@ class Bridge:
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._session: Optional[aiohttp.ClientSession] = None
         self._task: Optional[asyncio.Task] = None
+        self._leaderboard_task: Optional[asyncio.Task] = None
         self._bot: Optional[discord.Client] = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -61,6 +63,8 @@ class Bridge:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._flush_loop(), name="bridge-flush")
+        if self._leaderboard_task is None or self._leaderboard_task.done():
+            self._leaderboard_task = asyncio.create_task(self._leaderboard_loop(), name="bridge-leaderboard")
         await self.sync_channels()
         logger.info("bridge started: %d channels mirrored -> %s", len(self.channel_ids), self.url)
 
@@ -68,6 +72,9 @@ class Bridge:
         if self._task:
             self._task.cancel()
             self._task = None
+        if self._leaderboard_task:
+            self._leaderboard_task.cancel()
+            self._leaderboard_task = None
         await self._flush(drain=True)
         if self._session:
             await self._session.close()
@@ -182,6 +189,46 @@ class Bridge:
             "emoji": str(payload.emoji),
             "userId": str(payload.user_id),
         })
+
+    # -- leaderboard mirror --------------------------------------------------
+    # The bot's user_points table is the community's only points system. The web
+    # app renders it read-only, so push it here on a timer rather than letting
+    # the site compute a competing score.
+    def _leaderboard_rows(self) -> list[dict[str, Any]]:
+        import database  # imported lazily so bridge.py stays standalone-runnable
+
+        guild_ids = [str(self.guild_id)] if self.guild_id else [str(g.id) for g in self._guilds()]
+        rows = []
+        for gid in guild_ids:
+            for entry in database.get_leaderboard(gid, limit=1000):
+                points = int(entry.get("total_points") or 0)
+                if points <= 0:
+                    continue
+                rows.append({
+                    "discordUserId": str(entry["author_id"]),
+                    "name": entry.get("author_name") or "member",
+                    "points": points,
+                })
+        rows.sort(key=lambda r: r["points"], reverse=True)
+        return rows
+
+    async def push_leaderboard(self) -> None:
+        rows = await asyncio.to_thread(self._leaderboard_rows)
+        self.enqueue({"type": "leaderboard.sync", "rows": rows})
+        logger.info("bridge: leaderboard mirrored (%d members)", len(rows))
+
+    async def _leaderboard_loop(self) -> None:
+        while True:
+            try:
+                await self.push_leaderboard()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.warning("bridge leaderboard push failed: %s", e)
+            try:
+                await asyncio.sleep(_LEADERBOARD_INTERVAL)
+            except asyncio.CancelledError:
+                raise
 
     # -- delivery ------------------------------------------------------------
     async def _flush_loop(self) -> None:

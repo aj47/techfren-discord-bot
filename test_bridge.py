@@ -113,3 +113,39 @@ async def test_handlers_never_raise_when_disabled():
     bridge._bridge = None
     await bridge.handle_bridge_message(_message())
     await bridge.handle_bridge_reaction(Mock())
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_mirrors_bot_points():
+    """The mirror carries the bot's own points, ranked, with zeroes dropped."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.return_value = [
+        {"author_id": 7, "author_name": "peas", "total_points": 255},
+        {"author_id": 8, "author_name": "techfren", "total_points": 253},
+        {"author_id": 9, "author_name": "lurker", "total_points": 0},
+    ]
+    with patch.dict("sys.modules", {"database": fake_db}):
+        await b.push_leaderboard()
+
+    fake_db.get_leaderboard.assert_called_once_with("99", limit=1000)
+    event = b._queue.get_nowait()
+    assert event["type"] == "leaderboard.sync"
+    assert event["rows"] == [
+        {"discordUserId": "7", "name": "peas", "points": 255},
+        {"discordUserId": "8", "name": "techfren", "points": 253},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_never_breaks_the_loop():
+    """A database failure must not kill the bridge's leaderboard task."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.side_effect = RuntimeError("db down")
+    with patch.dict("sys.modules", {"database": fake_db}):
+        with pytest.raises(RuntimeError):
+            await b.push_leaderboard()
+    assert b._queue.empty()
