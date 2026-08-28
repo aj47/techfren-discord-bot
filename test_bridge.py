@@ -149,3 +149,15 @@ async def test_push_leaderboard_never_breaks_the_loop():
         with pytest.raises(RuntimeError):
             await b.push_leaderboard()
     assert b._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_never_publishes_an_empty_board():
+    """A sync replaces the mirror, so an empty read must not wipe it."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.return_value = []
+    with patch.dict("sys.modules", {"database": fake_db}):
+        await b.push_leaderboard()
+    assert b._queue.empty()

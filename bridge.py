@@ -214,6 +214,12 @@ class Bridge:
 
     async def push_leaderboard(self) -> None:
         rows = await asyncio.to_thread(self._leaderboard_rows)
+        if not rows:
+            # A sync replaces the mirror wholesale, so an empty push would clear
+            # the published leaderboard. No-one having any points is not a real
+            # state; an empty read means the bot's database was unreadable.
+            logger.warning("bridge: leaderboard read came back empty, not pushing")
+            return
         self.enqueue({"type": "leaderboard.sync", "rows": rows})
         logger.info("bridge: leaderboard mirrored (%d members)", len(rows))
 
