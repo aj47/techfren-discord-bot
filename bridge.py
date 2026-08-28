@@ -173,6 +173,11 @@ class Bridge:
             "type": "message.edit",
             "id": str(after.id),
             "content": after.content or "",
+            # Sent on edits too: the receiver rebuilds stored content from text
+            # plus attachments, so omitting these drops a message's images.
+            # Edits also fire when a link's embed resolves, not just on a
+            # deliberate edit, so this is not a rare path.
+            "attachmentUrls": [a.url for a in after.attachments],
             "editedAt": int((after.edited_at or after.created_at).timestamp() * 1000),
         })
 

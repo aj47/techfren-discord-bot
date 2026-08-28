@@ -177,3 +177,20 @@ async def test_push_leaderboard_flags_a_truncated_read():
     with patch.dict("sys.modules", {"database": fake_db}):
         await b.push_leaderboard()
     assert b._queue.get_nowait()["complete"] is False
+
+
+def test_edit_carries_attachments_so_images_survive():
+    """The receiver rebuilds content from text + attachments; an edit that
+    omits them would erase a message's images from the site."""
+    b = _make_bridge()
+    after = _message(content="now with a caption")
+    att = Mock()
+    att.url = "https://cdn.discordapp.com/attachments/1/2/shot.png"
+    after.attachments = [att]
+    after.edited_at = None
+
+    b.on_message_edit(after)
+
+    event = b._queue.get_nowait()
+    assert event["type"] == "message.edit"
+    assert event["attachmentUrls"] == ["https://cdn.discordapp.com/attachments/1/2/shot.png"]
