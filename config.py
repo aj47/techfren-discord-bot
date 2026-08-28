@@ -288,3 +288,11 @@ AVAILABLE_ROLE_COLORS = {
     'black': '#0c0c0c',
     'white': '#FFFFFF',
 }
+
+# --- techfriendcommunity bridge (optional) ---------------------------------
+# Mirrors public channels to the techfriendcommunity.com Convex backend.
+bridge_enabled = os.getenv('BRIDGE_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+convex_ingest_url = os.getenv('CONVEX_INGEST_URL')          # e.g. https://<deployment>.convex.site
+bridge_secret = os.getenv('BRIDGE_SECRET')                  # shared bearer secret
+bridge_guild_id = os.getenv('BRIDGE_GUILD_ID')              # optional: only mirror this guild
+bridge_exclude_channel_ids = os.getenv('BRIDGE_EXCLUDE_CHANNEL_IDS', '')  # optional: comma-separated
