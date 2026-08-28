@@ -29,6 +29,25 @@ _FLUSH_INTERVAL = 1.0
 _MAX_RETRY_DELAY = 60.0
 _LEADERBOARD_INTERVAL = 600.0  # seconds between leaderboard pushes
 _LEADERBOARD_LIMIT = 5000      # read cap; hitting it means the push is partial
+_SUMMARY_INTERVAL = 1800.0     # seconds between daily-summary pushes
+_SUMMARY_DAYS = 7              # how far back to resend summaries
+_SUMMARY_LIMIT = 200           # read cap for a single push
+
+
+def _iso_to_ms(created_at: Any, date_str: str) -> int:
+    """Epoch ms for a summary. `created_at` is an ISO string written by the bot;
+    fall back to midnight on the summary's own date if it is missing or odd."""
+    from datetime import datetime
+
+    for value, fmt in ((created_at, None), (date_str, "%Y-%m-%d")):
+        if not value:
+            continue
+        try:
+            dt = datetime.strptime(value, fmt) if fmt else datetime.fromisoformat(str(value))
+            return int(dt.timestamp() * 1000)
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -55,6 +74,7 @@ class Bridge:
         self._session: Optional[aiohttp.ClientSession] = None
         self._task: Optional[asyncio.Task] = None
         self._leaderboard_task: Optional[asyncio.Task] = None
+        self._summary_task: Optional[asyncio.Task] = None
         self._bot: Optional[discord.Client] = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -67,6 +87,10 @@ class Bridge:
         if self._leaderboard_task is None or self._leaderboard_task.done():
             self._leaderboard_task = asyncio.create_task(self._leaderboard_loop(), name="bridge-leaderboard")
         await self.sync_channels()
+        # Started after sync_channels: the summary push filters on the mirrored
+        # channel set, which is empty until the sync has run.
+        if self._summary_task is None or self._summary_task.done():
+            self._summary_task = asyncio.create_task(self._summary_loop(), name="bridge-summary")
         logger.info("bridge started: %d channels mirrored -> %s", len(self.channel_ids), self.url)
 
     async def stop(self) -> None:
@@ -76,6 +100,9 @@ class Bridge:
         if self._leaderboard_task:
             self._leaderboard_task.cancel()
             self._leaderboard_task = None
+        if self._summary_task:
+            self._summary_task.cancel()
+            self._summary_task = None
         await self._flush(drain=True)
         if self._session:
             await self._session.close()
@@ -249,6 +276,58 @@ class Bridge:
                 logger.warning("bridge leaderboard push failed: %s", e)
             try:
                 await asyncio.sleep(_LEADERBOARD_INTERVAL)
+            except asyncio.CancelledError:
+                raise
+
+    # -- daily summary mirror ------------------------------------------------
+    # The bot writes each day's channel summary to its own channel_summaries
+    # table and posts the body into a Discord *thread*. Threads are not mirrored
+    # (only top-level text channels are), so the web app cannot read a summary
+    # out of the message stream — it has to be pushed from the table.
+    def _summary_rows(self) -> list[dict[str, Any]]:
+        import database  # imported lazily so bridge.py stays standalone-runnable
+
+        rows = []
+        for entry in database.get_recent_channel_summaries(days=_SUMMARY_DAYS, limit=_SUMMARY_LIMIT):
+            # Only summaries of channels we already mirror. A private channel's
+            # summary must not reach a public web page.
+            if int(entry["channel_id"]) not in self.channel_ids:
+                continue
+            summary_text = (entry.get("summary_text") or "").strip()
+            if not summary_text:
+                continue
+            rows.append({
+                "discordChannelId": str(entry["channel_id"]),
+                "channelName": entry.get("channel_name") or "",
+                "date": entry["date"],
+                "summaryText": summary_text,
+                "messageCount": int(entry.get("message_count") or 0),
+                "activeUsers": int(entry.get("active_users") or 0),
+                "createdAt": _iso_to_ms(entry.get("created_at"), entry["date"]),
+            })
+        return rows
+
+    async def push_summaries(self) -> None:
+        rows = await asyncio.to_thread(self._summary_rows)
+        if not rows:
+            # Unlike the leaderboard this is not a warning: a fresh window with
+            # no summaries yet is normal, and the receiver upserts rather than
+            # replacing, so sending nothing changes nothing.
+            logger.debug("bridge: no recent channel summaries to push")
+            return
+        self.enqueue({"type": "summary.sync", "rows": rows})
+        logger.info("bridge: %d channel summaries mirrored", len(rows))
+
+    async def _summary_loop(self) -> None:
+        while True:
+            try:
+                await self.push_summaries()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.warning("bridge summary push failed: %s", e)
+            try:
+                await asyncio.sleep(_SUMMARY_INTERVAL)
             except asyncio.CancelledError:
                 raise
 

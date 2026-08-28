@@ -1211,6 +1211,55 @@ def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         return []
 
 
+def get_recent_channel_summaries(days: int = 7, limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Get the most recent daily channel summaries.
+
+    Args:
+        days (int): How many days back to include, counted from today
+        limit (int): Maximum number of summaries to return
+
+    Returns:
+        List[Dict[str, Any]]: Summaries, newest date first
+    """
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT channel_id, channel_name, guild_id, date, summary_text,
+                       message_count, active_users, created_at
+                FROM channel_summaries
+                WHERE date >= ?
+                ORDER BY date DESC, created_at DESC
+                LIMIT ?
+                """,
+                (cutoff, limit)
+            )
+
+            summaries = []
+            for row in cursor.fetchall():
+                summaries.append({
+                    'channel_id': row['channel_id'],
+                    'channel_name': row['channel_name'],
+                    'guild_id': row['guild_id'],
+                    'date': row['date'],
+                    'summary_text': row['summary_text'],
+                    'message_count': row['message_count'],
+                    'active_users': row['active_users'],
+                    'created_at': row['created_at']
+                })
+
+        logger.info(f"Retrieved {len(summaries)} channel summaries from the last {days} days")
+        return summaries
+    except Exception as e:
+        logger.error(f"Error getting recent channel summaries: {str(e)}", exc_info=True)
+        return []
+
+
 def get_user_engagement_metrics(
     guild_id: str,
     start_time: datetime,
