@@ -28,6 +28,7 @@ _MAX_BATCH = 100
 _FLUSH_INTERVAL = 1.0
 _MAX_RETRY_DELAY = 60.0
 _LEADERBOARD_INTERVAL = 600.0  # seconds between leaderboard pushes
+_LEADERBOARD_LIMIT = 5000      # read cap; hitting it means the push is partial
 
 
 def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -194,13 +195,20 @@ class Bridge:
     # The bot's user_points table is the community's only points system. The web
     # app renders it read-only, so push it here on a timer rather than letting
     # the site compute a competing score.
-    def _leaderboard_rows(self) -> list[dict[str, Any]]:
+    def _leaderboard_rows(self) -> tuple[list[dict[str, Any]], bool]:
+        """Return (rows, complete). `complete` is False when any guild's read hit
+        the row cap, so the receiver knows the set is a truncated view and must
+        not treat absent members as removed."""
         import database  # imported lazily so bridge.py stays standalone-runnable
 
         guild_ids = [str(self.guild_id)] if self.guild_id else [str(g.id) for g in self._guilds()]
         rows = []
+        complete = True
         for gid in guild_ids:
-            for entry in database.get_leaderboard(gid, limit=1000):
+            entries = database.get_leaderboard(gid, limit=_LEADERBOARD_LIMIT)
+            if len(entries) >= _LEADERBOARD_LIMIT:
+                complete = False
+            for entry in entries:
                 points = int(entry.get("total_points") or 0)
                 if points <= 0:
                     continue
@@ -210,18 +218,21 @@ class Bridge:
                     "points": points,
                 })
         rows.sort(key=lambda r: r["points"], reverse=True)
-        return rows
+        return rows, complete
 
     async def push_leaderboard(self) -> None:
-        rows = await asyncio.to_thread(self._leaderboard_rows)
+        rows, complete = await asyncio.to_thread(self._leaderboard_rows)
         if not rows:
             # A sync replaces the mirror wholesale, so an empty push would clear
             # the published leaderboard. No-one having any points is not a real
-            # state; an empty read means the bot's database was unreadable.
+            # state, and database.get_leaderboard() returns [] on error as well
+            # as when there is genuinely nothing, so the two are the same signal.
             logger.warning("bridge: leaderboard read came back empty, not pushing")
             return
-        self.enqueue({"type": "leaderboard.sync", "rows": rows})
-        logger.info("bridge: leaderboard mirrored (%d members)", len(rows))
+        self.enqueue({"type": "leaderboard.sync", "rows": rows, "complete": complete})
+        if not complete:
+            logger.warning("bridge: leaderboard read hit the %d-row cap; pushing a partial set", _LEADERBOARD_LIMIT)
+        logger.info("bridge: leaderboard mirrored (%d members, complete=%s)", len(rows), complete)
 
     async def _leaderboard_loop(self) -> None:
         while True:

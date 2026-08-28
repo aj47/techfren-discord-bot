@@ -129,9 +129,10 @@ async def test_push_leaderboard_mirrors_bot_points():
     with patch.dict("sys.modules", {"database": fake_db}):
         await b.push_leaderboard()
 
-    fake_db.get_leaderboard.assert_called_once_with("99", limit=1000)
+    fake_db.get_leaderboard.assert_called_once_with("99", limit=bridge._LEADERBOARD_LIMIT)
     event = b._queue.get_nowait()
     assert event["type"] == "leaderboard.sync"
+    assert event["complete"] is True
     assert event["rows"] == [
         {"discordUserId": "7", "name": "peas", "points": 255},
         {"discordUserId": "8", "name": "techfren", "points": 253},
@@ -161,3 +162,18 @@ async def test_push_leaderboard_never_publishes_an_empty_board():
     with patch.dict("sys.modules", {"database": fake_db}):
         await b.push_leaderboard()
     assert b._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_flags_a_truncated_read():
+    """Hitting the row cap means absent members are unknown, not removed."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.return_value = [
+        {"author_id": i, "author_name": f"m{i}", "total_points": 1}
+        for i in range(bridge._LEADERBOARD_LIMIT)
+    ]
+    with patch.dict("sys.modules", {"database": fake_db}):
+        await b.push_leaderboard()
+    assert b._queue.get_nowait()["complete"] is False
