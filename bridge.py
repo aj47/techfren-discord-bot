@@ -27,7 +27,10 @@ LINK_RE = re.compile(r"^!link\s+([A-Za-z0-9]{6})\s*$")
 _MAX_BATCH = 100
 _FLUSH_INTERVAL = 1.0
 _MAX_RETRY_DELAY = 60.0
-_LEADERBOARD_INTERVAL = 600.0  # seconds between leaderboard pushes
+# The leaderboard is pushed once a day, right after the bot's daily
+# summarisation awards points -- see push_leaderboard_now(). Points only change
+# in that one task, so polling on a timer re-sent an identical mirror ~144
+# times a day and burned Convex function calls for nothing.
 _LEADERBOARD_LIMIT = 5000      # read cap; hitting it means the push is partial
 _SUMMARY_INTERVAL = 1800.0     # seconds between daily-summary pushes
 _SUMMARY_DAYS = 7              # how far back to resend summaries
@@ -73,7 +76,6 @@ class Bridge:
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._session: Optional[aiohttp.ClientSession] = None
         self._task: Optional[asyncio.Task] = None
-        self._leaderboard_task: Optional[asyncio.Task] = None
         self._summary_task: Optional[asyncio.Task] = None
         self._bot: Optional[discord.Client] = None
 
@@ -84,8 +86,6 @@ class Bridge:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._flush_loop(), name="bridge-flush")
-        if self._leaderboard_task is None or self._leaderboard_task.done():
-            self._leaderboard_task = asyncio.create_task(self._leaderboard_loop(), name="bridge-leaderboard")
         await self.sync_channels()
         # Started after sync_channels: the summary push filters on the mirrored
         # channel set, which is empty until the sync has run.
@@ -97,9 +97,6 @@ class Bridge:
         if self._task:
             self._task.cancel()
             self._task = None
-        if self._leaderboard_task:
-            self._leaderboard_task.cancel()
-            self._leaderboard_task = None
         if self._summary_task:
             self._summary_task.cancel()
             self._summary_task = None
@@ -266,19 +263,6 @@ class Bridge:
             logger.warning("bridge: leaderboard read hit the %d-row cap; pushing a partial set", _LEADERBOARD_LIMIT)
         logger.info("bridge: leaderboard mirrored (%d members, complete=%s)", len(rows), complete)
 
-    async def _leaderboard_loop(self) -> None:
-        while True:
-            try:
-                await self.push_leaderboard()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001
-                logger.warning("bridge leaderboard push failed: %s", e)
-            try:
-                await asyncio.sleep(_LEADERBOARD_INTERVAL)
-            except asyncio.CancelledError:
-                raise
-
     # -- daily summary mirror ------------------------------------------------
     # The bot writes each day's channel summary to its own channel_summaries
     # table and posts the body into a Discord *thread*. Threads are not mirrored
@@ -415,6 +399,23 @@ def _safe(fn, *args) -> None:
             fn(*args)
     except Exception as e:  # noqa: BLE001
         logger.warning("bridge event error: %s", e)
+
+
+async def push_leaderboard_now() -> None:
+    """Mirror the leaderboard to the web app once.
+
+    Called from the daily summarisation task, which is the only thing that
+    awards points -- so this runs after the day's standings are final. No-op
+    when the bridge is disabled or not yet started. Never raises: a failed
+    mirror must not take the summarisation task down with it, and the next
+    day's run re-sends the full standings anyway.
+    """
+    if _bridge is None:
+        return
+    try:
+        await _bridge.push_leaderboard()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bridge: daily leaderboard push failed: %s", e)
 
 
 async def handle_bridge_message(message: discord.Message) -> None:

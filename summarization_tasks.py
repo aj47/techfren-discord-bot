@@ -7,6 +7,7 @@ from logging_config import logger
 from llm_handler import call_llm_for_summary, analyze_messages_for_points
 from message_utils import split_long_message
 import config # Assuming config.py is accessible
+import bridge
 
 # This variable will be set by the main bot script
 discord_client = None
@@ -426,6 +427,13 @@ async def run_daily_summarization_once(now: datetime | None = None):
 async def daily_channel_summarization():
     """Scheduled task wrapper that runs the daily summarization once per day."""
     await run_daily_summarization_once()
+    # The web app mirrors the points awarded above, and this task is the only
+    # thing that awards them -- so the standings are final exactly here. Pushed
+    # from the wrapper rather than from inside run_daily_summarization_once()
+    # for two reasons: the one-off script and test callers of that helper must
+    # not fire a live mirror, and on a quiet day it returns early without
+    # summarising, which should still not skip the daily push.
+    await bridge.push_leaderboard_now()
 
 async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text, point_awards_data=None):
     """

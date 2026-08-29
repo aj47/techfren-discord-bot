@@ -140,8 +140,8 @@ async def test_push_leaderboard_mirrors_bot_points():
 
 
 @pytest.mark.asyncio
-async def test_push_leaderboard_never_breaks_the_loop():
-    """A database failure must not kill the bridge's leaderboard task."""
+async def test_push_leaderboard_propagates_a_database_failure():
+    """push_leaderboard() itself raises; push_leaderboard_now() is what swallows."""
     b = _make_bridge()
     b.guild_id = 99
     fake_db = MagicMock()
@@ -194,3 +194,35 @@ def test_edit_carries_attachments_so_images_survive():
     event = b._queue.get_nowait()
     assert event["type"] == "message.edit"
     assert event["attachmentUrls"] == ["https://cdn.discordapp.com/attachments/1/2/shot.png"]
+
+
+# -- daily push entry point --------------------------------------------------
+# The leaderboard used to be polled every 10 minutes. It is now pushed once a
+# day from the summarisation task, which is the only thing that awards points,
+# so these guard the contract that task depends on.
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_now_is_a_noop_when_the_bridge_is_off():
+    """The summarisation task calls this unconditionally, bridge or no bridge."""
+    with patch.object(bridge, "_bridge", None):
+        await bridge.push_leaderboard_now()
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_now_pushes_when_the_bridge_is_up():
+    b = _make_bridge()
+    b.push_leaderboard = AsyncMock()
+    with patch.object(bridge, "_bridge", b):
+        await bridge.push_leaderboard_now()
+    b.push_leaderboard.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_now_swallows_failures():
+    """A failed mirror must not take the daily summarisation task down."""
+    b = _make_bridge()
+    b.push_leaderboard = AsyncMock(side_effect=RuntimeError("convex down"))
+    with patch.object(bridge, "_bridge", b):
+        await bridge.push_leaderboard_now()
+    b.push_leaderboard.assert_awaited_once()
