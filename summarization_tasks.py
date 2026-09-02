@@ -787,3 +787,108 @@ async def before_daily_role_color_charging():
     except Exception as e:
         logger.error(f"Error in before_daily_role_color_charging: {str(e)}", exc_info=True)
         await asyncio.sleep(60)
+
+
+async def process_frenbot_access_expiries():
+    """
+    Remove the frenbot access role from users whose access has lapsed.
+
+    Runs frequently (access is sold in hours, not days) and is idempotent:
+    once a user's expired grants are marked swept they are not reconsidered,
+    so a steady state costs one cheap query per pass and no Discord calls.
+
+    Because the first pass runs immediately on startup, grants that expired
+    while the bot was offline are cleaned up on boot.
+    """
+    if not discord_client:
+        logger.error("Discord client not set. Cannot process frenbot access expiries.")
+        return
+
+    try:
+        expired_users = database.get_expired_frenbot_access_users()
+
+        if not expired_users:
+            return
+
+        role_name = getattr(config, 'FRENBOT_ACCESS_ROLE_NAME', 'frenbot-access')
+        total_removed = 0
+        total_skipped = 0
+
+        for record in expired_users:
+            guild_id = record['guild_id']
+            author_id = record['author_id']
+            author_name = record['author_name']
+
+            try:
+                guild = discord_client.get_guild(int(guild_id))
+            except (TypeError, ValueError):
+                guild = None
+                logger.warning(f"Invalid guild_id on frenbot grant record: {guild_id}")
+
+            if not guild:
+                # Guild gone or not cached - mark swept so we stop retrying it.
+                database.mark_frenbot_access_swept(author_id, guild_id)
+                total_skipped += 1
+                continue
+
+            role = discord.utils.get(guild.roles, name=role_name)
+            member = await _get_guild_member(guild, author_id)
+
+            if not role or not member:
+                # Role deleted, or member left the guild (which already stripped
+                # the role). Nothing to remove; stop reconsidering the rows.
+                database.mark_frenbot_access_swept(author_id, guild_id)
+                total_skipped += 1
+                continue
+
+            if role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="frenbot access expired")
+                    total_removed += 1
+                    logger.info(f"Removed expired frenbot access from {author_name} ({author_id}) in guild {guild_id}")
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    # Leave rows unswept so the next pass retries once the
+                    # permission or hierarchy problem is fixed.
+                    logger.error(
+                        f"Could not remove frenbot access role from {author_name} ({author_id}): {str(e)}"
+                    )
+                    continue
+            else:
+                total_skipped += 1
+
+            database.mark_frenbot_access_swept(author_id, guild_id)
+
+        if total_removed or total_skipped:
+            logger.info(
+                f"frenbot access expiry sweep complete: {total_removed} role(s) removed, {total_skipped} skipped"
+            )
+
+    except Exception as e:
+        logger.error(f"Error processing frenbot access expiries: {str(e)}", exc_info=True)
+
+
+@tasks.loop(minutes=1)
+async def frenbot_access_expiry_sweep():
+    """Scheduled task to expire frenbot access grants."""
+    await process_frenbot_access_expiries()
+
+
+@frenbot_access_expiry_sweep.before_loop
+async def before_frenbot_access_expiry_sweep():
+    """
+    Wait until the client is ready before the first sweep.
+
+    Deliberately unaligned to any wall clock: the first pass should run as soon
+    as the bot is up so grants that lapsed during downtime are caught on boot.
+    """
+    if not discord_client:
+        logger.error("Discord client not set. Cannot start before_frenbot_access_expiry_sweep.")
+        await asyncio.sleep(60)
+        return
+
+    try:
+        await discord_client.wait_until_ready()
+        logger.info("frenbot access expiry sweep starting (runs every minute)")
+    except Exception as e:
+        logger.error(f"Error in before_frenbot_access_expiry_sweep: {str(e)}", exc_info=True)
+        await asyncio.sleep(60)

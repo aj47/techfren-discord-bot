@@ -19,7 +19,7 @@ from rate_limiter import check_rate_limit, update_rate_limit_config  # Import ra
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_llm, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging  # Import summarization tasks
+from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep  # Import summarization tasks
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
 from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
@@ -1169,6 +1169,11 @@ async def on_ready():
     if not daily_role_color_charging.is_running():
         daily_role_color_charging.start()
         logger.info("Started daily role color charging task")
+
+    # Start the frenbot access expiry sweep if not already running
+    if not frenbot_access_expiry_sweep.is_running():
+        frenbot_access_expiry_sweep.start()
+        logger.info("Started frenbot access expiry sweep task")
 
     # Log details about each connected guild
     for guild in bot.guilds:
@@ -2849,6 +2854,200 @@ async def color_status_slash(interaction: discord.Interaction):
             "An error occurred while checking your status. Please try again later.",
             ephemeral=True
         )
+
+
+def _format_discord_timestamp(when: datetime, style: str = "R") -> str:
+    """
+    Render an aware datetime as a Discord timestamp markup string.
+
+    Discord renders these in each viewer's own timezone, so no local
+    formatting is needed. Style "R" is relative ("in 58 minutes"), "F" is a
+    full date and time.
+    """
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return f"<t:{int(when.timestamp())}:{style}>"
+
+
+@bot.tree.command(name="redeem-frenbot", description="Spend points for temporary frenbot access")
+@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.guild_id, i.user.id))
+async def redeem_frenbot_slash(interaction: discord.Interaction):
+    """
+    Slash command to buy timed frenbot access with points.
+
+    Redeeming while access is already active stacks the duration and charges
+    again. All responses are ephemeral.
+
+    Args:
+        interaction: The Discord interaction
+    """
+    try:
+        # Validate guild context
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+        user_name = interaction.user.name
+
+        cost = getattr(config, 'FRENBOT_ACCESS_COST', 25)
+        hours = getattr(config, 'FRENBOT_ACCESS_DURATION_HOURS', 1)
+        role_name = getattr(config, 'FRENBOT_ACCESS_ROLE_NAME', 'frenbot-access')
+        max_hours = getattr(config, 'FRENBOT_ACCESS_MAX_HOURS', 24)
+
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            member = interaction.guild.get_member(interaction.user.id)
+
+        if not member:
+            await interaction.response.send_message(
+                "Could not find you in this server.",
+                ephemeral=True
+            )
+            return
+
+        # The access role is created by an admin, not by the bot - it gates
+        # access to another bot, so silently creating it would be worse than
+        # refusing to grant.
+        role = discord.utils.get(interaction.guild.roles, name=role_name)
+        if not role:
+            await interaction.response.send_message(
+                f"The `{role_name}` role does not exist in this server yet. "
+                f"An admin needs to create it before frenbot access can be redeemed.",
+                ephemeral=True
+            )
+            return
+
+        # Check we can actually grant the role *before* charging anyone.
+        bot_member = interaction.guild.me
+        if not bot_member or not bot_member.guild_permissions.manage_roles:
+            await interaction.response.send_message(
+                "I do not have the Manage Roles permission, so I cannot grant frenbot access. "
+                "Please ask an admin to fix my permissions.",
+                ephemeral=True
+            )
+            return
+
+        if role.position >= bot_member.top_role.position:
+            await interaction.response.send_message(
+                f"The `{role_name}` role is above my highest role, so I cannot assign it. "
+                f"Please ask an admin to move it below my role.",
+                ephemeral=True
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        current_expiry = database.get_frenbot_access_expiry(user_id, guild_id)
+        has_active_access = bool(current_expiry and current_expiry > now)
+
+        # Stacking cap - keeps someone with a large balance from buying days of
+        # access in one burst.
+        if max_hours > 0 and has_active_access:
+            remaining = current_expiry - now
+            if remaining + timedelta(hours=hours) > timedelta(hours=max_hours):
+                await interaction.response.send_message(
+                    f"You already have close to the maximum {max_hours} hour(s) of frenbot access banked. "
+                    f"Your access expires {_format_discord_timestamp(current_expiry)} - "
+                    f"try again once it has run down.",
+                    ephemeral=True
+                )
+                return
+
+        # Friendly balance check. The authoritative check is the atomic
+        # deduction below.
+        current_points = database.get_user_points(user_id, guild_id)
+        if current_points < cost:
+            await interaction.response.send_message(
+                f"You need {cost} points to redeem frenbot access (you have {current_points}).",
+                ephemeral=True
+            )
+            return
+
+        # Role assignment can be slow enough to blow the 3s interaction window.
+        await interaction.response.defer(ephemeral=True)
+
+        # Atomic charge: this is what prevents concurrent redemptions from
+        # overdrafting the balance.
+        if not database.deduct_user_points(user_id, guild_id, cost):
+            remaining_points = database.get_user_points(user_id, guild_id)
+            await interaction.followup.send(
+                f"Failed to deduct points. You have {remaining_points} points.",
+                ephemeral=True
+            )
+            return
+
+        grant = database.record_frenbot_access_grant(
+            author_id=user_id,
+            author_name=user_name,
+            guild_id=guild_id,
+            points_spent=cost,
+            hours=hours
+        )
+
+        if not grant:
+            logger.error(
+                f"Charged {cost} points to {user_name} ({user_id}) in guild {guild_id} "
+                f"but failed to record the frenbot access grant"
+            )
+            await interaction.followup.send(
+                "Something went wrong recording your access and your points have already been charged. "
+                "Please contact an admin.",
+                ephemeral=True
+            )
+            return
+
+        expires_at = grant['expires_at']
+
+        try:
+            await member.add_roles(role, reason=f"frenbot access redeemed ({cost} points)")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            # The grant row stands, so the expiry sweep will still tidy up.
+            logger.error(
+                f"Charged {cost} points to {user_name} ({user_id}) but could not assign "
+                f"the {role_name} role: {str(e)}"
+            )
+            await interaction.followup.send(
+                f"Your points were charged but I could not assign the `{role_name}` role. "
+                f"Please contact an admin.",
+                ephemeral=True
+            )
+            return
+
+        remaining_points = database.get_user_points(user_id, guild_id)
+        verb = "Extended" if grant['stacked'] else "Redeemed"
+
+        await interaction.followup.send(
+            f"{verb}! frenbot access expires {_format_discord_timestamp(expires_at)} "
+            f"({_format_discord_timestamp(expires_at, 'F')}).\n"
+            f"Cost: {cost} point(s)\n"
+            f"Remaining points: {remaining_points}",
+            ephemeral=True
+        )
+
+        logger.info(
+            f"User {user_name} ({user_id}) redeemed frenbot access in guild {guild_id}: "
+            f"{cost} points, +{hours}h, expires {expires_at.isoformat()} (stacked={grant['stacked']})"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /redeem-frenbot command: {str(e)}", exc_info=True)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "An error occurred while redeeming frenbot access. Please try again later.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "An error occurred while redeeming frenbot access. Please try again later.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass
 
 
 try:

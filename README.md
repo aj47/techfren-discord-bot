@@ -159,6 +159,21 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 - `@botname <query>`: Sends your query to the configured AI model and returns the response. This command works in any channel and creates a thread attached to your message where the bot's response is posted. The mention can appear anywhere in your message (e.g., "Hey everyone, @botname can you help with this?").
 
+### Points Redemptions
+
+- `/redeem-frenbot`: Spends points for timed access to frenbot (the Hermes agent), granted via a Discord role
+  - Costs `FRENBOT_ACCESS_COST` points (default 25) per `FRENBOT_ACCESS_DURATION_HOURS` (default 1)
+  - Redeeming while access is already active **stacks** the duration and charges again
+  - Capped at `FRENBOT_ACCESS_MAX_HOURS` of banked access (default 24, `0` disables the cap)
+  - Rate limited to 1 use per 30 seconds per user per guild; all replies are ephemeral
+  - Confirms with a Discord relative timestamp, so users see "expires in 58 minutes"
+  - **The `frenbot-access` role must be created by an admin** and must sit *below* the bot's
+    highest role. The bot deliberately never creates it: it gates access to another bot, so
+    the command refuses rather than silently provisioning an access role. Both problems are
+    reported before any points are charged.
+  - A background task sweeps every minute and removes the role once access lapses, including
+    grants that expired while the bot was offline
+
 ### Channel Summarization
 
 - `/sum-day`: Summarizes all messages in the current channel for the current day
@@ -238,6 +253,29 @@ This comprehensive database structure allows for:
 - Debugging and troubleshooting
 
 The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages and summaries.
+
+### Frenbot Access Grants Table
+
+`frenbot_access_grants` is append-only: one row per `/redeem-frenbot` redemption, recording
+`points_spent`, `hours_granted`, `granted_at` and `expires_at`. This doubles as the purchase
+history - there is no separate spend ledger.
+
+There is deliberately no `active` column. Active access is `MAX(expires_at) > now`, which
+cannot drift out of sync with reality between sweeps; a stored flag could. The `swept` flag
+exists only so the expiry sweeper skips users it has already handled instead of re-calling
+the Discord API.
+
+Two behaviours worth knowing:
+
+- Stacking is computed as `max(now, MAX(expires_at)) + hours` inside a single
+  `BEGIN IMMEDIATE` transaction. Reading and writing in one transaction is what stops two
+  concurrent redemptions stacking onto the same base timestamp (charging 50 points for one
+  hour). Using `max(now, ...)` is what stops a lapsed-but-unswept grant being extended into
+  access that has already elapsed.
+- Redemptions do **not** write to `daily_point_awards`. That table is
+  `UNIQUE(author_id, guild_id, date)` and the nightly summarizer treats any row for a given
+  guild and date as "points already awarded today", so a spend row there would both break
+  stacking and silently cancel the next night's point awards for the entire guild.
 
 ### Database Migration
 

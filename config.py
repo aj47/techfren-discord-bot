@@ -235,6 +235,34 @@ try:
 except (ValueError, TypeError):
     GIF_BYPASS_POINTS_COST = 100  # Default to 100 if invalid value
 
+# Frenbot Access Configuration
+# Points charged per block of frenbot (Hermes agent) access sold by /redeem-frenbot
+try:
+    FRENBOT_ACCESS_COST = int(os.getenv('FRENBOT_ACCESS_COST', '25'))
+    if FRENBOT_ACCESS_COST < 1:
+        FRENBOT_ACCESS_COST = 1  # Minimum 1 point cost
+except (ValueError, TypeError):
+    FRENBOT_ACCESS_COST = 25  # Default to 25 if invalid value
+
+# Hours of access granted per redemption
+try:
+    FRENBOT_ACCESS_DURATION_HOURS = int(os.getenv('FRENBOT_ACCESS_DURATION_HOURS', '1'))
+    if FRENBOT_ACCESS_DURATION_HOURS < 1:
+        FRENBOT_ACCESS_DURATION_HOURS = 1  # Minimum 1 hour
+except (ValueError, TypeError):
+    FRENBOT_ACCESS_DURATION_HOURS = 1  # Default to 1 if invalid value
+
+# Name of the Discord role that gates frenbot access
+FRENBOT_ACCESS_ROLE_NAME = os.getenv('FRENBOT_ACCESS_ROLE_NAME', 'frenbot-access').strip() or 'frenbot-access'
+
+# Maximum hours of access a user may hold at once (stacking cap). 0 disables the cap.
+try:
+    FRENBOT_ACCESS_MAX_HOURS = int(os.getenv('FRENBOT_ACCESS_MAX_HOURS', '24'))
+    if FRENBOT_ACCESS_MAX_HOURS < 0:
+        FRENBOT_ACCESS_MAX_HOURS = 0  # Treat negative as "no cap"
+except (ValueError, TypeError):
+    FRENBOT_ACCESS_MAX_HOURS = 24  # Default to 24 if invalid value
+
 # Available colors for role customization
 # Format: {color_name: hex_value}
 # Each color has a light and dark variant

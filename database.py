@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS role_color_free_changes (
 );
 """
 
+CREATE_FRENBOT_ACCESS_GRANTS_TABLE = """
+CREATE TABLE IF NOT EXISTS frenbot_access_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    points_spent INTEGER NOT NULL,
+    hours_granted INTEGER NOT NULL,
+    granted_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    swept INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -126,6 +140,8 @@ CREATE_INDEX_DAILY_AWARDS_DATE = "CREATE INDEX IF NOT EXISTS idx_daily_awards_da
 CREATE_INDEX_DAILY_AWARDS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_daily_awards_author_id ON daily_point_awards (author_id);"
 CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_author_id ON user_role_colors (author_id);"
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
+CREATE_INDEX_FRENBOT_GRANTS_USER = "CREATE INDEX IF NOT EXISTS idx_frenbot_grants_user ON frenbot_access_grants (guild_id, author_id);"
+CREATE_INDEX_FRENBOT_GRANTS_EXPIRES = "CREATE INDEX IF NOT EXISTS idx_frenbot_grants_expires ON frenbot_access_grants (expires_at);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
 INSERT_MESSAGE = """
@@ -175,6 +191,9 @@ def migrate_database() -> None:
             # CREATE INDEX IF NOT EXISTS is idempotent, so this is safe to run always
             cursor.execute(CREATE_INDEX_REPLY_TO)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
+            cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
+            cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
+            cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
 
             # Ensure free_change_started_at column exists on user_role_colors
             cursor.execute("PRAGMA table_info(user_role_colors)")
@@ -218,6 +237,7 @@ def init_database() -> None:
             cursor.execute(CREATE_DAILY_POINT_AWARDS_TABLE)
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
+            cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -241,6 +261,10 @@ def init_database() -> None:
             # Create indexes for user_role_colors table
             cursor.execute(CREATE_INDEX_ROLE_COLORS_AUTHOR)
             cursor.execute(CREATE_INDEX_ROLE_COLORS_GUILD)
+
+            # Create indexes for frenbot_access_grants table
+            cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
+            cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -2248,3 +2272,224 @@ def get_all_guilds_with_role_colors() -> List[str]:
     except Exception as e:
         logger.error(f"Error getting guilds with role colors: {str(e)}", exc_info=True)
         return []
+
+
+# ---------------------------------------------------------------------------
+# frenbot access grants
+#
+# Append-only: one row per redemption. There is no "active" column because
+# active access is simply MAX(expires_at) > now, which cannot go stale between
+# sweeper passes. The `swept` flag exists only so the expiry sweeper does not
+# re-hit the Discord API for users it has already handled.
+# ---------------------------------------------------------------------------
+
+def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
+    """
+    Parse a stored ISO timestamp as an aware UTC datetime.
+
+    Rows written by this module are aware UTC, but older/naive values are
+    treated as UTC rather than local time (mirrors the role color parsing).
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def get_frenbot_access_expiry(author_id: str, guild_id: str) -> Optional[datetime]:
+    """
+    Get the furthest-out expiry for a user's frenbot access.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+
+    Returns:
+        Aware UTC datetime of the latest expiry, or None if the user has never
+        redeemed. May be in the past (expired).
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT MAX(expires_at) AS max_expires
+                FROM frenbot_access_grants
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (author_id, guild_id)
+            )
+            row = cursor.fetchone()
+            return _parse_utc_timestamp(row['max_expires']) if row else None
+    except Exception as e:
+        logger.error(f"Error getting frenbot access expiry for {author_id}: {str(e)}", exc_info=True)
+        return None
+
+
+def record_frenbot_access_grant(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    points_spent: int,
+    hours: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Record a frenbot access redemption, stacking onto any active grant.
+
+    The read of the current expiry and the insert happen inside a single
+    BEGIN IMMEDIATE transaction so two concurrent redemptions cannot both
+    stack onto the same base timestamp (lost update).
+
+    New expiry = max(now, current_max_expiry) + hours. An expired grant that
+    the sweeper has not yet processed correctly stacks from `now`, not from
+    the stale past expiry.
+
+    Args:
+        author_id: The Discord user ID
+        author_name: The username
+        guild_id: The Discord guild ID
+        points_spent: Points charged for this redemption (recorded as positive)
+        hours: Hours of access granted
+
+    Returns:
+        Dict with 'expires_at' (aware UTC datetime) and 'stacked' (bool), or
+        None on failure.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+
+        conn = get_connection()
+        try:
+            # BEGIN IMMEDIATE takes the write lock up front so the SELECT below
+            # cannot be interleaved with another redemption's INSERT.
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT MAX(expires_at) AS max_expires
+                FROM frenbot_access_grants
+                WHERE author_id = ? AND guild_id = ?
+                """,
+                (author_id, guild_id)
+            )
+            row = cursor.fetchone()
+            current_expiry = _parse_utc_timestamp(row['max_expires']) if row else None
+
+            stacked = bool(current_expiry and current_expiry > now)
+            base = current_expiry if stacked else now
+            new_expiry = base + timedelta(hours=hours)
+
+            cursor.execute(
+                """
+                INSERT INTO frenbot_access_grants (
+                    author_id, author_name, guild_id, points_spent,
+                    hours_granted, granted_at, expires_at, swept
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    author_id,
+                    author_name,
+                    guild_id,
+                    points_spent,
+                    hours,
+                    now.isoformat(),
+                    new_expiry.isoformat(),
+                )
+            )
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        logger.info(
+            f"Recorded frenbot access grant for {author_name} ({author_id}) in guild {guild_id}: "
+            f"{points_spent} points, +{hours}h, expires {new_expiry.isoformat()} (stacked={stacked})"
+        )
+        return {'expires_at': new_expiry, 'stacked': stacked}
+    except Exception as e:
+        logger.error(f"Error recording frenbot access grant for {author_id}: {str(e)}", exc_info=True)
+        return None
+
+
+def get_expired_frenbot_access_users() -> List[Dict[str, str]]:
+    """
+    Get users whose frenbot access has lapsed and not yet been swept.
+
+    A user is returned only when every one of their grants has expired, so
+    stacked access is never revoked early.
+
+    Returns:
+        List of dicts with 'author_id', 'author_name' and 'guild_id'.
+    """
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT guild_id, author_id, MAX(author_name) AS author_name
+                FROM frenbot_access_grants
+                WHERE swept = 0
+                GROUP BY guild_id, author_id
+                HAVING MAX(expires_at) <= ?
+                """,
+                (now_iso,)
+            )
+            return [
+                {
+                    'guild_id': row['guild_id'],
+                    'author_id': row['author_id'],
+                    'author_name': row['author_name'],
+                }
+                for row in cursor.fetchall()
+            ]
+    except Exception as e:
+        logger.error(f"Error getting expired frenbot access users: {str(e)}", exc_info=True)
+        return []
+
+
+def mark_frenbot_access_swept(author_id: str, guild_id: str) -> bool:
+    """
+    Mark a user's expired frenbot grants as swept.
+
+    Only rows that have actually expired are marked, so a redemption landing
+    mid-sweep is not silently discarded.
+
+    Args:
+        author_id: The Discord user ID
+        guild_id: The Discord guild ID
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE frenbot_access_grants
+                SET swept = 1
+                WHERE author_id = ? AND guild_id = ? AND swept = 0 AND expires_at <= ?
+                """,
+                (author_id, guild_id, now_iso)
+            )
+            rows_affected = cursor.rowcount
+            conn.commit()
+
+        logger.debug(f"Marked {rows_affected} frenbot grant row(s) swept for {author_id} in guild {guild_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error marking frenbot access swept for {author_id}: {str(e)}", exc_info=True)
+        return False
