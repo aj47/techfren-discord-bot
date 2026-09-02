@@ -53,26 +53,53 @@ class TestRewriteXUrl:
 
     def test_replaces_host_and_keeps_path(self):
         assert rewrite_x_url("https://x.com/cline/status/1925002086405832987") == \
-            "https://fixupx.com/cline/status/1925002086405832987"
+            "https://fixupx.com/cline/status/1925002086405832987/en"
 
     def test_rewrites_twitter_com(self):
         assert rewrite_x_url("https://twitter.com/user/status/123") == \
-            "https://fixupx.com/user/status/123"
+            "https://fixupx.com/user/status/123/en"
 
     def test_preserves_query_and_fragment(self):
+        # The language segment has to precede the query string to take effect
         assert rewrite_x_url("https://x.com/user/status/123?s=20&t=abc#frag") == \
-            "https://fixupx.com/user/status/123?s=20&t=abc#frag"
+            "https://fixupx.com/user/status/123/en?s=20&t=abc#frag"
 
     def test_upgrades_http_to_https(self):
         assert rewrite_x_url("http://x.com/user/status/123") == \
-            "https://fixupx.com/user/status/123"
+            "https://fixupx.com/user/status/123/en"
 
     def test_custom_domain(self):
         assert rewrite_x_url("https://x.com/user/status/123", rewrite_domain="vxtwitter.com") == \
-            "https://vxtwitter.com/user/status/123"
+            "https://vxtwitter.com/user/status/123/en"
 
     def test_returns_none_for_other_urls(self):
         assert rewrite_x_url("https://example.com/page") is None
+
+    def test_language_is_last_path_segment_not_a_param(self):
+        rewritten = rewrite_x_url("https://x.com/user/status/123?s=20")
+        # The mirror ignores the language when it lands after the query string
+        assert rewritten == "https://fixupx.com/user/status/123/en?s=20"
+        assert rewritten.index("/en") < rewritten.index("?")
+
+    def test_trailing_slash_does_not_double_up(self):
+        assert rewrite_x_url("https://x.com/user/status/123/") == \
+            "https://fixupx.com/user/status/123/en"
+
+    def test_custom_language(self):
+        assert rewrite_x_url("https://x.com/user/status/123", language="ja") == \
+            "https://fixupx.com/user/status/123/ja"
+
+    def test_language_can_be_disabled(self):
+        assert rewrite_x_url("https://x.com/user/status/123", language="") == \
+            "https://fixupx.com/user/status/123"
+
+    @pytest.mark.parametrize("url,expected", [
+        # No translation route for a profile or a media sub-path - leave them bare
+        ("https://x.com/someprofile", "https://fixupx.com/someprofile"),
+        ("https://x.com/user/status/123/photo/1", "https://fixupx.com/user/status/123/photo/1"),
+    ])
+    def test_language_only_applied_to_tweet_permalinks(self, url, expected):
+        assert rewrite_x_url(url) == expected
 
 
 class TestFindXLinkRewrites:
@@ -80,7 +107,7 @@ class TestFindXLinkRewrites:
 
     def test_finds_link_in_sentence(self):
         rewrites = find_x_link_rewrites("check this out https://x.com/user/status/123 lol")
-        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123")]
+        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123/en")]
 
     def test_empty_content(self):
         assert find_x_link_rewrites("") == []
@@ -90,8 +117,8 @@ class TestFindXLinkRewrites:
         content = "https://x.com/a/status/1 and https://twitter.com/b/status/2"
         rewrites = find_x_link_rewrites(content)
         assert [new for _, new in rewrites] == [
-            "https://fixupx.com/a/status/1",
-            "https://fixupx.com/b/status/2",
+            "https://fixupx.com/a/status/1/en",
+            "https://fixupx.com/b/status/2/en",
         ]
 
     def test_deduplicates_repeated_links(self):
@@ -113,7 +140,7 @@ class TestFindXLinkRewrites:
     def test_finds_link_outside_code_block(self):
         content = "```\nhttps://x.com/a/status/1\n```\nhttps://x.com/b/status/2"
         rewrites = find_x_link_rewrites(content)
-        assert [new for _, new in rewrites] == ["https://fixupx.com/b/status/2"]
+        assert [new for _, new in rewrites] == ["https://fixupx.com/b/status/2/en"]
 
     def test_respects_angle_bracket_embed_suppression(self):
         content = "quiet one <https://x.com/user/status/123>"
@@ -121,19 +148,20 @@ class TestFindXLinkRewrites:
 
     def test_strips_trailing_punctuation(self):
         rewrites = find_x_link_rewrites("look at https://x.com/user/status/123.")
-        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123")]
+        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123/en")]
 
     def test_strips_markdown_paren(self):
         rewrites = find_x_link_rewrites("[post](https://x.com/user/status/123)")
-        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123")]
+        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123/en")]
 
     def test_ignores_already_fixed_links(self):
         assert find_x_link_rewrites("https://fixupx.com/user/status/123") == []
+        assert find_x_link_rewrites("https://fixupx.com/user/status/123/en") == []
 
     def test_mixed_link_types(self):
         content = "https://youtube.com/watch?v=abc https://x.com/user/status/123"
         rewrites = find_x_link_rewrites(content)
-        assert [new for _, new in rewrites] == ["https://fixupx.com/user/status/123"]
+        assert [new for _, new in rewrites] == ["https://fixupx.com/user/status/123/en"]
 
 
 class TestBuildRewriteNotice:
@@ -182,25 +210,25 @@ class TestRewriteContentLinks:
 
     def test_replaces_link_in_place(self):
         content, rewrites = rewrite_content_links("check this https://x.com/u/status/1 out")
-        assert content == "check this https://fixupx.com/u/status/1 out"
-        assert rewrites == [("https://x.com/u/status/1", "https://fixupx.com/u/status/1")]
+        assert content == "check this https://fixupx.com/u/status/1/en out"
+        assert rewrites == [("https://x.com/u/status/1", "https://fixupx.com/u/status/1/en")]
 
     def test_leaves_other_text_and_links_untouched(self):
         original = "https://example.com/a and https://x.com/u/status/1 plus **bold**"
         content, _ = rewrite_content_links(original)
-        assert content == "https://example.com/a and https://fixupx.com/u/status/1 plus **bold**"
+        assert content == "https://example.com/a and https://fixupx.com/u/status/1/en plus **bold**"
 
     def test_replaces_every_occurrence_of_repeated_link(self):
         original = "https://x.com/u/status/1 twice https://x.com/u/status/1"
         content, rewrites = rewrite_content_links(original)
         # Deduplicated in the rewrite list, but both spans are still swapped
-        assert content.count("https://fixupx.com/u/status/1") == 1
+        assert content.count("https://fixupx.com/u/status/1/en") == 1
         assert "https://x.com/u/status/1" in content
         assert len(rewrites) == 1
 
     def test_keeps_trailing_punctuation(self):
         content, _ = rewrite_content_links("look at https://x.com/u/status/1!")
-        assert content == "look at https://fixupx.com/u/status/1!"
+        assert content == "look at https://fixupx.com/u/status/1/en!"
 
     def test_skips_code_blocks(self):
         original = "`https://x.com/u/status/1`"
@@ -229,7 +257,7 @@ class TestRewriteContentLinks:
 
     def test_uses_custom_domain(self):
         content, _ = rewrite_content_links("https://x.com/u/status/1", rewrite_domain="vxtwitter.com")
-        assert content == "https://vxtwitter.com/u/status/1"
+        assert content == "https://vxtwitter.com/u/status/1/en"
 
 
 class TestNormalizeXUrl:
@@ -246,6 +274,16 @@ class TestNormalizeXUrl:
 
     def test_preserves_query(self):
         assert normalize_x_url("https://fixupx.com/u/status/1?s=20") == "https://x.com/u/status/1?s=20"
+
+    @pytest.mark.parametrize("url,expected", [
+        ("https://fixupx.com/u/status/1/en", "https://x.com/u/status/1"),
+        ("https://fixupx.com/u/status/1/ja", "https://x.com/u/status/1"),
+        ("https://fixupx.com/u/status/1/en?s=20", "https://x.com/u/status/1?s=20"),
+        # Not a language segment - a media sub-path has to survive
+        ("https://fixupx.com/u/status/1/photo/1", "https://x.com/u/status/1/photo/1"),
+    ])
+    def test_strips_language_segment(self, url, expected):
+        assert normalize_x_url(url) == expected
 
     @pytest.mark.parametrize("url", [
         "https://x.com/u/status/1",
@@ -573,7 +611,7 @@ class TestRepostMode:
 
         message.channel.send.assert_awaited_once()
         content = message.channel.send.await_args.args[0]
-        assert content == "🔗 **techfren** posted:\nlook at this https://fixupx.com/user/status/123 wild"
+        assert content == "🔗 **techfren** posted:\nlook at this https://fixupx.com/user/status/123/en wild"
         message.delete.assert_awaited_once()
         message.create_thread.assert_not_awaited()
         message.reply.assert_not_awaited()

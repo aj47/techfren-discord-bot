@@ -904,6 +904,7 @@ async def _repost_with_fixed_links(message: discord.Message, author_display_name
         message.content,
         rewrite_domain=getattr(config, 'X_LINK_REWRITE_DOMAIN', 'fixupx.com'),
         max_links=getattr(config, 'X_LINK_REWRITE_MAX_LINKS', 5),
+        language=getattr(config, 'X_LINK_REWRITE_LANGUAGE', 'en'),
     )
     if not rewrites:
         return False
@@ -1002,6 +1003,7 @@ async def handle_x_link_rewrite(message: discord.Message) -> None:
             message.content,
             rewrite_domain=getattr(config, 'X_LINK_REWRITE_DOMAIN', 'fixupx.com'),
             max_links=getattr(config, 'X_LINK_REWRITE_MAX_LINKS', 5),
+            language=getattr(config, 'X_LINK_REWRITE_LANGUAGE', 'en'),
         )
         if not rewrites:
             return

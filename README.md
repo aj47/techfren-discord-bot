@@ -89,14 +89,16 @@ A simple Discord bot built with discord.py.
 
 Discord's embeds for x.com posts are unreliable (no video, no images, often no text).
 When someone posts an x.com/twitter.com link, the bot serves that link through an
-embed-friendly mirror (fixupx.com by default), which Discord renders properly.
+embed-friendly mirror (fixupx.com by default), which Discord renders properly. Tweet
+links get a language segment appended (`/en`) so the embed always reads in English,
+whatever the poster's locale.
 
 By default (`repost` mode) the bot reposts the message as its own and deletes the
 original, so the channel shows one clean, working post:
 
 ```
 🔗 techfren posted:
-check this out https://fixupx.com/cline/status/1925002086405832987
+check this out https://fixupx.com/cline/status/1925002086405832987/en
 ```
 
 The text is reproduced verbatim apart from the swapped links, attachments are
@@ -117,6 +119,7 @@ Configuration (all optional, in `.env`):
 |----------|---------|-------------|
 | `X_LINK_REWRITE_MODE` | `repost` | `repost` reposts the message under the bot with fixed links and deletes the original, `thread` posts the fixed link in a thread on the original message, `reply` posts it as an in-channel reply, `off` disables the feature |
 | `X_LINK_REWRITE_DOMAIN` | `fixupx.com` | Mirror domain to use (e.g. `fxtwitter.com`, `vxtwitter.com`) |
+| `X_LINK_REWRITE_LANGUAGE` | `en` | Language the mirror renders tweets in, appended as the last path segment. Empty string keeps the poster's original language |
 | `X_LINK_REWRITE_MAX_LINKS` | `5` | Maximum links rewritten per message |
 | `X_LINK_REWRITE_THREAD_DELAY_SECONDS` | `2` | Seconds to wait before creating the thread. Creating it the instant the message arrives races Discord's own processing and glitches the thread. `0` disables the delay |
 | `X_LINK_SUPPRESS_ORIGINAL_EMBED` | `false` | Hide the original (broken) X embed after posting the fixed one (`thread`/`reply` only). Requires the Manage Messages permission; the message text is left untouched |
@@ -134,6 +137,9 @@ Notes:
 - Links inside code blocks/inline code, and links the author wrapped in
   `<angle brackets>` to suppress embeds, are left alone.
 - Links that already use a mirror (fixupx, fxtwitter, vxtwitter) are not touched.
+- The language segment has to be the last path segment, before any query string
+  (`.../status/123/en?s=20`) - the mirror ignores it after the parameters. Profile
+  links and media sub-paths (`/photo/1`) have no translation route, so they stay bare.
 
 ## Discord Developer Portal Setup
 

@@ -102,8 +102,8 @@ links_dump_channel_id = os.getenv('LINKS_DUMP_CHANNEL_ID')
 
 # X/Twitter Link Rewriting Configuration (optional)
 # Environment variables: X_LINK_REWRITE_MODE, X_LINK_REWRITE_DOMAIN,
-#                        X_LINK_REWRITE_MAX_LINKS, X_LINK_SUPPRESS_ORIGINAL_EMBED,
-#                        X_LINK_REPOST_MAX_ATTACHMENTS
+#                        X_LINK_REWRITE_LANGUAGE, X_LINK_REWRITE_MAX_LINKS,
+#                        X_LINK_SUPPRESS_ORIGINAL_EMBED, X_LINK_REPOST_MAX_ATTACHMENTS
 #
 # When someone posts an x.com/twitter.com link, the bot serves the same link on an
 # embed-friendly mirror (fixupx.com by default). The author's stored message row
@@ -131,6 +131,11 @@ except (ValueError, TypeError):
 
 # Mirror domain used for the rewritten links (e.g. fixupx.com, fxtwitter.com, vxtwitter.com)
 X_LINK_REWRITE_DOMAIN = os.getenv('X_LINK_REWRITE_DOMAIN', 'fixupx.com').strip() or 'fixupx.com'
+
+# Language the mirror renders tweets in, appended as the last path segment
+# (https://fixupx.com/user/status/123/en). Set to an empty string to keep the
+# poster's original language.
+X_LINK_REWRITE_LANGUAGE = os.getenv('X_LINK_REWRITE_LANGUAGE', 'en').strip()
 
 # Maximum number of links rewritten per message (keeps the bot reply short)
 try:
