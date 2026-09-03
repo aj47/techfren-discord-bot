@@ -122,9 +122,9 @@ async def test_push_leaderboard_mirrors_bot_points():
     b.guild_id = 99
     fake_db = MagicMock()
     fake_db.get_leaderboard.return_value = [
-        {"author_id": 7, "author_name": "peas", "total_points": 255},
-        {"author_id": 8, "author_name": "techfren", "total_points": 253},
-        {"author_id": 9, "author_name": "lurker", "total_points": 0},
+        {"author_id": 7, "author_name": "peas", "total_points": 255, "lifetime_points": 340},
+        {"author_id": 8, "author_name": "techfren", "total_points": 253, "lifetime_points": 253},
+        {"author_id": 9, "author_name": "lurker", "total_points": 0, "lifetime_points": 0},
     ]
     with patch.dict("sys.modules", {"database": fake_db}):
         await b.push_leaderboard()
@@ -134,8 +134,48 @@ async def test_push_leaderboard_mirrors_bot_points():
     assert event["type"] == "leaderboard.sync"
     assert event["complete"] is True
     assert event["rows"] == [
-        {"discordUserId": "7", "name": "peas", "points": 255},
-        {"discordUserId": "8", "name": "techfren", "points": 253},
+        {"discordUserId": "7", "name": "peas", "points": 255, "lifetimePoints": 340},
+        {"discordUserId": "8", "name": "techfren", "points": 253, "lifetimePoints": 253},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_keeps_a_member_who_spent_everything():
+    """A zero balance after spending is not the same as never having earned:
+    dropping that member would erase the mirror's only record of it."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.return_value = [
+        {"author_id": 7, "author_name": "peas", "total_points": 10, "lifetime_points": 10},
+        {"author_id": 8, "author_name": "spender", "total_points": 0, "lifetime_points": 96},
+        {"author_id": 9, "author_name": "lurker", "total_points": 0, "lifetime_points": 0},
+    ]
+    with patch.dict("sys.modules", {"database": fake_db}):
+        await b.push_leaderboard()
+
+    rows = b._queue.get_nowait()["rows"]
+    assert rows == [
+        {"discordUserId": "7", "name": "peas", "points": 10, "lifetimePoints": 10},
+        {"discordUserId": "8", "name": "spender", "points": 0, "lifetimePoints": 96},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_leaderboard_survives_a_bot_without_the_lifetime_column():
+    """Rows read before the migration have no lifetime_points; the balance is
+    the floor, never a zero that would read as "earned nothing"."""
+    b = _make_bridge()
+    b.guild_id = 99
+    fake_db = MagicMock()
+    fake_db.get_leaderboard.return_value = [
+        {"author_id": 7, "author_name": "peas", "total_points": 42},
+    ]
+    with patch.dict("sys.modules", {"database": fake_db}):
+        await b.push_leaderboard()
+
+    assert b._queue.get_nowait()["rows"] == [
+        {"discordUserId": "7", "name": "peas", "points": 42, "lifetimePoints": 42},
     ]
 
 

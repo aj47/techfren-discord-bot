@@ -242,12 +242,17 @@ class Bridge:
                 complete = False
             for entry in entries:
                 points = int(entry.get("total_points") or 0)
-                if points <= 0:
+                lifetime = max(int(entry.get("lifetime_points") or 0), points)
+                # Someone who earned points and then spent them all still belongs
+                # on the board: dropping them on a zero balance would erase the
+                # only record the web app has that they earned anything.
+                if points <= 0 and lifetime <= 0:
                     continue
                 rows.append({
                     "discordUserId": str(entry["author_id"]),
                     "name": entry.get("author_name") or "member",
                     "points": points,
+                    "lifetimePoints": lifetime,
                 })
         rows.sort(key=lambda r: r["points"], reverse=True)
         return rows, complete
