@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS user_points (
     author_name TEXT NOT NULL,
     guild_id TEXT NOT NULL,
     total_points INTEGER DEFAULT 0,
+    lifetime_points INTEGER NOT NULL DEFAULT 0,
     last_updated TIMESTAMP NOT NULL,
     UNIQUE(author_id, guild_id)
 );
@@ -203,6 +204,43 @@ def migrate_database() -> None:
                 cursor.execute("ALTER TABLE user_role_colors ADD COLUMN free_change_started_at TIMESTAMP")
                 conn.commit()
                 logger.info("Successfully added free_change_started_at column")
+
+            # total_points is a wallet: colours, GIF bypasses, frenbot access and
+            # /ask-fred all spend it, so it stops being an answer to "how much has
+            # this member earned". lifetime_points only ever goes up.
+            #
+            # The backfill reads daily_point_awards, which has recorded every
+            # award since the first one, and floors the result at the current
+            # balance so nobody can come out of the migration with less than they
+            # are holding.
+            cursor.execute("PRAGMA table_info(user_points)")
+            user_points_columns = [column[1] for column in cursor.fetchall()]
+            if 'lifetime_points' not in user_points_columns:
+                logger.info("Adding lifetime_points column to user_points table")
+                cursor.execute(
+                    "ALTER TABLE user_points ADD COLUMN lifetime_points INTEGER NOT NULL DEFAULT 0"
+                )
+                cursor.execute(
+                    """
+                    UPDATE user_points
+                    SET lifetime_points = MAX(
+                        total_points,
+                        COALESCE((
+                            SELECT SUM(points_awarded)
+                            FROM daily_point_awards d
+                            WHERE d.author_id = user_points.author_id
+                              AND d.guild_id = user_points.guild_id
+                        ), 0)
+                    )
+                    """
+                )
+                backfilled = cursor.rowcount
+                conn.commit()
+                logger.info(
+                    "Successfully added lifetime_points column and backfilled %d members "
+                    "from the daily award history",
+                    backfilled,
+                )
 
             conn.commit()
             logger.debug("Ensured migration tables/indexes exist")
@@ -1102,16 +1140,20 @@ def award_points_to_user(
     author_id: str,
     author_name: str,
     guild_id: str,
-    points: int
+    points: int,
+    counts_as_earned: bool = True
 ) -> bool:
     """
-    Award points to a user, updating their total points.
+    Award points to a user, updating their balance and their lifetime total.
 
     Args:
         author_id (str): The Discord user ID
         author_name (str): The username
         guild_id (str): The Discord guild ID
         points (int): Number of points to award (must be 1-20)
+        counts_as_earned (bool): Whether this credit is something the member
+            earned. False for a refund — giving back points the member already
+            earned once must not count them twice in lifetime_points.
 
     Returns:
         bool: True if successful, False otherwise
@@ -1135,13 +1177,19 @@ def award_points_to_user(
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Insert or update user points
+            # Insert or update user points. total_points is the spendable
+            # balance; lifetime_points is the running total of everything ever
+            # earned and is never reduced, so it survives the member spending it.
+            earned = points if counts_as_earned else 0
             cursor.execute(
                 """
-                INSERT INTO user_points (author_id, author_name, guild_id, total_points, last_updated)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO user_points (
+                    author_id, author_name, guild_id, total_points, lifetime_points, last_updated
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(author_id, guild_id) DO UPDATE SET
                     total_points = total_points + ?,
+                    lifetime_points = lifetime_points + ?,
                     author_name = ?,
                     last_updated = ?
                 """,
@@ -1150,8 +1198,10 @@ def award_points_to_user(
                     author_name,
                     guild_id,
                     points,
+                    earned,
                     datetime.now().isoformat(),
                     points,
+                    earned,
                     author_name,
                     datetime.now().isoformat()
                 )
@@ -1159,7 +1209,10 @@ def award_points_to_user(
 
             conn.commit()
 
-        logger.info(f"Awarded {points} points to user {author_name} ({author_id}) in guild {guild_id}")
+        if counts_as_earned:
+            logger.info(f"Awarded {points} points to user {author_name} ({author_id}) in guild {guild_id}")
+        else:
+            logger.info(f"Refunded {points} points to user {author_name} ({author_id}) in guild {guild_id}")
         return True
     except Exception as e:
         logger.error(f"Error awarding points to user {author_id}: {str(e)}", exc_info=True)
@@ -1193,6 +1246,42 @@ def get_user_points(author_id: str, guild_id: str) -> int:
         logger.error(f"Error getting points for user {author_id}: {str(e)}", exc_info=True)
         return 0
 
+def get_user_points_summary(author_id: str, guild_id: str) -> Dict[str, int]:
+    """
+    Get a user's spendable balance alongside everything they have ever earned.
+
+    `points` is what they can spend now; `lifetime_points` is what they have
+    earned in total, which spending never reduces; `spent` is the difference.
+
+    Args:
+        author_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        Dict[str, int]: {'points', 'lifetime_points', 'spent'}, all zero for an
+        unknown user.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT total_points, lifetime_points FROM user_points WHERE author_id = ? AND guild_id = ?",
+                (author_id, guild_id)
+            )
+
+            row = cursor.fetchone()
+            if not row:
+                return {'points': 0, 'lifetime_points': 0, 'spent': 0}
+            points = row['total_points'] or 0
+            # A balance above the lifetime total would mean the counter missed an
+            # award; report the balance rather than a "spent" figure below zero.
+            lifetime = max(row['lifetime_points'] or 0, points)
+            return {'points': points, 'lifetime_points': lifetime, 'spent': lifetime - points}
+    except Exception as e:
+        logger.error(f"Error getting point summary for user {author_id}: {str(e)}", exc_info=True)
+        return {'points': 0, 'lifetime_points': 0, 'spent': 0}
+
 def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
     Get the top users by points in a guild.
@@ -1208,9 +1297,12 @@ def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         with get_connection() as conn:
             cursor = conn.cursor()
 
+            # Ranked on the spendable balance, as it always has been, but each
+            # row also carries what that member has earned in total so a reader
+            # can tell a quiet member from one who has spent their points.
             cursor.execute(
                 """
-                SELECT author_id, author_name, total_points, last_updated
+                SELECT author_id, author_name, total_points, lifetime_points, last_updated
                 FROM user_points
                 WHERE guild_id = ?
                 ORDER BY total_points DESC
@@ -1221,10 +1313,13 @@ def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
 
             leaderboard = []
             for row in cursor.fetchall():
+                total_points = row['total_points'] or 0
+                lifetime_points = max(row['lifetime_points'] or 0, total_points)
                 leaderboard.append({
                     'author_id': row['author_id'],
                     'author_name': row['author_name'],
-                    'total_points': row['total_points'],
+                    'total_points': total_points,
+                    'lifetime_points': lifetime_points,
                     'last_updated': row['last_updated']
                 })
 

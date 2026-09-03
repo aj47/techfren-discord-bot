@@ -1950,7 +1950,8 @@ async def points_slash(interaction: discord.Interaction, user: discord.User = No
         user_id = str(target_user.id)
 
         # Get points from database
-        points = database.get_user_points(user_id, guild_id)
+        summary = database.get_user_points_summary(user_id, guild_id)
+        points = summary['points']
 
         # Format response
         if target_user.id == interaction.user.id:
@@ -1958,8 +1959,19 @@ async def points_slash(interaction: discord.Interaction, user: discord.User = No
         else:
             message = f"🏆 **{target_user.display_name}'s Points**: {points}"
 
+        # Spending points shouldn't erase the record of having earned them, so
+        # the all-time total is shown whenever any have been spent.
+        if summary['spent'] > 0:
+            message += (
+                f"\n📈 Earned all-time: **{summary['lifetime_points']}** "
+                f"({summary['spent']} spent)"
+            )
+
         await interaction.response.send_message(message, ephemeral=True)
-        logger.info(f"User {interaction.user.name} checked points for {target_user.name}: {points}")
+        logger.info(
+            f"User {interaction.user.name} checked points for {target_user.name}: "
+            f"{points} (lifetime {summary['lifetime_points']})"
+        )
 
     except Exception as e:
         logger.error(f"Error in /points command: {str(e)}", exc_info=True)
@@ -2104,7 +2116,9 @@ async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
             else:
                 medal = f"{idx}."
 
-            message += f"{medal} **{author_name}**: {total_points} points\n"
+            lifetime_points = entry.get('lifetime_points', total_points)
+            earned = f" · {lifetime_points} all-time" if lifetime_points > total_points else ""
+            message += f"{medal} **{author_name}**: {total_points} points{earned}\n"
 
         await interaction.response.send_message(message, ephemeral=False)
         logger.info(f"User {interaction.user.name} requested leaderboard (top {limit})")
@@ -2596,7 +2610,9 @@ async def color_set_slash(interaction: discord.Interaction, color: str):
             # Rollback - remove role and refund points if DB write failed
             await member.remove_roles(role, reason="Database write failed - rollback")
             if points_to_charge_now > 0:
-                database.award_points_to_user(user_id, user_name, guild_id, points_to_charge_now)
+                database.award_points_to_user(
+                    user_id, user_name, guild_id, points_to_charge_now, counts_as_earned=False
+                )
             if free_change_used:
                 database.rollback_free_role_color_change(user_id, guild_id, free_change_prev_ts)
             await interaction.followup.send(
