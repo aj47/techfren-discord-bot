@@ -188,6 +188,18 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
         mock_update.assert_called_once()
         mock_deduct.assert_not_called()
 
+    def test_empty_summary_counts_as_a_generation_failure(self):
+        # An empty completion once got stored as a whole day's summary, could
+        # not be posted to Discord, and left the site showing a stale day.
+        for value in ("", "   ", "\n\n", None, 123):
+            with self.subTest(value=value):
+                self.assertTrue(summarization_tasks._is_summary_generation_failure(value))
+
+    def test_real_summary_is_not_a_generation_failure(self):
+        self.assertFalse(
+            summarization_tasks._is_summary_generation_failure("## Highlights\n- something happened")
+        )
+
     def _message(self, message_id, author_name, content, is_bot=False, is_command=False):
         return {
             "id": message_id,
