@@ -21,6 +21,19 @@ openrouter_client = AsyncOpenAI(
 
 llm_client = openrouter_client
 
+# The daily summary is generated with reasoning turned off. `cheapseek` is a
+# reasoning model and its hidden thinking tokens come out of the same budget as
+# the visible answer: on 2026-09-03 (716 messages, a 60k-character prompt) it
+# spent the entire 2500-token allowance thinking and returned
+# finish_reason="length" with no content at all. Simply raising the budget
+# traded that for a 60s client timeout — the model just thought for longer. The
+# summary is a formatting job over messages that are already there, so the
+# reasoning buys nothing worth this failure mode.
+DAILY_SUMMARY_MAX_TOKENS = 4000
+# A day's worth of messages is a long prompt; the client-wide 60s is tight for
+# it even without reasoning.
+DAILY_SUMMARY_TIMEOUT_S = 180.0
+
 POINT_ANALYSIS_TOKEN_LIMITS = (4000, 8000)
 
 
@@ -575,25 +588,42 @@ Skip sections if nothing noteworthy. No fluff. No introductions. Start directly 
         
         logger.info(f"Calling OpenRouter model {config.llm_model} for channel summary: #{channel_name} for the past {time_period}")
 
+        summary_messages = [
+            {
+                "role": "system",
+                "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [source](url). CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+
         # Make the API request with OpenRouter (higher token limit for summaries)
         completion = await llm_client.chat.completions.create(
             model=config.llm_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You summarize Discord tech community conversations. Focus on extracting high-signal content: tech news, AI/coding tips, dev tools, hacks, insights. Skip social chatter and small talk. Be extremely concise - one line per bullet point. Use backticks for usernames. Preserve Discord message links as [source](url). CRITICAL: Never use markdown code blocks (```). Use plain text with bold and headers."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=2500,  # Increased for very detailed summaries
-            temperature=0.5   # Lower temperature for more focused summaries
+            messages=summary_messages,
+            max_tokens=DAILY_SUMMARY_MAX_TOKENS,
+            temperature=0.5,  # Lower temperature for more focused summaries
+            timeout=DAILY_SUMMARY_TIMEOUT_S,
+            extra_body={"reasoning": {"enabled": False}},
         )
 
         # Extract the response
         summary = completion.choices[0].message.content
+
+        # A 200 with no content is not a summary. This has happened: the daily
+        # run for 2026-09-03 got an empty completion, stored a zero-length
+        # summary, and then failed to post it ("Cannot send an empty message")
+        # — leaving a row that looked like a finished day and blocked a retry.
+        # Fail loudly here instead, so callers take the failure path.
+        if not summary or not summary.strip():
+            finish_reason = getattr(completion.choices[0], "finish_reason", None)
+            logger.error(
+                "OpenRouter returned an empty summary (finish_reason=%s) for #%s",
+                finish_reason, channel_name,
+            )
+            return "Sorry, I encountered an error while generating the summary. Please try again later."
 
         # Apply Discord formatting enhancements to the summary
         formatted_summary = DiscordFormatter.format_llm_response(summary)

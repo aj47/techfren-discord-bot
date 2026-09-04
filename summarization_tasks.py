@@ -45,6 +45,13 @@ def _is_summary_generation_failure(summary_text):
         return True
 
     normalized = summary_text.strip().lower()
+    # An empty body is a failure too. Matching only the two sentences below let
+    # an empty completion through on 2026-09-03: it was stored as that day's
+    # summary, could not be posted to Discord ("Cannot send an empty message"),
+    # was skipped by the site bridge, and left the page showing a stale day.
+    if not normalized:
+        return True
+
     return normalized in {
         "sorry, the summary request timed out. please try again later.",
         "sorry, i encountered an error while generating the summary. please try again later.",
