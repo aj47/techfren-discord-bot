@@ -892,3 +892,416 @@ async def before_frenbot_access_expiry_sweep():
     except Exception as e:
         logger.error(f"Error in before_frenbot_access_expiry_sweep: {str(e)}", exc_info=True)
         await asyncio.sleep(60)
+
+
+# ==================== Role Point Gifts ====================
+
+# Members holding special roles are gifted points automatically: `legend` daily,
+# `MVP` and `Server Booster` weekly. These are gifts, not the LLM-scored daily
+# awards, so they never touch daily_point_awards (that table is
+# UNIQUE(author_id, guild_id, date) and a gift row there would silently cancel a
+# night's real awards). Idempotency lives in role_point_gifts instead, keyed by
+# gift type and period.
+
+GIFT_CADENCE_DAILY = 'daily'
+GIFT_CADENCE_WEEKLY = 'weekly'
+
+# Discord returns at most 1000 members per list-members page.
+_MEMBER_PAGE_SIZE = 1000
+# Safety valve so a pathologically large guild cannot spin (or balloon) forever.
+_MEMBER_FETCH_LIMIT = 25000
+
+
+def _daily_period_key(now: datetime) -> str:
+    """Period key for a daily gift: the UTC calendar date."""
+    return now.strftime('%Y-%m-%d')
+
+
+def _weekly_period_key(now: datetime) -> str:
+    """
+    Period key for a weekly gift: the ISO week, e.g. '2026-W36'.
+
+    isocalendar() supplies the ISO *week year*, which is what makes the key
+    correct across a new year boundary - 2027-01-01 belongs to 2026-W53, and
+    keying it '2027-W53' or '2027-W01' would gift twice in one week.
+    """
+    iso_year, iso_week, _ = now.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def get_role_gift_specs():
+    """
+    Build the configured gift list.
+
+    Returns a list of dicts with 'gift_type', 'role_name', 'points' and
+    'cadence'. Gifts configured to 0 points are dropped, which is how an
+    operator turns a single gift off.
+    """
+    raw_specs = [
+        {
+            'gift_type': 'legend_daily',
+            'role_name': getattr(config, 'LEGEND_ROLE_NAME', 'legend'),
+            'points': getattr(config, 'LEGEND_DAILY_GIFT_POINTS', 10),
+            'cadence': GIFT_CADENCE_DAILY,
+        },
+        {
+            'gift_type': 'mvp_weekly',
+            'role_name': getattr(config, 'MVP_ROLE_NAME', 'MVP'),
+            'points': getattr(config, 'MVP_WEEKLY_GIFT_POINTS', 25),
+            'cadence': GIFT_CADENCE_WEEKLY,
+        },
+        {
+            'gift_type': 'booster_weekly',
+            'role_name': getattr(config, 'BOOSTER_ROLE_NAME', 'Server Booster'),
+            'points': getattr(config, 'BOOSTER_WEEKLY_GIFT_POINTS', 50),
+            'cadence': GIFT_CADENCE_WEEKLY,
+        },
+    ]
+
+    specs = []
+    for spec in raw_specs:
+        role_name = (spec['role_name'] or '').strip()
+        points = spec['points']
+        if not role_name:
+            logger.warning(f"Skipping {spec['gift_type']} gift: no role name configured")
+            continue
+        if not isinstance(points, int) or points <= 0:
+            logger.info(f"Skipping {spec['gift_type']} gift: configured points is {points}")
+            continue
+        specs.append({**spec, 'role_name': role_name})
+    return specs
+
+
+def _period_key_for(cadence: str, now: datetime) -> str:
+    """Period key for a cadence, so the same pass can mix daily and weekly gifts."""
+    if cadence == GIFT_CADENCE_WEEKLY:
+        return _weekly_period_key(now)
+    return _daily_period_key(now)
+
+
+def _normalize_member(record):
+    """
+    Flatten a member into {'id', 'name', 'role_ids', 'is_bot'}.
+
+    Accepts the raw payload returned by the list-guild-members REST endpoint
+    (what the pass actually uses) or a discord.Member, so the filtering below
+    does not care where a member record came from.
+    """
+    try:
+        if isinstance(record, dict):
+            user = record.get('user') or {}
+            member_id = str(user.get('id') or '')
+            name = user.get('username') or user.get('global_name') or record.get('nick') or member_id
+            role_ids = {str(role_id) for role_id in (record.get('roles') or [])}
+            is_bot = bool(user.get('bot'))
+        else:
+            member_id = str(getattr(record, 'id', '') or '')
+            name = getattr(record, 'name', None) or getattr(record, 'display_name', None) or member_id
+            role_ids = {str(getattr(role, 'id', '')) for role in getattr(record, 'roles', []) or []}
+            # discord.Member proxies .bot to the underlying user.
+            is_bot = bool(getattr(record, 'bot', False))
+
+        if not member_id:
+            return None
+
+        return {
+            'id': member_id,
+            'name': str(name),
+            'role_ids': role_ids,
+            'is_bot': is_bot,
+        }
+    except Exception as e:
+        logger.warning(f"Skipping unreadable member record while gifting points: {str(e)}")
+        return None
+
+
+def members_with_role(members, role_id) -> list:
+    """
+    Filter normalized member records down to holders of a role.
+
+    Bots are excluded: a bot holding a gift role should not accumulate points.
+    """
+    role_id = str(role_id)
+    return [
+        member for member in members
+        if member and not member['is_bot'] and role_id in member['role_ids']
+    ]
+
+
+async def _list_guild_members(guild) -> list:
+    """
+    List a guild's members as normalized records.
+
+    The bot does not enable the privileged members gateway intent, so
+    guild.members holds only whoever the cache happened to see (typically a
+    handful) and guild.fetch_members() refuses to run at all. The
+    list-guild-members REST endpoint is used instead, 1000 at a time.
+
+    If a page fails part-way through, whatever was already fetched is returned
+    and used: gifting the members we know about beats gifting nobody, and the
+    period key makes the pass safe to repeat. If nothing could be fetched the
+    guild is skipped - falling back to the near-empty gateway cache would pay
+    an arbitrary member or two and quietly skip everyone else.
+    """
+    members = []
+    seen = set()
+    after = None
+
+    try:
+        while True:
+            page = await discord_client.http.get_members(guild.id, _MEMBER_PAGE_SIZE, after)
+            if not page:
+                break
+
+            for record in page:
+                normalized = _normalize_member(record)
+                if normalized and normalized['id'] not in seen:
+                    seen.add(normalized['id'])
+                    members.append(normalized)
+
+            if len(page) < _MEMBER_PAGE_SIZE:
+                break
+
+            last_id = (page[-1].get('user') or {}).get('id')
+            if not last_id or str(last_id) == str(after):
+                # Defensive: a malformed page must not loop forever.
+                break
+            after = last_id
+
+            if len(members) >= _MEMBER_FETCH_LIMIT:
+                logger.warning(
+                    f"Stopped listing members of guild {guild.id} at {len(members)}; "
+                    "some members were not considered for role point gifts"
+                )
+                break
+    except discord.Forbidden:
+        logger.error(
+            f"Not allowed to list members of guild {guild.id}. The Server Members Intent "
+            "must be enabled for this application in the Discord Developer Portal for role "
+            f"point gifts to work. Continuing with the {len(members)} member(s) already listed."
+        )
+    except discord.HTTPException as e:
+        logger.error(
+            f"Failed to list members of guild {guild.id} ({str(e)}); "
+            f"continuing with the {len(members)} member(s) already listed"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error listing members of guild {guild.id}: {str(e)}", exc_info=True)
+
+    return members
+
+
+def _find_role(guild, role_name: str):
+    """
+    Find a guild role by name, case-insensitively.
+
+    Two roles sharing a name is a misconfiguration, and picking one of them
+    would let anyone with Manage Roles create a decoy `legend` role and move the
+    gift onto their own members. Refuse instead, loudly.
+    """
+    wanted = role_name.strip().lower()
+    matches = [role for role in getattr(guild, 'roles', []) or [] if role.name.strip().lower() == wanted]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        logger.error(
+            f"Guild {guild.id} has {len(matches)} roles named '{role_name}'; "
+            "refusing to gift points until the duplicate is removed"
+        )
+        return None
+    return matches[0]
+
+
+def _resolve_gift_role(guild, spec):
+    """
+    Resolve the role a gift is paid to.
+
+    The booster gift falls back to the guild's managed premium-subscriber role,
+    so renaming "Server Booster" does not silently stop paying boosters.
+    """
+    role = _find_role(guild, spec['role_name'])
+    if role is None and spec['gift_type'] == 'booster_weekly':
+        role = getattr(guild, 'premium_subscriber_role', None)
+        if role is not None:
+            logger.info(
+                f"Guild {guild.id} has no '{spec['role_name']}' role; "
+                f"using the managed booster role '{role.name}' instead"
+            )
+    return role
+
+
+async def _gift_guild_role_points(guild, specs, now: datetime) -> tuple:
+    """
+    Run one guild's gift pass. Returns (gifts_given, points_given).
+
+    Roles are resolved before members are listed, so a guild with none of the
+    gift roles costs no member enumeration at all.
+    """
+    guild_id = str(guild.id)
+
+    resolved = []
+    for spec in specs:
+        role = _resolve_gift_role(guild, spec)
+        if role is None:
+            logger.info(
+                f"Guild {guild_id} has no '{spec['role_name']}' role; "
+                f"skipping {spec['gift_type']} gifts"
+            )
+            continue
+        resolved.append((spec, role))
+
+    if not resolved:
+        return 0, 0
+
+    members = await _list_guild_members(guild)
+    if not members:
+        logger.warning(f"No members available for guild {guild_id}; skipping role point gifts")
+        return 0, 0
+
+    total_gifted = 0
+    total_points = 0
+
+    for spec, role in resolved:
+        period_key = _period_key_for(spec['cadence'], now)
+        holders = members_with_role(members, role.id)
+
+        if not holders:
+            logger.info(f"No members hold '{role.name}' in guild {guild_id}")
+            continue
+
+        gifted = 0
+        for member in holders:
+            # Off the event loop: each gift is its own sqlite transaction and
+            # can wait on the write lock, which would otherwise stall the bot's
+            # heartbeat and every command for the duration.
+            granted = await asyncio.to_thread(
+                database.grant_role_point_gift,
+                member['id'],
+                member['name'],
+                guild_id,
+                spec['gift_type'],
+                period_key,
+                spec['points'],
+            )
+            if granted:
+                gifted += 1
+
+        total_gifted += gifted
+        total_points += gifted * spec['points']
+        logger.info(
+            f"{spec['gift_type']} ({period_key}) in guild {guild_id}: "
+            f"gifted {gifted} of {len(holders)} '{role.name}' member(s) "
+            f"{spec['points']} points each"
+        )
+
+    return total_gifted, total_points
+
+
+async def process_role_point_gifts(now: datetime | None = None) -> None:
+    """
+    Gift points to members holding the configured roles, once per period.
+
+    Runs one pass a day. Daily gifts are keyed by today's UTC date, weekly gifts
+    by the ISO week, so the first pass of a new week pays the weekly gifts and
+    later passes that week are no-ops. Periods the bot was down for are not
+    backfilled - a pass only ever pays the current period.
+
+    A member holding several gift roles receives every matching gift.
+    """
+    if not discord_client:
+        logger.error("Discord client not set. Cannot process role point gifts.")
+        return
+
+    if not getattr(config, 'ROLE_POINT_GIFTS_ENABLED', True):
+        logger.info("Role point gifts are disabled (ROLE_POINT_GIFTS_ENABLED)")
+        return
+
+    specs = get_role_gift_specs()
+    if not specs:
+        logger.info("No role point gifts configured; nothing to do")
+        return
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    logger.info(
+        f"Starting role point gift pass for {_daily_period_key(now)} "
+        f"({_weekly_period_key(now)})"
+    )
+
+    total_gifted = 0
+    total_points = 0
+
+    for guild in list(getattr(discord_client, 'guilds', []) or []):
+        try:
+            gifted, points = await _gift_guild_role_points(guild, specs, now)
+            total_gifted += gifted
+            total_points += points
+        except Exception as e:
+            # One broken guild must not stop the others from being gifted.
+            logger.error(
+                f"Error gifting role points in guild {getattr(guild, 'id', '?')}: {str(e)}",
+                exc_info=True
+            )
+
+    logger.info(
+        f"Role point gift pass complete: {total_gifted} gift(s), {total_points} points"
+    )
+
+
+# The gift pass runs shortly *before* the daily role colour charge, which
+# deducts points and strips the colour role from members who cannot pay. Both
+# tasks hang off summary_hour/summary_minute, and two coroutines waking in the
+# same second have no defined order, so a legend could lose their colour a
+# moment before the points that would have covered it landed. This lead makes
+# the order deterministic.
+ROLE_POINT_GIFT_LEAD_MINUTES = 10
+
+
+def next_gift_run_at(now: datetime, summary_hour: int, summary_minute: int) -> datetime:
+    """
+    The next UTC instant the gift pass should run.
+
+    That is ROLE_POINT_GIFT_LEAD_MINUTES before the daily summary time, and
+    always strictly in the future.
+    """
+    target = datetime(
+        now.year, now.month, now.day, summary_hour, summary_minute, tzinfo=timezone.utc
+    ) - timedelta(minutes=ROLE_POINT_GIFT_LEAD_MINUTES)
+    while target <= now:
+        target += timedelta(days=1)
+    return target
+
+
+@tasks.loop(hours=24)
+async def daily_role_point_gifts():
+    """Scheduled task to gift points to members holding the configured roles."""
+    await process_role_point_gifts()
+
+
+@daily_role_point_gifts.before_loop
+async def before_daily_role_point_gifts():
+    """Wait until the scheduled time before the first role point gift pass."""
+    if not discord_client:
+        logger.error("Discord client not set. Cannot start before_daily_role_point_gifts.")
+        await asyncio.sleep(60)
+        return
+
+    try:
+        now = datetime.now(timezone.utc)
+        future = next_gift_run_at(
+            now,
+            getattr(config, 'summary_hour', 0),
+            getattr(config, 'summary_minute', 0),
+        )
+
+        logger.info(f"Daily role point gifts scheduled for {future.strftime('%H:%M')} UTC")
+
+        await discord_client.wait_until_ready()
+
+        seconds_to_wait = (future - datetime.now(timezone.utc)).total_seconds()
+        logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first role point gift pass")
+        await asyncio.sleep(max(seconds_to_wait, 0))
+    except Exception as e:
+        logger.error(f"Error in before_daily_role_point_gifts: {str(e)}", exc_info=True)
+        await asyncio.sleep(60)
