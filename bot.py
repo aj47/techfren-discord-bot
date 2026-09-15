@@ -19,7 +19,7 @@ from rate_limiter import check_rate_limit, update_rate_limit_config  # Import ra
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_llm, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep  # Import summarization tasks
+from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep, daily_role_point_gifts  # Import summarization tasks
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
 from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
@@ -1174,6 +1174,11 @@ async def on_ready():
     if not frenbot_access_expiry_sweep.is_running():
         frenbot_access_expiry_sweep.start()
         logger.info("Started frenbot access expiry sweep task")
+
+    # Start the daily role point gift task if not already running
+    if not daily_role_point_gifts.is_running():
+        daily_role_point_gifts.start()
+        logger.info("Started daily role point gift task")
 
     # Log details about each connected guild
     for guild in bot.guilds:

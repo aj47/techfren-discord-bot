@@ -5,6 +5,7 @@ Handles SQLite database operations for storing messages and channel summaries.
 
 import sqlite3
 import os
+import time
 import logging
 import json
 import asyncio
@@ -128,6 +129,20 @@ CREATE TABLE IF NOT EXISTS frenbot_access_grants (
 );
 """
 
+CREATE_ROLE_POINT_GIFTS_TABLE = """
+CREATE TABLE IF NOT EXISTS role_point_gifts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    gift_type TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    points INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(author_id, guild_id, gift_type, period_key)
+);
+"""
+
 CREATE_INDEX_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_author_id ON messages (author_id);"
 CREATE_INDEX_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_channel_id ON messages (channel_id);"
 CREATE_INDEX_GUILD = "CREATE INDEX IF NOT EXISTS idx_guild_id ON messages (guild_id);"
@@ -143,6 +158,8 @@ CREATE_INDEX_ROLE_COLORS_AUTHOR = "CREATE INDEX IF NOT EXISTS idx_role_colors_au
 CREATE_INDEX_ROLE_COLORS_GUILD = "CREATE INDEX IF NOT EXISTS idx_role_colors_guild_id ON user_role_colors (guild_id);"
 CREATE_INDEX_FRENBOT_GRANTS_USER = "CREATE INDEX IF NOT EXISTS idx_frenbot_grants_user ON frenbot_access_grants (guild_id, author_id);"
 CREATE_INDEX_FRENBOT_GRANTS_EXPIRES = "CREATE INDEX IF NOT EXISTS idx_frenbot_grants_expires ON frenbot_access_grants (expires_at);"
+CREATE_INDEX_ROLE_GIFTS_MEMBER = "CREATE INDEX IF NOT EXISTS idx_role_gifts_member ON role_point_gifts (guild_id, author_id);"
+CREATE_INDEX_ROLE_GIFTS_PERIOD = "CREATE INDEX IF NOT EXISTS idx_role_gifts_period ON role_point_gifts (guild_id, gift_type, period_key);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
 INSERT_MESSAGE = """
@@ -195,6 +212,9 @@ def migrate_database() -> None:
             cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
+            cursor.execute(CREATE_ROLE_POINT_GIFTS_TABLE)
+            cursor.execute(CREATE_INDEX_ROLE_GIFTS_MEMBER)
+            cursor.execute(CREATE_INDEX_ROLE_GIFTS_PERIOD)
 
             # Ensure free_change_started_at column exists on user_role_colors
             cursor.execute("PRAGMA table_info(user_role_colors)")
@@ -276,6 +296,7 @@ def init_database() -> None:
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
             cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
+            cursor.execute(CREATE_ROLE_POINT_GIFTS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -303,6 +324,10 @@ def init_database() -> None:
             # Create indexes for frenbot_access_grants table
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
+
+            # Create indexes for role_point_gifts table
+            cursor.execute(CREATE_INDEX_ROLE_GIFTS_MEMBER)
+            cursor.execute(CREATE_INDEX_ROLE_GIFTS_PERIOD)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -1136,6 +1161,53 @@ def get_scraped_content_by_url(url: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error retrieving scraped content for URL {url}: {str(e)}", exc_info=True)
         return None
 
+def _credit_points(
+    cursor: sqlite3.Cursor,
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    points: int,
+    counts_as_earned: bool
+) -> None:
+    """
+    Credit points to a member's row inside an already-open transaction.
+
+    total_points is the spendable balance; lifetime_points is the running total
+    of everything ever earned and is never reduced, so it survives the member
+    spending it. `counts_as_earned` is False for refunds - handing back points
+    the member already earned once must not count them twice in lifetime_points.
+
+    Callers are responsible for validating/limiting `points` and for committing.
+    """
+    earned = points if counts_as_earned else 0
+    now = datetime.now().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO user_points (
+            author_id, author_name, guild_id, total_points, lifetime_points, last_updated
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(author_id, guild_id) DO UPDATE SET
+            total_points = total_points + ?,
+            lifetime_points = lifetime_points + ?,
+            author_name = ?,
+            last_updated = ?
+        """,
+        (
+            author_id,
+            author_name,
+            guild_id,
+            points,
+            earned,
+            now,
+            points,
+            earned,
+            author_name,
+            now
+        )
+    )
+
+
 def award_points_to_user(
     author_id: str,
     author_name: str,
@@ -1176,37 +1248,7 @@ def award_points_to_user(
 
         with get_connection() as conn:
             cursor = conn.cursor()
-
-            # Insert or update user points. total_points is the spendable
-            # balance; lifetime_points is the running total of everything ever
-            # earned and is never reduced, so it survives the member spending it.
-            earned = points if counts_as_earned else 0
-            cursor.execute(
-                """
-                INSERT INTO user_points (
-                    author_id, author_name, guild_id, total_points, lifetime_points, last_updated
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(author_id, guild_id) DO UPDATE SET
-                    total_points = total_points + ?,
-                    lifetime_points = lifetime_points + ?,
-                    author_name = ?,
-                    last_updated = ?
-                """,
-                (
-                    author_id,
-                    author_name,
-                    guild_id,
-                    points,
-                    earned,
-                    datetime.now().isoformat(),
-                    points,
-                    earned,
-                    author_name,
-                    datetime.now().isoformat()
-                )
-            )
-
+            _credit_points(cursor, author_id, author_name, guild_id, points, counts_as_earned)
             conn.commit()
 
         if counts_as_earned:
@@ -1217,6 +1259,223 @@ def award_points_to_user(
     except Exception as e:
         logger.error(f"Error awarding points to user {author_id}: {str(e)}", exc_info=True)
         return False
+
+def _is_unique_violation(error: sqlite3.IntegrityError) -> bool:
+    """True when an IntegrityError is a UNIQUE constraint violation."""
+    code = getattr(error, 'sqlite_errorcode', None)
+    if code is not None:
+        return code == getattr(sqlite3, 'SQLITE_CONSTRAINT_UNIQUE', 2067)
+    return 'unique constraint' in str(error).lower()
+
+
+# How many times to retry a gift that lost the sqlite write lock. A dropped
+# daily gift is never retried by a later pass (tomorrow uses tomorrow's key),
+# so it is worth a couple of attempts here.
+_GIFT_LOCK_RETRIES = 2
+
+# Hard ceiling for a single automatic role gift. The config layer already
+# clamps the configured amounts, so this is a backstop against a bad value
+# reaching the ledger: a mis-set env var should skip a gift, not mint points.
+MAX_ROLE_GIFT_POINTS = 1000
+
+
+def grant_role_point_gift(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    gift_type: str,
+    period_key: str,
+    points: int
+) -> bool:
+    """
+    Gift points to a member exactly once per (guild, gift_type, period).
+
+    Unlike award_points_to_user() this does not clamp to 20 - role gifts are
+    fixed amounts set by config, and the weekly booster gift is 50. Idempotency
+    comes from the UNIQUE(author_id, guild_id, gift_type, period_key) constraint
+    on role_point_gifts: the ledger row is inserted and the balance credited in
+    one BEGIN IMMEDIATE transaction, so a restart (or a second pass in the same
+    period) can never gift twice, and can never credit points without leaving
+    the row that says it happened.
+
+    Gifts count as earned: they raise lifetime_points as well as the spendable
+    balance, because they are a perk the member's role earned them.
+
+    Args:
+        author_id: The Discord user ID
+        author_name: The username
+        guild_id: The Discord guild ID
+        gift_type: Gift identifier, e.g. 'legend_daily' / 'booster_weekly'
+        period_key: Period this gift belongs to - 'YYYY-MM-DD' for daily gifts,
+            ISO week ('2026-W36') for weekly gifts
+        points: Number of points to gift (1..MAX_ROLE_GIFT_POINTS)
+
+    Returns:
+        bool: True if the gift was recorded and credited, False if it was
+        already gifted for this period or the input was rejected.
+    """
+    if not author_id or not str(author_id).strip():
+        logger.error("Cannot gift points: author_id is empty or None")
+        return False
+
+    if not gift_type or not period_key:
+        logger.error(f"Cannot gift points to {author_id}: gift_type/period_key required")
+        return False
+
+    if isinstance(points, bool) or not isinstance(points, int):
+        logger.error(f"Refusing {gift_type} gift for {author_name}: points={points!r} is not an int")
+        return False
+
+    if points <= 0:
+        logger.warning(f"Skipping {gift_type} gift for {author_name}: points={points} (must be > 0)")
+        return False
+
+    if points > MAX_ROLE_GIFT_POINTS:
+        logger.error(
+            f"Refusing {gift_type} gift of {points} points to {author_name}: "
+            f"above the {MAX_ROLE_GIFT_POINTS} point ceiling. Check the gift configuration."
+        )
+        return False
+
+    for attempt in range(_GIFT_LOCK_RETRIES + 1):
+        try:
+            return _insert_and_credit_gift(
+                author_id, author_name, guild_id, gift_type, period_key, points
+            )
+        except sqlite3.OperationalError as e:
+            # Another writer held the lock past busy_timeout. Retrying matters:
+            # a daily gift that is dropped here is never paid, because the next
+            # pass is tomorrow, under tomorrow's period key.
+            if attempt >= _GIFT_LOCK_RETRIES:
+                logger.error(
+                    f"Giving up on {gift_type} gift for {author_id} after "
+                    f"{attempt + 1} attempts: {str(e)}"
+                )
+                return False
+            logger.warning(f"Retrying {gift_type} gift for {author_id}: {str(e)}")
+            time.sleep(0.5 * (attempt + 1))
+        except Exception as e:
+            logger.error(f"Error gifting {gift_type} points to {author_id}: {str(e)}", exc_info=True)
+            return False
+
+    return False
+
+
+def _insert_and_credit_gift(
+    author_id: str,
+    author_name: str,
+    guild_id: str,
+    gift_type: str,
+    period_key: str,
+    points: int
+) -> bool:
+    """
+    Write one gift ledger row and its balance credit in a single transaction.
+
+    Returns False when the gift was already recorded for this period. Raises on
+    anything else, so the caller can retry a locked database.
+    """
+    conn = get_connection()
+    try:
+        # BEGIN IMMEDIATE takes the write lock up front, so two passes racing
+        # on the same member cannot both get past the INSERT.
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO role_point_gifts (
+                    author_id, author_name, guild_id, gift_type,
+                    period_key, points, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(author_id),
+                    author_name,
+                    str(guild_id),
+                    gift_type,
+                    period_key,
+                    points,
+                    datetime.now(timezone.utc).isoformat(),
+                )
+            )
+        except sqlite3.IntegrityError as e:
+            if not _is_unique_violation(e):
+                # Anything other than "already gifted" is a real bug and must
+                # not be swallowed as a routine no-op.
+                raise
+            conn.rollback()
+            logger.debug(
+                f"{gift_type} gift already given to {author_name} ({author_id}) "
+                f"for {period_key} in guild {guild_id}"
+            )
+            return False
+
+        _credit_points(
+            cursor,
+            str(author_id),
+            author_name,
+            str(guild_id),
+            points,
+            counts_as_earned=True
+        )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    logger.info(
+        f"Gifted {points} points to {author_name} ({author_id}) in guild {guild_id} "
+        f"[{gift_type} {period_key}]"
+    )
+    return True
+
+
+def get_role_point_gifts(
+    guild_id: str,
+    gift_type: Optional[str] = None,
+    period_key: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get recorded role point gifts for a guild, newest first.
+
+    Args:
+        guild_id: The Discord guild ID
+        gift_type: Optional gift type filter, e.g. 'legend_daily'
+        period_key: Optional period filter, e.g. '2026-09-08' or '2026-W36'
+
+    Returns:
+        List of gift records (empty on error).
+    """
+    try:
+        query = """
+            SELECT author_id, author_name, guild_id, gift_type, period_key, points, created_at
+            FROM role_point_gifts
+            WHERE guild_id = ?
+        """
+        params: List[Any] = [str(guild_id)]
+
+        if gift_type:
+            query += " AND gift_type = ?"
+            params.append(gift_type)
+        if period_key:
+            query += " AND period_key = ?"
+            params.append(period_key)
+
+        query += " ORDER BY created_at DESC"
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error reading role point gifts for guild {guild_id}: {str(e)}", exc_info=True)
+        return []
+
 
 def get_user_points(author_id: str, guild_id: str) -> int:
     """
