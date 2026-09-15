@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import tasks
@@ -45,10 +46,24 @@ def _is_summary_generation_failure(summary_text):
         return True
 
     normalized = summary_text.strip().lower()
-    return normalized in {
+    if normalized in {
         "sorry, the summary request timed out. please try again later.",
         "sorry, i encountered an error while generating the summary. please try again later.",
-    }
+    }:
+        return True
+
+    # Guard against junk LLM responses (e.g. a stray "User Safety: safe" one-liner
+    # from the router) being stored and posted as if they were real digests.
+    # A valid summary always contains at least one Discord message link or a
+    # Highlights/Links section header (## in raw LLM output, ** after Discord
+    # formatting), or is a long-form digest.
+    if "discord.com/channels/" in summary_text:
+        return False
+    if re.search(r"(?:^|\n)#{1,3}\s*(?:🔥|💡|Highlights|Links)", summary_text, re.IGNORECASE):
+        return False
+    if re.search(r"\*\*(?:🔥|💡|Highlights|Links)", summary_text, re.IGNORECASE):
+        return False
+    return len(summary_text.strip()) < 800
 
 def _member_has_daily_charge_exempt_role(member: discord.Member) -> bool:
     """Return True if a member's current roles exempt them from daily color charges."""
