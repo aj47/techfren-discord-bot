@@ -63,6 +63,11 @@ def _is_summary_generation_failure(summary_text):
         return False
     if re.search(r"\*\*(?:🔥|💡|Highlights|Links)", summary_text, re.IGNORECASE):
         return False
+    # Reject long texts (>=800 chars) that have no summary structure (no headers,
+    # no Discord message links) and look like a raw transcript echo (contain
+    # [HH:MM:SS] timestamp patterns rather than structured summary bullets).
+    if len(summary_text.strip()) >= 800 and re.search(r"\[\d{2}:\d{2}:\d{2}\]", summary_text):
+        return True
     return len(summary_text.strip()) < 800
 
 def _member_has_daily_charge_exempt_role(member: discord.Member) -> bool:
