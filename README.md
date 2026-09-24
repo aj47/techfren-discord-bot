@@ -174,6 +174,59 @@ To use the message content intent, you need to enable it in the Discord Develope
   - A background task sweeps every minute and removes the role once access lapses, including
     grants that expired while the bot was offline
 
+### Automatic Role Point Gifts
+
+Members holding special roles are gifted points automatically, with no command to run:
+
+| Role (default name) | Gift | Cadence |
+| --- | --- | --- |
+| `legend` | 10 points | every day |
+| `MVP` | 25 points | every ISO week |
+| `Server Booster` | 50 points | every ISO week (bonus) |
+
+- The gifts **stack**: a member holding all three roles collects 10 + 25 + 50 in the first
+  pass of a week, and 10 a day after that.
+- Gifts count as **earned**: they raise `lifetime_points` (what the leaderboard remembers)
+  as well as the spendable balance. They are not subject to the 20 point cap that applies
+  to the nightly LLM-scored awards.
+- One pass runs per day over every guild the bot is in, ten minutes before
+  `SUMMARY_HOUR`:`SUMMARY_MINUTE` UTC. The lead is deliberate: the daily role-colour charge
+  runs *at* that time and strips the colour role from members who cannot pay, so the gifts
+  have to land first.
+- Daily gifts are keyed by the UTC date, weekly gifts by the ISO week (`2026-W36`), so
+  extra passes in the same period are no-ops and a restart mid-pass cannot pay twice.
+  Periods the bot was down for are **not** backfilled - a pass only ever pays the current
+  day/week, and logs what it did.
+- A guild missing one of the roles simply skips that gift; role names are matched
+  case-insensitively. Two roles sharing a name is refused rather than guessed, so a decoy
+  `legend` role cannot redirect the gift. If the booster role has been renamed, the guild's
+  managed boost role is used instead.
+- Bots holding a gift role are skipped.
+
+Configuration (all optional):
+
+```bash
+ROLE_POINT_GIFTS_ENABLED=true      # set to false to turn the whole feature off
+LEGEND_ROLE_NAME=legend
+LEGEND_DAILY_GIFT_POINTS=10        # 0 disables just this gift
+MVP_ROLE_NAME=MVP
+MVP_WEEKLY_GIFT_POINTS=25
+BOOSTER_ROLE_NAME=Server Booster
+BOOSTER_WEEKLY_GIFT_POINTS=50
+```
+
+Amounts are clamped to 1000 points per gift, in config and again in the database layer, so
+a mis-set environment variable skips a gift rather than minting points.
+
+**Member enumeration:** the bot does not enable the privileged members gateway intent, so
+`guild.members` only holds whoever the cache has seen and `guild.fetch_members()` refuses
+to run. The gift pass lists members through the `GET /guilds/{id}/members` REST endpoint
+instead (paginated, 1000 at a time). That endpoint requires the **Server Members Intent**
+to be enabled for the application in the Discord Developer Portal; if it is not, the pass
+logs an error and skips the guild rather than paying whichever member the gateway cache
+happens to hold. A page failing part-way through is different: whatever was already listed
+is still gifted.
+
 ### Channel Summarization
 
 - `/sum-day`: Summarizes all messages in the current channel for the current day
@@ -276,6 +329,21 @@ Two behaviours worth knowing:
   `UNIQUE(author_id, guild_id, date)` and the nightly summarizer treats any row for a given
   guild and date as "points already awarded today", so a spend row there would both break
   stacking and silently cancel the next night's point awards for the entire guild.
+
+### Role Point Gifts Table
+
+`role_point_gifts` is the ledger for the automatic role gifts: one row per member per
+gift type per period, with `UNIQUE(author_id, guild_id, gift_type, period_key)`.
+
+The row and the balance credit are written in a single `BEGIN IMMEDIATE` transaction, so
+the unique constraint is what makes the feature idempotent: a second pass in the same
+period, or a restart part-way through one, can neither gift twice nor credit points
+without recording that it did.
+
+Gifts deliberately do **not** write to `daily_point_awards`. That table is
+`UNIQUE(author_id, guild_id, date)` and the nightly summarizer treats any row for a guild
+and date as "points already awarded today", so a gift row there would silently cancel that
+night's real point awards for the whole guild.
 
 ### Database Migration
 

@@ -22,6 +22,13 @@
 # SUMMARY_MINUTE=0
 # REPORTS_CHANNEL_ID=your_channel_id
 # GENERAL_CHANNEL_ID=your_general_channel_id
+# ROLE_POINT_GIFTS_ENABLED=true
+# LEGEND_ROLE_NAME=legend
+# LEGEND_DAILY_GIFT_POINTS=10
+# MVP_ROLE_NAME=MVP
+# MVP_WEEKLY_GIFT_POINTS=25
+# BOOSTER_ROLE_NAME=Server Booster
+# BOOSTER_WEEKLY_GIFT_POINTS=50
 #
 # ============================================================
 # LEGACY CONFIG (for reference only - not recommended)
@@ -60,3 +67,18 @@ summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"  # For channel summaries
 general_channel_id = "YOUR_GENERAL_CHANNEL_ID"  # For the server-wide daily digest and point awards
 summary_channel_ids = ["YOUR_CHANNEL_ID_1", "YOUR_CHANNEL_ID_2"]  # Optional: restrict per-channel summaries
+
+# Automatic Role Point Gifts (optional)
+# Environment variables: ROLE_POINT_GIFTS_ENABLED,
+#   LEGEND_ROLE_NAME, LEGEND_DAILY_GIFT_POINTS,
+#   MVP_ROLE_NAME, MVP_WEEKLY_GIFT_POINTS,
+#   BOOSTER_ROLE_NAME, BOOSTER_WEEKLY_GIFT_POINTS
+# Members holding these roles are gifted points once per period (gifts stack).
+# Set an amount to 0 to disable that single gift.
+ROLE_POINT_GIFTS_ENABLED = True
+LEGEND_ROLE_NAME = "legend"
+LEGEND_DAILY_GIFT_POINTS = 10
+MVP_ROLE_NAME = "MVP"
+MVP_WEEKLY_GIFT_POINTS = 25
+BOOSTER_ROLE_NAME = "Server Booster"
+BOOSTER_WEEKLY_GIFT_POINTS = 50

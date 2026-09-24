@@ -263,6 +263,49 @@ try:
 except (ValueError, TypeError):
     FRENBOT_ACCESS_MAX_HOURS = 24  # Default to 24 if invalid value
 
+# Role Point Gifts Configuration
+# Automatic point gifts for members holding special roles. These are gifts, not
+# the LLM-scored daily awards: they are granted once per period per role, they
+# stack (a member with several qualifying roles receives each gift), and they
+# raise lifetime_points as well as the spendable balance.
+# Environment variables:
+#   ROLE_POINT_GIFTS_ENABLED, LEGEND_ROLE_NAME, LEGEND_DAILY_GIFT_POINTS,
+#   MVP_ROLE_NAME, MVP_WEEKLY_GIFT_POINTS,
+#   BOOSTER_ROLE_NAME, BOOSTER_WEEKLY_GIFT_POINTS
+ROLE_POINT_GIFTS_ENABLED = os.getenv('ROLE_POINT_GIFTS_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Upper bound on any single configured gift: a fat-fingered env var should be
+# clamped here rather than mint points. Imported from the database layer, which
+# enforces the same ceiling, so the two can never drift apart and turn every
+# gift into a permanent error.
+from database import MAX_ROLE_GIFT_POINTS
+
+
+def _gift_points(env_name: str, default: int) -> int:
+    """Read a gift amount from the environment, clamped to 0..MAX_ROLE_GIFT_POINTS."""
+    try:
+        value = int(os.getenv(env_name, str(default)))
+    except (ValueError, TypeError):
+        return default  # Fall back to the documented default if invalid
+    if value < 0:
+        return 0  # Negative means "disabled", never a deduction
+    if value > MAX_ROLE_GIFT_POINTS:
+        return MAX_ROLE_GIFT_POINTS
+    return value
+
+
+# "legend" role: points gifted every day
+LEGEND_ROLE_NAME = os.getenv('LEGEND_ROLE_NAME', 'legend').strip() or 'legend'
+LEGEND_DAILY_GIFT_POINTS = _gift_points('LEGEND_DAILY_GIFT_POINTS', 10)
+
+# "MVP" role: points gifted every ISO week
+MVP_ROLE_NAME = os.getenv('MVP_ROLE_NAME', 'MVP').strip() or 'MVP'
+MVP_WEEKLY_GIFT_POINTS = _gift_points('MVP_WEEKLY_GIFT_POINTS', 25)
+
+# "Server Booster" role: bonus points gifted every ISO week, stacks with the others
+BOOSTER_ROLE_NAME = os.getenv('BOOSTER_ROLE_NAME', 'Server Booster').strip() or 'Server Booster'
+BOOSTER_WEEKLY_GIFT_POINTS = _gift_points('BOOSTER_WEEKLY_GIFT_POINTS', 50)
+
 # Available colors for role customization
 # Format: {color_name: hex_value}
 # Each color has a light and dark variant
