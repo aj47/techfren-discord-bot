@@ -15,12 +15,15 @@ The handler runs in two stages:
    Membership of neither means the account has never contributed here, which for
    a channel members are told not to post in is itself the finding.
 
-2. SCORING - non-immune accounts are scored. A "primary" signal is behaviour that
-   has no innocent reading: a message blast across channels, a link dropped in
-   the trap channel, an account that did not exist yesterday, identical text
-   repeated across channels. Corroborating signals (account age, no prior
-   messages, mention spam) never ban on their own - they raise the response from
-   a timeout to a ban.
+2. TRIGGERS - non-immune accounts are checked for four triggers: a link or invite
+   in the trap channel, an account under 24h old, a post blasted across 3+ channels
+   within 60s, or identical text in 2+ channels. Neighbouring context (no prior
+   messages, mention spam, young account, scam phrasing) is recorded in the hit log
+   but never causes an action on its own.
+
+3. RESPONSE - one trigger is a delete plus a timeout. Two triggers, or any trigger
+   on an account already caught before, is a ban. So a first strike is never a
+   permaban and a single circumstantial signal can never ban anyone.
 
 ``Rules.dry_run`` defaults to True: decisions are logged and announced but no
 member is timed out or banned until it is explicitly switched off.
@@ -57,11 +60,46 @@ class Action:
     BAN = "ban"            # delete recent messages and ban
 
 
-# Signal weights. A primary signal is decisive behaviour; a corroborating signal
-# is only meaningful alongside one.
-PRIMARY_WEIGHT = 3
-CORROBORATING_WEIGHT = 2
-WEAK_WEIGHT = 1
+# Signals. A trigger is behaviour decisive enough to act on alone; a context
+# signal only ever adds colour to the log.
+# ---------------------------------------------------------------------------
+# Policy
+#
+# Deliberately constants rather than settings. The whole behaviour is "one
+# trigger = delete + timeout, two triggers or a repeat = ban"; the only things
+# worth configuring are which roles are immune and how long a timeout lasts.
+# ---------------------------------------------------------------------------
+
+# Trigger: an account younger than this.
+FRESH_ACCOUNT_HOURS = 24
+# Trigger: posting in this many distinct channels within the window.
+BLAST_CHANNELS = 3
+BLAST_WINDOW_SECONDS = 60
+# Trigger: identical text in this many distinct channels within the window.
+DUPLICATE_CHANNELS = 2
+DUPLICATE_WINDOW_MINUTES = 5
+# (The fourth trigger, a link or invite in the trap channel, needs no threshold.)
+
+# Two triggers ban outright; a single trigger bans only on a repeat.
+BAN_TRIGGERS = 2
+# Seconds of history purged on a ban (Discord caps this at 7 days).
+BAN_PURGE_SECONDS = 86400
+
+# Immunity: an account at least this old, in the server at least this long, is
+# established even with no role and no points history. Without this, "trusted
+# role or any points" exempts only ~160 of this guild's 3,555 humans and aims the
+# trap at 95% of the roster, mostly long-standing lurkers.
+MATURE_ACCOUNT_DAYS = 30
+SETTLED_JOIN_DAYS = 14
+
+# Context signals: recorded and shown in the hit log, but never a trigger and
+# never the reason for an action on their own.
+YOUNG_ACCOUNT_DAYS = 30
+MENTION_SPAM_COUNT = 5
+RECENT_JOIN_MINUTES = 30
+
+# What one trigger does.
+DEFAULT_TIMEOUT_MINUTES = 60
 
 # Scam/recruitment phrasing seen in this server's own ban history.
 _SCAM_PHRASES = (
@@ -117,54 +155,18 @@ class Rules:
     """
 
     enabled: bool = True
-    # When True, decisions are logged/announced but never enforced.
+    # True: decide and log hits, never punish.
     dry_run: bool = True
 
-    # Explicit allow-list of role IDs whose holders are immune.
+    # Explicit allow-list of role IDs whose holders are immune -- never "any role
+    # above the join role", because the self-assignable /color roles outrank the
+    # join role and a positional rule could be self-granted.
     trusted_role_ids: frozenset = field(default_factory=frozenset)
-    # Safety interlock: refuse to act when no trusted roles are configured, so a
-    # half-finished setup cannot become "ban everyone without points". Set this
-    # to False only if points history alone should decide immunity.
-    require_trusted_role_ids: bool = True
 
-    # Where decisions are reported. None disables the mod-log post (a DB row is
-    # still written for every hit).
+    # Where decisions are reported. None writes the database row only.
     log_channel_id: Optional[str] = None
 
-    # Acknowledge the hit in the trap channel. Off by default: replying in the
-    # channel teaches bots that it is live.
-    announce_in_channel: bool = False
-
-    # Scoring thresholds.
-    ban_score: int = 5
-    timeout_score: int = 2
-
-    timeout_minutes: int = 60
-    # Seconds of history purged when banning (Discord caps this at 7 days).
-    purge_seconds: int = 86400
-
-    # Primary signal shapes.
-    blast_channels: int = 3
-    blast_window_seconds: int = 60
-    fresh_account_hours: int = 24
-    duplicate_channels: int = 2
-    duplicate_window_minutes: int = 5
-
-    # Corroborating signal shapes.
-    young_account_days: int = 30
-    mention_spam_count: int = 5
-    recent_join_minutes: int = 30
-
-    # Immunity by maturity: an account at least this old, in the guild at least
-    # this long, counts as established even with no role and no points history.
-    mature_account_days: int = 30
-    settled_join_days: int = 14
-    immunity_needs_maturity: bool = True
-
-    # Never permaban on a first strike: a ban additionally needs either a prior
-    # recorded hit on this account or this many independent primary signals.
-    ban_requires_repeat: bool = True
-    ban_min_primary_signals: int = 2
+    timeout_minutes: int = DEFAULT_TIMEOUT_MINUTES
 
 
 def load_rules(refresh: bool = False) -> Rules:
@@ -185,31 +187,8 @@ def load_rules(refresh: bool = False) -> Rules:
         enabled=getattr(config, "HONEYPOT_ENABLED", False),
         dry_run=getattr(config, "HONEYPOT_DRY_RUN", True),
         trusted_role_ids=frozenset(getattr(config, "HONEYPOT_TRUSTED_ROLE_IDS", ())),
-        require_trusted_role_ids=getattr(
-            config, "HONEYPOT_REQUIRE_TRUSTED_ROLES", True
-        ),
         log_channel_id=getattr(config, "HONEYPOT_LOG_CHANNEL_ID", None),
-        announce_in_channel=getattr(config, "HONEYPOT_ANNOUNCE_IN_CHANNEL", False),
-        ban_score=getattr(config, "HONEYPOT_BAN_SCORE", 5),
-        timeout_score=getattr(config, "HONEYPOT_TIMEOUT_SCORE", 2),
         timeout_minutes=getattr(config, "HONEYPOT_TIMEOUT_MINUTES", 60),
-        purge_seconds=getattr(config, "HONEYPOT_PURGE_SECONDS", 86400),
-        blast_channels=getattr(config, "HONEYPOT_BLAST_CHANNELS", 3),
-        blast_window_seconds=getattr(config, "HONEYPOT_BLAST_WINDOW_SECONDS", 60),
-        fresh_account_hours=getattr(config, "HONEYPOT_FRESH_ACCOUNT_HOURS", 24),
-        duplicate_channels=getattr(config, "HONEYPOT_DUPLICATE_CHANNELS", 2),
-        duplicate_window_minutes=getattr(config, "HONEYPOT_DUPLICATE_WINDOW_MINUTES", 5),
-        young_account_days=getattr(config, "HONEYPOT_YOUNG_ACCOUNT_DAYS", 30),
-        mention_spam_count=getattr(config, "HONEYPOT_MENTION_SPAM_COUNT", 5),
-        mature_account_days=getattr(config, "HONEYPOT_MATURE_ACCOUNT_DAYS", 30),
-        settled_join_days=getattr(config, "HONEYPOT_SETTLED_JOIN_DAYS", 14),
-        immunity_needs_maturity=getattr(
-            config, "HONEYPOT_IMMUNITY_NEEDS_MATURITY", True
-        ),
-        ban_requires_repeat=getattr(config, "HONEYPOT_BAN_REQUIRES_REPEAT", True),
-        ban_min_primary_signals=getattr(
-            config, "HONEYPOT_BAN_MIN_PRIMARY_SIGNALS", 2
-        ),
     )
     return _RULES_CACHE
 
@@ -264,10 +243,16 @@ class Decision:
 
     immune: bool
     action: str
-    score: int = 0
     immune_reason: Optional[str] = None
-    primary: Tuple[str, ...] = ()
-    corroborating: Tuple[str, ...] = ()
+    # Reasons this account was acted on at all.
+    triggers: Tuple[str, ...] = ()
+    # Context that informed the log but never caused the action.
+    context: Tuple[str, ...] = ()
+
+    @property
+    def score(self) -> int:
+        """Number of independent triggers -- what the tiers are decided on."""
+        return len(self.triggers)
 
     @property
     def actionable(self) -> bool:
@@ -278,13 +263,15 @@ class Decision:
         """One-line human-readable summary, for logs and mod-log embeds."""
         if self.immune:
             return f"immune ({self.immune_reason})"
-        if not self.primary and not self.corroborating:
+        if not self.triggers and not self.context:
             return "no signals"
-        parts = [f"score {self.score}"]
-        if self.primary:
-            parts.append("primary: " + ", ".join(self.primary))
-        if self.corroborating:
-            parts.append("corroborating: " + ", ".join(self.corroborating))
+        parts = []
+        if self.triggers:
+            parts.append(f"{len(self.triggers)} trigger(s): " + ", ".join(self.triggers))
+        else:
+            parts.append("no triggers")
+        if self.context:
+            parts.append("context: " + ", ".join(self.context))
         return "; ".join(parts)
 
 
@@ -354,102 +341,86 @@ def immunity_reason(
     # few hundred members who have ever earned a point: the rest of the roster are
     # quiet lurkers who hold just the join role, and the trap would be pointed at
     # them rather than at new accounts.
-    if rules.immunity_needs_maturity:
-        created = _as_utc(facts.account_created_at)
-        joined = _as_utc(facts.joined_at)
-        if created is not None and joined is not None:
-            current = _as_utc(now) or datetime.now(timezone.utc)
-            account_days = (current - created).days
-            join_days = (current - joined).days
-            if (
-                account_days >= rules.mature_account_days
-                and join_days >= rules.settled_join_days
-            ):
-                return (
-                    f"established account ({account_days}d old, joined {join_days}d ago)"
-                )
+    created = _as_utc(facts.account_created_at)
+    joined = _as_utc(facts.joined_at)
+    if created is not None and joined is not None:
+        current = _as_utc(now) or datetime.now(timezone.utc)
+        account_days = (current - created).days
+        join_days = (current - joined).days
+        if account_days >= MATURE_ACCOUNT_DAYS and join_days >= SETTLED_JOIN_DAYS:
+            return f"established account ({account_days}d old, joined {join_days}d ago)"
     return None
 
 
-def score_facts(
+def find_triggers(
     facts: HitFacts,
     rules: Rules,
     now: Optional[datetime] = None,
-) -> Tuple[int, List[str], List[str]]:
+) -> Tuple[List[str], List[str]]:
     """
-    Score an account that has already failed immunity.
+    Find the triggers and context signals for a message that failed immunity.
 
-    Returns ``(total, primary_signals, corroborating_signals)``.
+    A trigger is behaviour with no innocent reading, and one is enough to punish.
+    Context never causes an action on its own; it is recorded so a moderator
+    reading the log can see the whole picture.
     """
     now = _as_utc(now) or datetime.now(timezone.utc)
-    total = 0
-    primary: List[str] = []
-    corroborating: List[str] = []
+    triggers: List[str] = []
+    context: List[str] = []
 
-    # --- primary: behaviour with no innocent reading ------------------------
-
-    if len(facts.channels_in_blast_window) >= rules.blast_channels:
-        primary.append(
-            f"blast:{len(facts.channels_in_blast_window)} channels/"
-            f"{rules.blast_window_seconds}s"
-        )
-        total += PRIMARY_WEIGHT
+    # --- triggers -----------------------------------------------------------
 
     if contains_invite(facts.content):
-        primary.append("invite_in_trap_channel")
-        total += PRIMARY_WEIGHT
+        triggers.append("invite_in_trap_channel")
     elif _URL_RE.search(facts.content or ""):
-        primary.append("link_in_trap_channel")
-        total += PRIMARY_WEIGHT
-    elif _BARE_DOMAIN_RE.search(facts.content or ""):
-        # Weaker than a real URL: "spam.com" in prose is suspect but could be an
-        # honest mention, so it corroborates rather than triggering a timeout on
-        # its own.
-        corroborating.append("bare_domain_in_trap_channel")
-        total += CORROBORATING_WEIGHT
+        triggers.append("link_in_trap_channel")
 
-    account_age = None
     created = _as_utc(facts.account_created_at)
-    if created is not None:
-        account_age = now - created
-        if account_age < timedelta(hours=rules.fresh_account_hours):
-            primary.append(f"account_age:{account_age.days}d{account_age.seconds // 3600}h")
-            total += PRIMARY_WEIGHT
+    account_age = now - created if created is not None else None
+    if account_age is not None and account_age < timedelta(hours=FRESH_ACCOUNT_HOURS):
+        triggers.append(f"account_age:{account_age.days}d{account_age.seconds // 3600}h")
 
-    if len(facts.channels_with_duplicate_content) >= rules.duplicate_channels:
-        primary.append(
+    if len(facts.channels_in_blast_window) >= BLAST_CHANNELS:
+        triggers.append(
+            f"blast:{len(facts.channels_in_blast_window)} channels/"
+            f"{BLAST_WINDOW_SECONDS}s"
+        )
+
+    if len(facts.channels_with_duplicate_content) >= DUPLICATE_CHANNELS:
+        triggers.append(
             f"duplicate_content:{len(facts.channels_with_duplicate_content)} channels"
         )
-        total += PRIMARY_WEIGHT
 
-    # --- corroborating: raises the response, never bans alone ---------------
+    # --- context ------------------------------------------------------------
 
-    if account_age is not None and account_age < timedelta(days=rules.young_account_days):
-        corroborating.append(f"young_account:{account_age.days}d")
-        total += CORROBORATING_WEIGHT
+    if account_age is not None and account_age < timedelta(days=YOUNG_ACCOUNT_DAYS):
+        context.append(f"young_account:{account_age.days}d")
 
     if facts.prior_message_count == 0:
-        corroborating.append("no_prior_messages")
-        total += CORROBORATING_WEIGHT
+        context.append("no_prior_messages")
     elif facts.prior_message_count is None:
-        # Unknown history is not evidence of a clean one. Worth recording only.
-        corroborating.append("prior_history_unknown")
-        total += WEAK_WEIGHT
+        # Unknown history is not evidence of a clean one.
+        context.append("prior_history_unknown")
 
-    if facts.mention_count >= rules.mention_spam_count:
-        corroborating.append(f"mention_spam:{facts.mention_count}")
-        total += CORROBORATING_WEIGHT
+    if facts.mention_count >= MENTION_SPAM_COUNT:
+        context.append(f"mention_spam:{facts.mention_count}")
 
     joined = _as_utc(facts.joined_at)
-    if joined is not None and (now - joined) < timedelta(minutes=rules.recent_join_minutes):
-        corroborating.append("just_joined")
-        total += WEAK_WEIGHT
+    if joined is not None and (now - joined) < timedelta(minutes=RECENT_JOIN_MINUTES):
+        context.append("just_joined")
 
     if matches_scam_phrasing(facts.content):
-        corroborating.append("scam_phrasing")
-        total += WEAK_WEIGHT
+        context.append("scam_phrasing")
 
-    return total, primary, corroborating
+    if not triggers and _BARE_DOMAIN_RE.search(facts.content or ""):
+        # "spam.com" in prose is suspect but could be an honest mention, so it is
+        # recorded without triggering anything.
+        context.append("bare_domain_in_trap_channel")
+
+    if facts.prior_hits:
+        context.append(f"prior_strikes:{facts.prior_hits}")
+
+    return triggers, context
 
 
 def classify(
@@ -460,8 +431,9 @@ def classify(
     """
     Decide what to do about a message posted in a honeypot channel.
 
-    Banning requires both a primary signal and ``rules.ban_score`` points, so a
-    pile of weak circumstantial signals can never permaban an active member.
+    One trigger is a delete plus a timeout. Two independent triggers, or any
+    trigger on an account already caught before, is a ban -- so a first strike is
+    never a permaban and a single circumstantial signal can never ban anyone.
     """
     rules = rules or Rules()
 
@@ -469,32 +441,22 @@ def classify(
     if reason is not None:
         return Decision(immune=True, action=Action.NONE, immune_reason=reason)
 
-    total, primary, corroborating = score_facts(facts, rules, now=now)
+    triggers, context = find_triggers(facts, rules, now=now)
 
-    ban_ok = bool(primary) and total >= rules.ban_score
-    if ban_ok and rules.ban_requires_repeat:
-        # "Never permaban on a first strike": a ban needs either this many
-        # independent primary signals, or this account having been caught before.
-        ban_ok = (
-            len(primary) >= rules.ban_min_primary_signals or facts.prior_hits >= 1
-        )
-
-    if ban_ok:
+    if not triggers:
+        action = Action.LOG if context else Action.NONE
+    elif len(triggers) >= BAN_TRIGGERS or facts.prior_hits >= 1:
         action = Action.BAN
-    elif total >= rules.timeout_score:
-        action = Action.TIMEOUT
-    elif total > 0:
-        action = Action.LOG
     else:
-        action = Action.NONE
+        action = Action.TIMEOUT
 
     return Decision(
         immune=False,
         action=action,
-        score=total,
-        primary=tuple(primary),
-        corroborating=tuple(corroborating),
+        triggers=tuple(triggers),
+        context=tuple(context),
     )
+
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +682,7 @@ async def _enforce(
 
     try:
         if decision.action == Action.BAN:
-            await member.ban(reason=reason, delete_message_seconds=rules.purge_seconds)
+            await member.ban(reason=reason, delete_message_seconds=BAN_PURGE_SECONDS)
             return True
         if decision.action == Action.TIMEOUT:
             await message.delete()
@@ -759,10 +721,13 @@ async def handle_honeypot_message(
 
     if not rules.enabled:
         return None
-    if rules.require_trusted_role_ids and not rules.trusted_role_ids:
+    if not rules.trusted_role_ids:
+        # Safety interlock, deliberately not configurable: with no trusted roles
+        # the only remaining immunity is points history, which would point the
+        # trap at most of the server. Refuse to act rather than degrade into that.
         logger.error(
             "Honeypot: refusing to act - HONEYPOT_TRUSTED_ROLE_IDS is empty. "
-            "Set the trusted role IDs or set HONEYPOT_REQUIRE_TRUSTED_ROLES=false."
+            "Set the trusted role IDs before enabling the trap."
         )
         return None
 
@@ -804,21 +769,6 @@ async def handle_honeypot_message(
                 logger.error(f"Honeypot: failed to record hit: {exc}", exc_info=True)
 
             await _post_log_embed(message, decision, rules, enforced)
-
-            if rules.announce_in_channel and enforced:
-                try:
-                    await message.channel.send(
-                        embed=discord.Embed(
-                            description=(
-                                "🍯 That channel is a trap for spam accounts. "
-                                "Nothing posted here is read."
-                            ),
-                            color=discord.Color.dark_grey(),
-                        ),
-                        delete_after=15,
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    pass
 
         return decision
 
@@ -875,43 +825,20 @@ async def register_honeypot_channel(
 
 async def unregister_honeypot_channel(channel: discord.TextChannel) -> bool:
     """Remove honeypot status from a channel and clear the topic warning."""
-    return await unregister_honeypot_channel_by_id(str(channel.id), channel.guild)
-
-
-async def unregister_honeypot_channel_by_id(
-    channel_id: str,
-    guild: Optional[discord.Guild] = None,
-) -> bool:
-    """
-    Remove honeypot status without a channel object.
-
-    Needed by ``/honeypot-clear``, which only has IDs from the database and must
-    still work for a channel that has since been deleted. The topic warning is
-    cleared when the channel can still be resolved.
-    """
-    guild_id = str(getattr(guild, "id", "") or "")
-    removed = database.remove_honeypot_channel(str(channel_id), guild_id)
-    if not removed:
+    guild_id = str(getattr(channel.guild, "id", "") or "")
+    if not database.remove_honeypot_channel(str(channel.id), guild_id):
         return False
 
-    logger.info(f"Honeypot: channel {channel_id} removed")
+    logger.info(f"Honeypot: channel {channel.id} removed")
     invalidate_channel_cache()
 
-    channel = None
-    if guild is not None:
-        try:
-            channel = guild.get_channel(int(channel_id))
-        except (TypeError, ValueError):
-            channel = None
-
     # Clear the topic warning so a former trap does not keep a stale sign on it.
-    if channel is not None:
-        try:
-            await channel.edit(topic=None, reason="Honeypot channel removed")  # type: ignore[arg-type]
-        except discord.Forbidden:
-            logger.warning(f"Honeypot: cannot clear topic on {channel_id} - missing permission")
-        except Exception as exc:
-            logger.warning(f"Honeypot: could not clear topic on {channel_id}: {exc}")
+    try:
+        await channel.edit(topic=None, reason="Honeypot channel removed")  # type: ignore[arg-type]
+    except discord.Forbidden:
+        logger.warning(f"Honeypot: cannot clear topic on {channel.id} - missing permission")
+    except Exception as exc:
+        logger.warning(f"Honeypot: could not clear topic on {channel.id}: {exc}")
 
     return True
 

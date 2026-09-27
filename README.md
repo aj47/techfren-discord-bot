@@ -218,99 +218,74 @@ SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict per-channel 
 
 ## Honeypot Trap
 
-An anti-spam trap for **new or inactive accounts**. A moderator registers a decoy
-channel with `/honeypot-set`; anyone who posts in it is scored, and an account that
-both fails every immunity check and shows behaviour with no innocent reading is
-timed out or banned. Established members cannot be caught by it, by construction.
+An anti-spam trap for **new accounts**. A moderator registers a decoy channel with
+`/honeypot-set`; any account that posts in it is checked, and an account that fails
+every immunity check is treated as a spam bot.
 
-**Off by default.** With `HONEYPOT_ENABLED` unset the feature is inert, and even
-once enabled `HONEYPOT_DRY_RUN=true` (the default) scores and logs every hit without
-touching anyone. Run it in dry run for a while and read `/honeypot-hits` before
-switching enforcement on.
+Off by default. `HONEYPOT_ENABLED` unset means the trap is completely inert, and even
+once enabled `HONEYPOT_DRY_RUN=true` (the default) records and logs every hit without
+punishing anyone. Run it dry for a week, read `/honeypot-hits`, then switch it off.
 
-### Immunity
+### Who is immune
 
 An account is never actioned if **any** of these is true:
 
-- it holds one of the roles in `HONEYPOT_TRUSTED_ROLE_IDS` (an explicit allow-list by
-  ID — *not* "any role above the join role", because the self-assignable `/color`
-  roles outrank the join role, so a positional rule would let a spam account
-  immunise itself by picking a colour)
+- it holds a role listed in `HONEYPOT_TRUSTED_ROLE_IDS`
 - it has ever earned a point (`lifetime_points >= 1`)
-- its Discord account is at least `HONEYPOT_MATURE_ACCOUNT_DAYS` old **and** it joined
-  at least `HONEYPOT_SETTLED_JOIN_DAYS` ago
+- it is established: account 30+ days old **and** joined 14+ days ago
 
-The maturity rule matters more than it looks: in this server only ~160 of 3,555
-humans hold a non-join role or have ever earned a point, so role-plus-points alone
-would point the trap at 95% of the roster — most of them long-standing lurkers.
-With maturity immunity the target population is ~34 accounts (1%), every one of them
-a recent arrival. Set `HONEYPOT_IMMUNITY_NEEDS_MATURITY=false` to disable it.
+This is a whitelist, not a spam detector - proving an account is established is
+trivial and cannot false-positive, while detecting spam positively is unreliable.
 
-With `HONEYPOT_REQUIRE_TRUSTED_ROLES=true` (the default) the trap also *refuses to
-act at all* while `HONEYPOT_TRUSTED_ROLE_IDS` is empty, so a half-finished setup
-cannot degrade into "action everyone who has no points".
+The third rule is what keeps the trap pointed at new accounts. Measured against this
+server: 3,555 humans, of whom only 131 hold a non-join role and 133 have points
+history, leaving 3,397 (95.6%) with neither - including members who joined over three
+years ago. Role-and-points alone would have aimed the trap at most of the server.
 
-### Scoring
+### What triggers it
 
-Signals are in two tiers. An unestablished account is scored:
+Any one of these, in the trap channel:
 
-**Primary** (`HONEYPOT_BAN_SCORE` points each) — behaviour with no innocent reading:
+- posts a link or a Discord invite
+- account under 24 hours old
+- posts in 3 or more channels within 60 seconds
+- posts identical text in 2 or more channels
 
-- posting in `HONEYPOT_BLAST_CHANNELS` or more distinct channels within
-  `HONEYPOT_BLAST_WINDOW_SECONDS` (the prettygirls incident: 3 channels in 60s)
-- an invite link, or any URL, in the trap channel
-- an account younger than `HONEYPOT_FRESH_ACCOUNT_HOURS`
-- identical message text (after folding invisible characters and whitespace) in
-  `HONEYPOT_DUPLICATE_CHANNELS` or more channels within
-  `HONEYPOT_DUPLICATE_WINDOW_MINUTES`
+Everything else - no prior messages, mention spam, a young account, known spam
+phrasing, a bare domain in prose - is recorded in the hit log as context but never
+causes an action by itself.
 
-**Corroborating** — raises the response, never acts alone:
+### What happens
 
-- an account younger than `HONEYPOT_YOUNG_ACCOUNT_DAYS`
-- no prior messages ever, or unknown history
-- `HONEYPOT_MENTION_SPAM_COUNT` or more mentions/role pings
-- joined within the last 30 minutes
-- phrasing from known spam pitches
-- a bare domain in prose (weaker than a real URL, so it corroborates only)
+- **one trigger** -> delete the message + a `HONEYPOT_TIMEOUT_MINUTES` timeout
+- **two triggers, or any trigger on an account already caught before** -> ban and
+  purge the last 24 hours of their messages
 
-**Response tier** — a first strike is never a permaban:
+So a first strike is never a permaban, and no amount of circumstantial context can
+ban anyone on its own.
 
-- no signals → ignored
-- corroborating only → logged, no action
-- `HONEYPOT_TIMEOUT_SCORE` points → delete the message + `HONEYPOT_TIMEOUT_MINUTES` timeout
-- `HONEYPOT_BAN_SCORE` points **and** (2+ primary signals **or** a previously recorded
-  hit) → ban + purge the last `HONEYPOT_PURGE_SECONDS` of their messages
+### Safety rails
 
-`HONEYPOT_BAN_REQUIRES_REPEAT=false` restores the simpler "any primary signal above
-the score threshold bans" behaviour.
+- the trap refuses to act at all while `HONEYPOT_TRUSTED_ROLE_IDS` is empty, rather
+  than degrading into "action everyone without points"
+- trusted roles are an explicit allow-list by ID, not "any role above the join role":
+  the self-assignable `/color` roles outrank the join role, so a positional rule
+  could be self-granted
+- every decision is written to `honeypot_hits` and posted to
+  `HONEYPOT_LOG_CHANNEL_ID` when set, including dry runs and failed actions, so a
+  role-hierarchy problem shows up instead of failing silently
+- messages in the trap channel are dropped before the message log, the website
+  mirror and the summariser ever see them
 
-Every decision is written to the `honeypot_hits` table and, if
-`HONEYPOT_LOG_CHANNEL_ID` is set, posted there as an embed. A hit is recorded even
-in dry run and even when the action fails, so a role-hierarchy problem is visible
-rather than silent.
+The thresholds are constants in `honeypot_handler.py` rather than environment
+settings, so the whole behaviour can be reviewed in one file.
 
 ### Commands
 
-- `/honeypot-set <channel>`: register a trap channel (admin only). Refuses while the
-  trusted-role allow-list is empty, and sets a loud "TRAP CHANNEL - DO NOT POST
-  HERE" topic warning, which is the only thing protecting a curious member.
-- `/honeypot-remove <channel>`, `/honeypot-clear`: deregister, clearing the topic
-- `/honeypot-status`: current mode (disabled / dry run / live), trap channels,
-  immunity and thresholds
-- `/honeypot-hits [limit]`: recent hits with scores and reasons
-
-### Notes
-
-- Trap-channel messages are dropped before anything else in `on_message`: they are
-  never mirrored to the website, stored, or summarised. The channel is a decoy.
-- Checking "has this account ever spoken here?" needs history older than the
-  `messages` table's ~3.5-day rotation, so the durable `member_first_seen` table
-  tracks joins and first messages. The `members` intent is **not** required (join
-  dates come from message payloads); set `ENABLE_MEMBERS_INTENT=true` only to also
-  record joins for members who never post, which also needs the Developer Portal
-  toggle.
-- `honeypot_channels` is a separate table rather than reuse of the `messages`
-  table's channel list, so a trap survives a channel rename.
+- `/honeypot-set` - register a channel as a trap and set a warning topic (admin)
+- `/honeypot-remove` - stop treating a channel as a trap (admin)
+- `/honeypot-status` - show the current configuration and registered channels (admin)
+- `/honeypot-hits` - show recent hits (admin)
 
 ## Database
 

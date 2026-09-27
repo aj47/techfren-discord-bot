@@ -37,11 +37,18 @@ from x_link_utils import (  # X/Twitter link rewriting
     build_thread_name,
 )
 from honeypot_handler import (  # Honeypot trap for new/inactive accounts
+    BAN_TRIGGERS,
+    BLAST_CHANNELS,
+    BLAST_WINDOW_SECONDS,
+    DUPLICATE_CHANNELS,
+    DUPLICATE_WINDOW_MINUTES,
+    FRESH_ACCOUNT_HOURS,
+    MATURE_ACCOUNT_DAYS,
+    SETTLED_JOIN_DAYS,
     handle_honeypot_message,
     is_honeypot_channel,
     register_honeypot_channel,
     unregister_honeypot_channel,
-    unregister_honeypot_channel_by_id,
     list_honeypot_channels,
     load_rules as load_honeypot_rules,
 )
@@ -3334,26 +3341,33 @@ async def honeypot_status(interaction: discord.Interaction):
         embed.add_field(name="State", value=state, inline=False)
         embed.add_field(name="Trap channels", value=listing, inline=False)
         embed.add_field(
-            name="Immunity",
+            name="Who is immune",
             value=(
-                f"{len(rules.trusted_role_ids)} trusted role(s), any lifetime points history, "
-                f"or an account ≥{rules.mature_account_days}d old joined ≥{rules.settled_join_days}d ago\n"
-                f"role allow-list enforced: {rules.require_trusted_role_ids}, "
-                f"maturity immunity: {rules.immunity_needs_maturity}"
+                f"{len(rules.trusted_role_ids)} trusted role(s)\n"
+                f"any lifetime points history\n"
+                f"or an account {MATURE_ACCOUNT_DAYS}+ days old that "
+                f"joined {SETTLED_JOIN_DAYS}+ days ago"
             ),
             inline=False,
         )
         embed.add_field(
-            name="Thresholds",
+            name="Triggers",
             value=(
-                f"blast: {rules.blast_channels} channels / {rules.blast_window_seconds}s\n"
-                f"duplicates: {rules.duplicate_channels} channels / "
-                f"{rules.duplicate_window_minutes}min\n"
-                f"fresh account: {rules.fresh_account_hours}h\n"
-                f"score: {rules.timeout_score} → delete + {rules.timeout_minutes}m timeout, "
-                f"{rules.ban_score} → ban\n"
-                f"ban needs {rules.ban_min_primary_signals}+ primary signals or a prior hit: "
-                f"{rules.ban_requires_repeat}"
+                f"invite or link in the trap channel\n"
+                f"account under {FRESH_ACCOUNT_HOURS}h old\n"
+                f"posting in {BLAST_CHANNELS}+ channels within "
+                f"{BLAST_WINDOW_SECONDS}s\n"
+                f"identical text in {DUPLICATE_CHANNELS}+ channels "
+                f"within {DUPLICATE_WINDOW_MINUTES}min"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Response",
+            value=(
+                f"1 trigger → delete + {rules.timeout_minutes}m timeout\n"
+                f"{BAN_TRIGGERS}+ triggers, or any trigger on an "
+                f"account caught before → ban"
             ),
             inline=False,
         )
@@ -3363,46 +3377,6 @@ async def honeypot_status(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         logger.error(f"Error in /honeypot-status: {str(e)}", exc_info=True)
-        if not interaction.response.is_done():
-            await interaction.response.send_message(
-                "An error occurred. Check the bot logs.", ephemeral=True
-            )
-
-
-@app_commands.command(
-    name="honeypot-clear",
-    description="Remove every honeypot trap channel (admin only)"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def honeypot_clear(interaction: discord.Interaction):
-    """Deregister all honeypot trap channels in this guild."""
-    try:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        guild = interaction.guild
-        if guild is None:
-            await interaction.followup.send(
-                "Run this command in a server.", ephemeral=True
-            )
-            return
-        channels = list_honeypot_channels(str(guild.id))
-        if not channels:
-            await interaction.followup.send("No trap channels to remove.", ephemeral=True)
-            return
-
-        removed = []
-        for row in channels:
-            if await unregister_honeypot_channel_by_id(str(row['channel_id']), guild):
-                removed.append(f"<#{row['channel_id']}>")
-
-        await interaction.followup.send(
-            f"Removed {len(removed)} trap channel(s): {', '.join(removed)}", ephemeral=True
-        )
-        logger.warning(
-            f"Honeypot: {interaction.user} ({interaction.user.id}) cleared all trap "
-            f"channels in guild {guild.id}"
-        )
-    except Exception as e:
-        logger.error(f"Error in /honeypot-clear: {str(e)}", exc_info=True)
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 "An error occurred. Check the bot logs.", ephemeral=True
