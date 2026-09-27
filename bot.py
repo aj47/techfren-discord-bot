@@ -3220,7 +3220,7 @@ async def ask_fred_command(interaction: discord.Interaction, prompt: str):
 # HONEYPOT_ENABLED / HONEYPOT_DRY_RUN in .env. See honeypot_handler.py.
 # ============================================================================
 
-@app_commands.command(
+@bot.tree.command(
     name="honeypot-set",
     description="Register a channel as a spam honeypot (admin only)"
 )
@@ -3283,7 +3283,7 @@ async def honeypot_set(
             )
 
 
-@app_commands.command(
+@bot.tree.command(
     name="honeypot-remove",
     description="Stop treating a channel as a spam honeypot (admin only)"
 )
@@ -3310,7 +3310,7 @@ async def honeypot_remove(interaction: discord.Interaction, channel: discord.Tex
             )
 
 
-@app_commands.command(
+@bot.tree.command(
     name="honeypot-status",
     description="Show honeypot trap configuration and registered channels (admin only)"
 )
@@ -3390,7 +3390,7 @@ async def honeypot_status(interaction: discord.Interaction):
             )
 
 
-@app_commands.command(
+@bot.tree.command(
     name="honeypot-hits",
     description="Show recent honeypot hits (admin only)"
 )
