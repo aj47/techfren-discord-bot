@@ -329,3 +329,94 @@ convex_ingest_url = os.getenv('CONVEX_INGEST_URL')          # e.g. https://<depl
 bridge_secret = os.getenv('BRIDGE_SECRET')                  # shared bearer secret
 bridge_guild_id = os.getenv('BRIDGE_GUILD_ID')              # optional: only mirror this guild
 bridge_exclude_channel_ids = os.getenv('BRIDGE_EXCLUDE_CHANNEL_IDS', '')  # optional: comma-separated
+
+
+# --- honeypot trap ----------------------------------------------------------
+# Catches spam/bot accounts that post in a designated trap channel. Only
+# accounts that are neither holding a trusted role nor carrying any points
+# history are ever actioned, so established members cannot be caught by it.
+#
+# Off by default: nothing is evaluated until HONEYPOT_ENABLED is set, and even
+# then HONEYPOT_DRY_RUN still logs decisions without enforcing them.
+honeypot_enabled = os.getenv('HONEYPOT_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# When true, hits are scored, recorded in the honeypot_hits table and reported to
+# HONEYPOT_LOG_CHANNEL_ID, but no member is timed out or banned.
+honeypot_dry_run = os.getenv('HONEYPOT_DRY_RUN', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+
+HONEYPOT_ENABLED = honeypot_enabled
+HONEYPOT_DRY_RUN = honeypot_dry_run
+
+# Where honeypot decisions are reported. Optional: hits are always written to the
+# database either way, this only adds the Discord embed.
+HONEYPOT_LOG_CHANNEL_ID = os.getenv('HONEYPOT_LOG_CHANNEL_ID')
+
+# Comma-separated role IDs whose holders are immune. Must be an explicit
+# allow-list, not "any role above the join role": the self-assignable /color
+# roles outrank the join role, so a positional rule would let a spam account
+# immunise itself by picking a colour.
+_honeypot_roles_raw = os.getenv('HONEYPOT_TRUSTED_ROLE_IDS', '')
+HONEYPOT_TRUSTED_ROLE_IDS = [
+    rid.strip() for rid in _honeypot_roles_raw.split(',') if rid.strip()
+]
+
+# Safety interlock. With this true (the default), the trap refuses to act at all
+# while HONEYPOT_TRUSTED_ROLE_IDS is empty, so a half-configured deploy cannot
+# degrade into "action everyone without points".
+HONEYPOT_REQUIRE_TRUSTED_ROLES = os.getenv(
+    'HONEYPOT_REQUIRE_TRUSTED_ROLES', 'true'
+).strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Acknowledge hits in the trap channel. Off by default: replying in the channel
+# tells automated spam that the channel is live.
+HONEYPOT_ANNOUNCE_IN_CHANNEL = os.getenv(
+    'HONEYPOT_ANNOUNCE_IN_CHANNEL', 'false'
+).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _honeypot_int(name: str, default: int) -> int:
+    """Read an integer setting, falling back to the default when invalid."""
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= 0 else default
+    except (ValueError, TypeError):
+        return default
+
+
+# Scoring thresholds. Banning requires a primary signal (a channel blast, a link
+# in the trap channel, a same-day account, or identical text across channels)
+# plus this many points, so circumstantial signals alone cannot ban anyone.
+HONEYPOT_BAN_SCORE = _honeypot_int('HONEYPOT_BAN_SCORE', 5)
+HONEYPOT_TIMEOUT_SCORE = _honeypot_int('HONEYPOT_TIMEOUT_SCORE', 2)
+HONEYPOT_TIMEOUT_MINUTES = _honeypot_int('HONEYPOT_TIMEOUT_MINUTES', 60)
+# Seconds of history purged on a ban; Discord caps this at 7 days.
+HONEYPOT_PURGE_SECONDS = _honeypot_int('HONEYPOT_PURGE_SECONDS', 86400)
+
+# Primary signal shapes.
+HONEYPOT_BLAST_CHANNELS = _honeypot_int('HONEYPOT_BLAST_CHANNELS', 3)
+HONEYPOT_BLAST_WINDOW_SECONDS = _honeypot_int('HONEYPOT_BLAST_WINDOW_SECONDS', 60)
+HONEYPOT_FRESH_ACCOUNT_HOURS = _honeypot_int('HONEYPOT_FRESH_ACCOUNT_HOURS', 24)
+HONEYPOT_DUPLICATE_CHANNELS = _honeypot_int('HONEYPOT_DUPLICATE_CHANNELS', 2)
+HONEYPOT_DUPLICATE_WINDOW_MINUTES = _honeypot_int('HONEYPOT_DUPLICATE_WINDOW_MINUTES', 5)
+
+# Corroborating signal shapes.
+HONEYPOT_YOUNG_ACCOUNT_DAYS = _honeypot_int('HONEYPOT_YOUNG_ACCOUNT_DAYS', 30)
+HONEYPOT_MENTION_SPAM_COUNT = _honeypot_int('HONEYPOT_MENTION_SPAM_COUNT', 5)
+
+# Immunity by maturity: without it, "trusted role or any points history" covers
+# only the members who have ever earned a point. The guild has thousands of quiet
+# lurkers holding just the join role, so the trap would be aimed at them rather
+# than at new accounts. An account this old that has been in the server this
+# long counts as established regardless of roles or points.
+HONEYPOT_MATURE_ACCOUNT_DAYS = _honeypot_int('HONEYPOT_MATURE_ACCOUNT_DAYS', 30)
+HONEYPOT_SETTLED_JOIN_DAYS = _honeypot_int('HONEYPOT_SETTLED_JOIN_DAYS', 14)
+HONEYPOT_IMMUNITY_NEEDS_MATURITY = os.getenv(
+    'HONEYPOT_IMMUNITY_NEEDS_MATURITY', 'true'
+).strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Never permaban on a first strike: with this on, a ban needs either this many
+# independent primary signals or a previous recorded hit on the same account.
+HONEYPOT_BAN_REQUIRES_REPEAT = os.getenv(
+    'HONEYPOT_BAN_REQUIRES_REPEAT', 'true'
+).strip().lower() in ('1', 'true', 'yes', 'on')
+HONEYPOT_BAN_MIN_PRIMARY_SIGNALS = _honeypot_int('HONEYPOT_BAN_MIN_PRIMARY_SIGNALS', 2)
