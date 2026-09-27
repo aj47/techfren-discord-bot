@@ -14,7 +14,7 @@ import json
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 import database
-from leaderboard_format import format_leaderboard_message as _format_leaderboard_message
+from leaderboard_format import format_leaderboard_message as _format_leaderboard_message, order_for
 from logging_config import logger  # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_llm, call_llm_with_database_context  # Import LLM functions
@@ -2163,11 +2163,7 @@ async def leaderboard_slash(interaction: discord.Interaction, board: str = "all-
         # Get leaderboard from database. The default board is everything the
         # member has ever earned, so spending a colour's daily point does not
         # push them down the rankings.
-        order_by = {
-            "all-time": "lifetime",
-            "balance": "balance",
-            "spenders": "spent",
-        }.get(board, "lifetime")
+        order_by = order_for(board)
 
         leaderboard = database.get_leaderboard(guild_id, limit, order_by=order_by)
 
