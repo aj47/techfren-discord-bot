@@ -1,0 +1,66 @@
+"""
+Rendering for the /leaderboard command.
+
+Kept out of bot.py so the wording of each board is importable and testable
+without booting the bot (importing bot.py connects to Discord).
+
+There are three boards and they answer three different questions:
+
+* all-time (default) — everything a member has earned. Spending never lowers
+  it, so buying a role colour does not cost a member their rank.
+* balance — what is left to spend right now.
+* spenders — who has actually used their points, which is the behaviour the
+  economy wants to encourage.
+"""
+
+from typing import Any, Dict, List
+
+
+def format_leaderboard_message(leaderboard: List[Dict[str, Any]], order_by: str) -> str:
+    """Render a leaderboard as a Discord message.
+
+    Args:
+        leaderboard: rows as database.get_leaderboard returns them, already in
+            rank order for the requested board
+        order_by: 'lifetime' (all-time), 'balance' or 'spent' (spenders)
+    """
+    if order_by == "lifetime":
+        message = f"🏆 **Top {len(leaderboard)} contributors** — points earned all-time\n\n"
+    elif order_by == "balance":
+        message = f"💰 **Top {len(leaderboard)} balances** — points left to spend\n\n"
+    else:
+        message = f"💸 **Top {len(leaderboard)} spenders** — points used in the server\n\n"
+
+    for idx, entry in enumerate(leaderboard, 1):
+        balance = entry['total_points']
+        lifetime = entry.get('lifetime_points', balance)
+        spent = entry.get('spent', lifetime - balance)
+
+        # Add medal emojis for top 3
+        if idx == 1:
+            medal = "🥇"
+        elif idx == 2:
+            medal = "🥈"
+        elif idx == 3:
+            medal = "🥉"
+        else:
+            medal = f"{idx}."
+
+        if order_by == "lifetime":
+            detail = f"{lifetime} earned · {balance} left"
+        elif order_by == "balance":
+            detail = f"{balance} left · {lifetime} earned"
+        else:
+            detail = f"{spent} spent · {balance} left"
+
+        message += f"{medal} **{entry['author_name']}**: {detail}\n"
+
+    if order_by == "spenders":
+        message += "\nPoints are spent on a role colour, a GIF bypass or frenbot access."
+    else:
+        message += (
+            "\nRanked on everything a member has earned — spending points never lowers it. "
+            "Try `/leaderboard board:biggest spenders`."
+        )
+
+    return message

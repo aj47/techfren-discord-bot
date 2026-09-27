@@ -1371,30 +1371,48 @@ def get_user_points_summary(author_id: str, guild_id: str) -> Dict[str, int]:
         logger.error(f"Error getting point summary for user {author_id}: {str(e)}", exc_info=True)
         return {'points': 0, 'lifetime_points': 0, 'spent': 0}
 
-def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+# How a board is ordered. "lifetime" is the default: a member who spends points
+# on a colour or a GIF bypass should not slide down the board for it, or the
+# ranking rewards hoarding. "spent" is the mirror image — who actually used them.
+_LEADERBOARD_ORDERS = {
+    "lifetime": "MAX(lifetime_points, total_points) DESC, total_points DESC",
+    "balance": "total_points DESC, MAX(lifetime_points, total_points) DESC",
+    "spent": (
+        "(MAX(lifetime_points, total_points) - total_points) DESC, "
+        "MAX(lifetime_points, total_points) DESC"
+    ),
+}
+
+
+def get_leaderboard(guild_id: str, limit: int = 10, order_by: str = "lifetime") -> List[Dict[str, Any]]:
     """
     Get the top users by points in a guild.
 
     Args:
         guild_id (str): The Discord guild ID
         limit (int): Maximum number of users to return
+        order_by (str): 'lifetime' (everything ever earned), 'balance' (what is
+            spendable now) or 'spent' (how much has been spent)
 
     Returns:
         List[Dict[str, Any]]: List of users with their points
     """
+    if order_by not in _LEADERBOARD_ORDERS:
+        raise ValueError(f"Unknown leaderboard order: {order_by!r}")
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Ranked on the spendable balance, as it always has been, but each
-            # row also carries what that member has earned in total so a reader
-            # can tell a quiet member from one who has spent their points.
+            # Ranked on everything the member has earned, with the spendable
+            # balance alongside it so a reader can tell a quiet member from one
+            # who spent what they earned.
             cursor.execute(
-                """
+                f"""
                 SELECT author_id, author_name, total_points, lifetime_points, last_updated
                 FROM user_points
                 WHERE guild_id = ?
-                ORDER BY total_points DESC
+                ORDER BY {_LEADERBOARD_ORDERS[order_by]}
                 LIMIT ?
                 """,
                 (guild_id, limit)
@@ -1409,10 +1427,11 @@ def get_leaderboard(guild_id: str, limit: int = 10) -> List[Dict[str, Any]]:
                     'author_name': row['author_name'],
                     'total_points': total_points,
                     'lifetime_points': lifetime_points,
+                    'spent': lifetime_points - total_points,
                     'last_updated': row['last_updated']
                 })
 
-        logger.info(f"Retrieved leaderboard for guild {guild_id} with {len(leaderboard)} users")
+        logger.info(f"Retrieved leaderboard ({order_by}) for guild {guild_id} with {len(leaderboard)} users")
         return leaderboard
     except Exception as e:
         logger.error(f"Error getting leaderboard for guild {guild_id}: {str(e)}", exc_info=True)

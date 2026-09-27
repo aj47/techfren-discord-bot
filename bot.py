@@ -11,9 +11,10 @@ from urllib.parse import urlparse
 
 import os
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 import database
+from leaderboard_format import format_leaderboard_message as _format_leaderboard_message
 from logging_config import logger  # Import the logger from the new module
 from rate_limiter import check_rate_limit, update_rate_limit_config  # Import rate limiting functions
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_llm, call_llm_with_database_context  # Import LLM functions
@@ -2108,13 +2109,29 @@ async def gif_bypass_slash(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="leaderboard", description="View the top users by points")
-async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
+def format_leaderboard_message(leaderboard: List[Dict[str, Any]], order_by: str) -> str:
+    """Render a leaderboard as a Discord message (see leaderboard_format.py)."""
+    return _format_leaderboard_message(leaderboard, order_by)
+
+
+@bot.tree.command(
+    name="leaderboard",
+    description="Points standings: all-time earned, spendable balance, or biggest spenders",
+)
+@app_commands.choices(
+    board=[
+        app_commands.Choice(name="all-time (earned)", value="all-time"),
+        app_commands.Choice(name="balance (left to spend)", value="balance"),
+        app_commands.Choice(name="biggest spenders", value="spenders"),
+    ]
+)
+async def leaderboard_slash(interaction: discord.Interaction, board: str = "all-time", limit: int = 10):
     """
     Slash command to display the points leaderboard.
 
     Args:
         interaction: The Discord interaction
+        board: Which standings to show (all-time, balance or spenders)
         limit: Number of top users to display (default: 10, max: 25)
     """
     try:
@@ -2143,8 +2160,16 @@ async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
 
         guild_id = str(interaction.guild.id)
 
-        # Get leaderboard from database
-        leaderboard = database.get_leaderboard(guild_id, limit)
+        # Get leaderboard from database. The default board is everything the
+        # member has ever earned, so spending a colour's daily point does not
+        # push them down the rankings.
+        order_by = {
+            "all-time": "lifetime",
+            "balance": "balance",
+            "spenders": "spent",
+        }.get(board, "lifetime")
+
+        leaderboard = database.get_leaderboard(guild_id, limit, order_by=order_by)
 
         if not leaderboard:
             await interaction.response.send_message(
@@ -2153,29 +2178,10 @@ async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
             )
             return
 
-        # Format leaderboard message
-        message = f"🏆 **Top {len(leaderboard)} Contributors**\n\n"
-
-        for idx, entry in enumerate(leaderboard, 1):
-            author_name = entry['author_name']
-            total_points = entry['total_points']
-
-            # Add medal emojis for top 3
-            if idx == 1:
-                medal = "🥇"
-            elif idx == 2:
-                medal = "🥈"
-            elif idx == 3:
-                medal = "🥉"
-            else:
-                medal = f"{idx}."
-
-            lifetime_points = entry.get('lifetime_points', total_points)
-            earned = f" · {lifetime_points} all-time" if lifetime_points > total_points else ""
-            message += f"{medal} **{author_name}**: {total_points} points{earned}\n"
+        message = format_leaderboard_message(leaderboard, order_by)
 
         await interaction.response.send_message(message, ephemeral=False)
-        logger.info(f"User {interaction.user.name} requested leaderboard (top {limit})")
+        logger.info(f"User {interaction.user.name} requested leaderboard ({order_by}, top {limit})")
 
     except Exception as e:
         logger.error(f"Error in /leaderboard command: {str(e)}", exc_info=True)

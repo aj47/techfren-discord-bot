@@ -254,7 +254,10 @@ class Bridge:
                     "points": points,
                     "lifetimePoints": lifetime,
                 })
-        rows.sort(key=lambda r: r["points"], reverse=True)
+        # Published in rank order: everything the member has earned, which is
+        # what the site's board now ranks on. A member who spent their points
+        # keeps their place instead of dropping behind someone who hoarded.
+        rows.sort(key=lambda r: (r["lifetimePoints"], r["points"]), reverse=True)
         return rows, complete
 
     async def push_leaderboard(self) -> None:
