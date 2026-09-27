@@ -111,6 +111,43 @@ def test_leaderboard_carries_the_lifetime_total(setup_database):
     assert board['u2']['lifetime_points'] == 12
 
 
+def test_leaderboard_ranks_by_lifetime_not_by_balance(setup_database):
+    """Spending must not demote a member. ada earned 20 and spent 15, bo earned
+    12 and spent nothing: on balance bo leads, on contribution ada does."""
+    database.award_points_to_user("u1", "ada", GUILD, 20)
+    database.deduct_user_points("u1", GUILD, 15)
+    database.award_points_to_user("u2", "bo", GUILD, 12)
+
+    by_lifetime = [row['author_id'] for row in database.get_leaderboard(GUILD, limit=10)]
+    assert by_lifetime == ['u1', 'u2']
+
+    by_balance = [
+        row['author_id']
+        for row in database.get_leaderboard(GUILD, limit=10, order_by='balance')
+    ]
+    assert by_balance == ['u2', 'u1']
+
+
+def test_leaderboard_spenders_board_orders_by_what_was_spent(setup_database):
+    database.award_points_to_user("u1", "ada", GUILD, 20)
+    database.deduct_user_points("u1", GUILD, 5)
+    database.award_points_to_user("u2", "bo", GUILD, 20)
+    database.deduct_user_points("u2", GUILD, 18)
+
+    board = database.get_leaderboard(GUILD, limit=10, order_by='spent')
+    assert [row['author_id'] for row in board] == ['u2', 'u1']
+    assert board[0]['spent'] == 18
+    assert board[0]['total_points'] == 2
+    assert board[1]['spent'] == 5
+
+
+def test_leaderboard_rejects_an_unknown_order(setup_database):
+    database.award_points_to_user("u1", "ada", GUILD, 5)
+
+    with pytest.raises(ValueError):
+        database.get_leaderboard(GUILD, limit=10, order_by='most-points-pls')
+
+
 def _legacy_points_table(db_file):
     """Recreate the pre-migration user_points table (no lifetime_points)."""
     with sqlite3.connect(db_file) as conn:

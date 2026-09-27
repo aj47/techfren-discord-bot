@@ -142,7 +142,9 @@ async def test_push_leaderboard_mirrors_bot_points():
 @pytest.mark.asyncio
 async def test_push_leaderboard_keeps_a_member_who_spent_everything():
     """A zero balance after spending is not the same as never having earned:
-    dropping that member would erase the mirror's only record of it."""
+    dropping that member would erase the mirror's only record of it. They also
+    keep their rank — the push is ordered by what was earned, so spending does
+    not demote anyone."""
     b = _make_bridge()
     b.guild_id = 99
     fake_db = MagicMock()
@@ -156,8 +158,8 @@ async def test_push_leaderboard_keeps_a_member_who_spent_everything():
 
     rows = b._queue.get_nowait()["rows"]
     assert rows == [
-        {"discordUserId": "7", "name": "peas", "points": 10, "lifetimePoints": 10},
         {"discordUserId": "8", "name": "spender", "points": 0, "lifetimePoints": 96},
+        {"discordUserId": "7", "name": "peas", "points": 10, "lifetimePoints": 10},
     ]
 
 
