@@ -991,8 +991,9 @@ async def _repost_with_fixed_links(message: discord.Message, author_display_name
 
 async def handle_x_link_rewrite(message: discord.Message) -> None:
     """
-    Serve any x.com/twitter.com links in a message through an embed-friendly mirror
-    (fixupx.com), because Discord's own x.com embeds drop videos, images and text.
+    Serve any x.com/twitter.com **post** links in a message through an embed-friendly
+    mirror (fixupx.com), because Discord's own x.com embeds drop videos, images and text.
+    Profile links and other non-post x.com URLs are left exactly as posted.
 
     Depending on config.X_LINK_REWRITE_MODE the fix is delivered by:
       repost - reposting the author's full text under the bot with the links
@@ -1653,7 +1654,7 @@ async def on_message(message):
     except Exception as e:
         logger.error(f"Error storing message in database: {str(e)}", exc_info=True)
 
-    # Post embed-friendly mirrors of any x.com/twitter.com links.
+    # Post embed-friendly mirrors of any x.com/twitter.com post links.
     # Runs after the message is stored so the author's own message (and the point
     # credit derived from it) is already recorded and stays untouched.
     # Scheduled as a background task so its thread-creation delay doesn't hold up
