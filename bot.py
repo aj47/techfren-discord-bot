@@ -3341,12 +3341,18 @@ async def honeypot_status(interaction: discord.Interaction):
         embed.add_field(name="State", value=state, inline=False)
         embed.add_field(name="Trap channels", value=listing, inline=False)
         embed.add_field(
-            name="Who is immune",
+            name="Who is immune (no action at all)",
             value=(
                 f"{len(rules.trusted_role_ids)} trusted role(s)\n"
-                f"any lifetime points history\n"
-                f"or an account {MATURE_ACCOUNT_DAYS}+ days old that "
-                f"joined {SETTLED_JOIN_DAYS}+ days ago"
+                f"any lifetime points history"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name=f"Never banned, but still timed out",
+            value=(
+                f"an account {MATURE_ACCOUNT_DAYS}+ days old that joined "
+                f"{SETTLED_JOIN_DAYS}+ days ago"
             ),
             inline=False,
         )
@@ -3367,7 +3373,8 @@ async def honeypot_status(interaction: discord.Interaction):
             value=(
                 f"1 trigger → delete + {rules.timeout_minutes}m timeout\n"
                 f"{BAN_TRIGGERS}+ triggers, or any trigger on an "
-                f"account caught before → ban"
+                f"account caught before → ban\n"
+                f"but an established account is timed out instead of banned"
             ),
             inline=False,
         )

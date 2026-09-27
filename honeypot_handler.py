@@ -22,8 +22,10 @@ The handler runs in two stages:
    but never causes an action on its own.
 
 3. RESPONSE - one trigger is a delete plus a timeout. Two triggers, or any trigger
-   on an account already caught before, is a ban. So a first strike is never a
-   permaban and a single circumstantial signal can never ban anyone.
+   on an account already caught before, is a ban. An established account (see
+   ``established_reason``) is still timed out but can never be banned. So a first
+   strike is never a permaban and a single circumstantial signal can never ban
+   anyone.
 
 ``Rules.dry_run`` defaults to True: decisions are logged and announced but no
 member is timed out or banned until it is explicitly switched off.
@@ -248,6 +250,8 @@ class Decision:
     triggers: Tuple[str, ...] = ()
     # Context that informed the log but never caused the action.
     context: Tuple[str, ...] = ()
+    # Set when an established account earned a ban and was timed out instead.
+    ban_withheld: Optional[str] = None
 
     @property
     def score(self) -> int:
@@ -272,6 +276,8 @@ class Decision:
             parts.append("no triggers")
         if self.context:
             parts.append("context: " + ", ".join(self.context))
+        if self.ban_withheld:
+            parts.append(f"ban withheld: {self.ban_withheld}")
         return "; ".join(parts)
 
 
@@ -316,6 +322,31 @@ def matches_scam_phrasing(content: str) -> bool:
     return any(phrase in lowered for phrase in _SCAM_PHRASES)
 
 
+def established_reason(
+    facts: HitFacts,
+    now: Optional[datetime] = None,
+) -> Optional[str]:
+    """
+    Return why this account is too established to ban, or None.
+
+    Established accounts are not immune: a link in the trap channel still means a
+    deleted message and a timeout. But an account this old, in the server this
+    long, has earned the benefit of the doubt on intent, and a permaban is the one
+    response it can never receive -- however it behaves, and however often.
+    """
+    created = _as_utc(facts.account_created_at)
+    joined = _as_utc(facts.joined_at)
+    if created is None or joined is None:
+        return None
+
+    current = _as_utc(now) or datetime.now(timezone.utc)
+    account_days = (current - created).days
+    join_days = (current - joined).days
+    if account_days >= MATURE_ACCOUNT_DAYS and join_days >= SETTLED_JOIN_DAYS:
+        return f"established account ({account_days}d old, joined {join_days}d ago)"
+    return None
+
+
 def immunity_reason(
     facts: HitFacts,
     rules: Rules,
@@ -324,9 +355,9 @@ def immunity_reason(
     """
     Return why this account must not be actioned, or None if it is not immune.
 
-    Bots and webhooks are never actioned. Beyond that, an account is established
-    if it holds a trusted role, has ever earned points, or is simply old enough to
-    have proved itself (see ``rules.mature_account_days``).
+    Bots and webhooks are never actioned. Beyond that, an account holding a trusted
+    role or with any points history has contributed here, and is left alone
+    entirely. Age alone does not grant that: see :func:`established_reason`.
     """
     if facts.is_bot:
         return "bot account"
@@ -336,19 +367,6 @@ def immunity_reason(
         return "trusted role: " + ", ".join(sorted(facts.trusted_role_names))
     if facts.lifetime_points >= 1:
         return f"points history ({facts.lifetime_points} lifetime)"
-
-    # Immunity by maturity. Without this, "trusted role or points" covers only the
-    # few hundred members who have ever earned a point: the rest of the roster are
-    # quiet lurkers who hold just the join role, and the trap would be pointed at
-    # them rather than at new accounts.
-    created = _as_utc(facts.account_created_at)
-    joined = _as_utc(facts.joined_at)
-    if created is not None and joined is not None:
-        current = _as_utc(now) or datetime.now(timezone.utc)
-        account_days = (current - created).days
-        join_days = (current - joined).days
-        if account_days >= MATURE_ACCOUNT_DAYS and join_days >= SETTLED_JOIN_DAYS:
-            return f"established account ({account_days}d old, joined {join_days}d ago)"
     return None
 
 
@@ -450,11 +468,20 @@ def classify(
     else:
         action = Action.TIMEOUT
 
+    # An established account is still timed out, but never banned -- not on a pile
+    # of triggers, and not on a repeat (a prior hit of its own was a timeout too).
+    shield = established_reason(facts, now=now)
+    if shield is not None and action == Action.BAN:
+        action = Action.TIMEOUT
+    else:
+        shield = None
+
     return Decision(
         immune=False,
         action=action,
         triggers=tuple(triggers),
         context=tuple(context),
+        ban_withheld=shield,
     )
 
 
@@ -553,7 +580,7 @@ async def collect_facts(message: discord.Message, rules: Rules) -> HitFacts:
     try:
         channels_in_window = tuple(
             database.get_recent_channel_ids(
-                user_id, guild_id, seconds=rules.blast_window_seconds
+                user_id, guild_id, seconds=BLAST_WINDOW_SECONDS
             )
         )
         duplicates = tuple(
@@ -561,7 +588,7 @@ async def collect_facts(message: discord.Message, rules: Rules) -> HitFacts:
                 user_id,
                 guild_id,
                 normalize_content(message.content),
-                minutes=rules.duplicate_window_minutes,
+                minutes=DUPLICATE_WINDOW_MINUTES,
             )
         )
     except Exception as exc:  # pragma: no cover - defensive

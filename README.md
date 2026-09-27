@@ -228,19 +228,28 @@ punishing anyone. Run it dry for a week, read `/honeypot-hits`, then switch it o
 
 ### Who is immune
 
-An account is never actioned if **any** of these is true:
+An account is never actioned at all if **either** of these is true:
 
 - it holds a role listed in `HONEYPOT_TRUSTED_ROLE_IDS`
 - it has ever earned a point (`lifetime_points >= 1`)
-- it is established: account 30+ days old **and** joined 14+ days ago
 
-This is a whitelist, not a spam detector - proving an account is established is
+This is a whitelist, not a spam detector - proving an account has contributed is
 trivial and cannot false-positive, while detecting spam positively is unreliable.
 
-The third rule is what keeps the trap pointed at new accounts. Measured against this
-server: 3,555 humans, of whom only 131 hold a non-join role and 133 have points
-history, leaving 3,397 (95.6%) with neither - including members who joined over three
-years ago. Role-and-points alone would have aimed the trap at most of the server.
+Only 131 members hold a non-join role and 133 have points history, out of 3,555
+humans, so role-and-points alone leaves 3,397 (95.6%) of the server with no
+protection. Age covers the rest:
+
+### Never banned, but still timed out
+
+An account 30+ days old that joined 14+ days ago is **established**: it can still be
+deleted and timed out for posting in the trap channel, but it can never be banned -
+not on a pile of triggers, and not on a repeat.
+
+That is the split that keeps the trap useful. A permaban is irreversible and the one
+response an established member should never receive for a mistake in a dead channel;
+a one-hour timeout is enough to stop the behaviour and is trivially reversible. Any
+account too new to qualify gets the full response.
 
 ### What triggers it
 
@@ -260,9 +269,13 @@ causes an action by itself.
 - **one trigger** -> delete the message + a `HONEYPOT_TIMEOUT_MINUTES` timeout
 - **two triggers, or any trigger on an account already caught before** -> ban and
   purge the last 24 hours of their messages
+- **if the account is established** (30+ days old, 14+ days here) -> the ban is
+  withheld and it is timed out instead
 
-So a first strike is never a permaban, and no amount of circumstantial context can
-ban anyone on its own.
+So a first strike is never a permaban, no amount of circumstantial context can ban
+anyone on its own, and an established account can never be banned by the trap at all.
+Every withheld ban is recorded in `honeypot_hits` and the log channel so a moderator
+can still ban by hand if the behaviour warrants it.
 
 ### Safety rails
 

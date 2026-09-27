@@ -23,6 +23,7 @@ from honeypot_handler import (
     classify,
     contains_invite,
     contains_link,
+    established_reason,
     immunity_reason,
     matches_scam_phrasing,
     normalize_content,
@@ -113,19 +114,29 @@ class TestImmunity:
         """A young account with no role and no points is the target population."""
         assert immunity_reason(make_young_facts(), Rules()) is None
 
-    def test_mature_account_is_immune_without_role_or_points(self):
-        """The guild is mostly quiet lurkers: 3,397 humans hold no trusted role
-        and have never earned a point. Age, not points, has to cover them."""
-        assert immunity_reason(make_facts(), Rules()) is not None
+    def test_age_alone_is_not_immunity(self):
+        """The guild is mostly quiet lurkers with no role and no points, so age
+        cannot grant full immunity or the trap would never act on anyone."""
+        assert immunity_reason(make_facts(), Rules()) is None
 
-    def test_old_account_that_just_joined_is_not_immune(self):
+
+class TestBanShield:
+    """An established account can be timed out, never banned."""
+
+    def test_established_account_is_shielded(self):
+        assert established_reason(make_facts()) is not None
+
+    def test_young_account_is_not_shielded(self):
+        assert established_reason(make_young_facts()) is None
+
+    def test_old_account_that_just_joined_is_not_shielded(self):
         """A 10-year-old Discord account that joined yesterday is still new here."""
         now = datetime.now(timezone.utc)
         facts = make_facts(
             account_created_at=now - timedelta(days=3650),
             joined_at=now - timedelta(days=1),
         )
-        assert immunity_reason(facts, Rules()) is None
+        assert established_reason(facts) is None
 
     def test_needs_both_age_and_tenure(self):
         """45 days old but 5 days in the server is still a new arrival here."""
@@ -134,7 +145,46 @@ class TestImmunity:
             account_created_at=now - timedelta(days=45),
             joined_at=now - timedelta(days=5),
         )
-        assert immunity_reason(facts, Rules()) is None
+        assert established_reason(facts) is None
+
+    def test_shielded_account_is_still_timed_out(self, trusted_rules):
+        """A link in the trap channel is deleted and timed out either way."""
+        facts = make_facts(content="https://example.com/promo")  # 400d old, 200d here
+        decision = classify(facts, trusted_rules)
+        assert decision.action == Action.TIMEOUT
+        assert decision.actionable is True
+
+    def test_shield_downgrades_a_ban_to_a_timeout(self, trusted_rules):
+        """Two triggers would ban a new account; an established one is timed out."""
+        facts = make_facts(
+            content="https://discord.gg/spam",
+            channels_in_blast_window=("1", "2", "3"),
+        )
+        decision = classify(facts, trusted_rules)
+        assert len(decision.triggers) >= 2
+        assert decision.action == Action.TIMEOUT
+        assert decision.ban_withheld is not None
+
+    def test_shield_holds_on_a_repeat(self, trusted_rules):
+        """Even caught before, an established account is not banned."""
+        facts = make_facts(
+            content="https://discord.gg/spam",
+            channels_in_blast_window=("1", "2", "3"),
+            prior_hits=3,
+        )
+        decision = classify(facts, trusted_rules)
+        assert decision.action == Action.TIMEOUT
+        assert decision.ban_withheld is not None
+
+    def test_new_account_with_the_same_profile_is_banned(self, trusted_rules):
+        """The shield must not leak onto the accounts the trap is actually for."""
+        facts = make_young_facts(
+            content="https://discord.gg/spam",
+            channels_in_blast_window=("1", "2", "3"),
+        )
+        decision = classify(facts, trusted_rules)
+        assert decision.action == Action.BAN
+        assert decision.ban_withheld is None
 
     def test_immunity_beats_an_egregious_score(self):
         """Even a channel blast is ignored for a trusted member."""
@@ -552,22 +602,26 @@ class TestHandlerInterlocks:
         assert hits[0]["enforced"] == 1
 
     @pytest.mark.asyncio
-    async def test_mature_member_is_never_actioned(self, temp_database):
-        """The 3,397 lurkers with no role and no points must be left alone."""
+    async def test_established_member_is_timed_out_but_never_banned(self, temp_database):
+        """An established account posting in the trap is timed out, not banned --
+        and the hit is still recorded so a moderator can see it."""
         rules = Rules(
             enabled=True, dry_run=False,
             trusted_role_ids=frozenset({"999"}),
         )
         with patch.object(hp, "load_rules", return_value=rules), \
-             patch.object(hp, "_enforce", new=AsyncMock()) as enforce:
+             patch.object(hp, "_enforce", new=AsyncMock(return_value=True)) as enforce:
             # account_days_old/joined_days_ago default to 400/200 in make_message
             decision = await hp.handle_honeypot_message(
                 make_message(content="https://discord.gg/spam")
             )
-            assert decision is None  # immune, so nothing is returned
-            enforce.assert_not_awaited()
+            assert decision is not None
+            assert decision.action == Action.TIMEOUT
+            enforce.assert_awaited_once()
 
-        assert database.get_recent_honeypot_hits("999", limit=5) == []
+        hits = database.get_recent_honeypot_hits("999", limit=5)
+        assert len(hits) == 1
+        assert hits[0]["action"] == Action.TIMEOUT
 
 
 if __name__ == "__main__":  # pragma: no cover
