@@ -3119,99 +3119,6 @@ async def redeem_frenbot_slash(interaction: discord.Interaction):
             pass
 
 
-try:
-    logger.info("Starting bot...")
-    import config # Assuming config.py is in the same directory or accessible
-
-    # Validate configuration using the imported function
-    validate_config(config)
-
-    lock_path = os.getenv("BOT_INSTANCE_LOCK_PATH", "/tmp/techfren-discord-bot.lock")
-    if not acquire_single_instance_lock(lock_path):
-        logger.critical(
-            "Another techfren Discord bot process is already running "
-            f"(lock held at {lock_path}). Exiting to avoid duplicate Discord events."
-        )
-        raise SystemExit(1)
-
-    # Log startup (but mask the actual token)
-    token_preview = config.token[:5] + "..." + config.token[-5:] if len(config.token) > 10 else "***masked***"
-    logger.info(f"Bot token loaded: {token_preview}")
-    logger.info("Connecting to Discord...")
-
-    # Run the bot
-    bot.run(config.token)
-except ImportError:
-    logger.critical("Config file not found or token not defined", exc_info=True)
-    logger.error("Please create a config.py file with your Discord bot token.")
-    logger.error("Example: token = 'YOUR_DISCORD_BOT_TOKEN'")
-except discord.LoginFailure:
-    logger.critical("Invalid Discord token. Please check your token in config.py", exc_info=True)
-except Exception as e:
-    logger.critical(f"Unexpected error during bot startup: {e}", exc_info=True)
-
-
-@bot.tree.command(name="ask-fred", description="Ask Fred a question (costs 1 point)")
-async def ask_fred_command(interaction: discord.Interaction, prompt: str):
-    """
-    Slash command to ask Fred/Hermes a question.
-    Costs 1 point and returns Hermes's response in a thread.
-
-    Args:
-        interaction: The Discord interaction
-        prompt: The question/prompt to send to Hermes
-    """
-    try:
-        if not prompt.strip():
-            await interaction.response.send_message("Please provide a prompt for Fred.", ephemeral=True)
-            return
-
-        if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-
-        user_id = str(interaction.user.id)
-        guild_id = str(interaction.guild.id)
-        prompt_text = prompt.strip()
-
-        points_before = database.get_user_points(user_id, guild_id)
-        if points_before < 1:
-            await interaction.response.send_message(
-                f"You need 1 point to ask Fred, but you only have {points_before} points.",
-                ephemeral=True
-            )
-            return
-
-        success = database.deduct_user_points(user_id, guild_id, 1)
-        if not success:
-            remaining = database.get_user_points(user_id, guild_id)
-            await interaction.response.send_message(
-                f"Point deduction failed. You have {remaining} points.",
-                ephemeral=True
-            )
-            return
-
-        thinking_message = await interaction.channel.send("Fred is thinking…")
-        thread = None
-        try:
-            thread = await thinking_message.create_thread(name=f"Fred - {interaction.user.display_name}", auto_archive_duration=1440)
-            try:
-                await thread.join()
-            except Exception:
-                pass
-        except discord.errors.HTTPException as e:
-            if e.code != 160004:
-                logger.error(f"ask-fred thread creation failed: {e}")
-
-        target = thread or interaction.channel
-        await target.send(f"{interaction.user.mention} asked:\n{prompt_text}")
-        logger.info(f"User {interaction.user.name} ({user_id}) used /ask-fred in guild {guild_id}; prompt_len={len(prompt_text)}")
-
-    except Exception as e:
-        logger.error(f"Error in /ask-fred command: {str(e)}", exc_info=True)
-        await interaction.response.send_message("An error occurred. Please try again later.", ephemeral=True)
-
-
 # ============================================================================
 # Honeypot trap commands
 #
@@ -3431,3 +3338,96 @@ async def honeypot_hits(interaction: discord.Interaction, limit: int = 10):
             await interaction.response.send_message(
                 "An error occurred. Check the bot logs.", ephemeral=True
             )
+
+try:
+    logger.info("Starting bot...")
+    import config # Assuming config.py is in the same directory or accessible
+
+    # Validate configuration using the imported function
+    validate_config(config)
+
+    lock_path = os.getenv("BOT_INSTANCE_LOCK_PATH", "/tmp/techfren-discord-bot.lock")
+    if not acquire_single_instance_lock(lock_path):
+        logger.critical(
+            "Another techfren Discord bot process is already running "
+            f"(lock held at {lock_path}). Exiting to avoid duplicate Discord events."
+        )
+        raise SystemExit(1)
+
+    # Log startup (but mask the actual token)
+    token_preview = config.token[:5] + "..." + config.token[-5:] if len(config.token) > 10 else "***masked***"
+    logger.info(f"Bot token loaded: {token_preview}")
+    logger.info("Connecting to Discord...")
+
+    # Run the bot
+    bot.run(config.token)
+except ImportError:
+    logger.critical("Config file not found or token not defined", exc_info=True)
+    logger.error("Please create a config.py file with your Discord bot token.")
+    logger.error("Example: token = 'YOUR_DISCORD_BOT_TOKEN'")
+except discord.LoginFailure:
+    logger.critical("Invalid Discord token. Please check your token in config.py", exc_info=True)
+except Exception as e:
+    logger.critical(f"Unexpected error during bot startup: {e}", exc_info=True)
+
+
+@bot.tree.command(name="ask-fred", description="Ask Fred a question (costs 1 point)")
+async def ask_fred_command(interaction: discord.Interaction, prompt: str):
+    """
+    Slash command to ask Fred/Hermes a question.
+    Costs 1 point and returns Hermes's response in a thread.
+
+    Args:
+        interaction: The Discord interaction
+        prompt: The question/prompt to send to Hermes
+    """
+    try:
+        if not prompt.strip():
+            await interaction.response.send_message("Please provide a prompt for Fred.", ephemeral=True)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        user_id = str(interaction.user.id)
+        guild_id = str(interaction.guild.id)
+        prompt_text = prompt.strip()
+
+        points_before = database.get_user_points(user_id, guild_id)
+        if points_before < 1:
+            await interaction.response.send_message(
+                f"You need 1 point to ask Fred, but you only have {points_before} points.",
+                ephemeral=True
+            )
+            return
+
+        success = database.deduct_user_points(user_id, guild_id, 1)
+        if not success:
+            remaining = database.get_user_points(user_id, guild_id)
+            await interaction.response.send_message(
+                f"Point deduction failed. You have {remaining} points.",
+                ephemeral=True
+            )
+            return
+
+        thinking_message = await interaction.channel.send("Fred is thinking…")
+        thread = None
+        try:
+            thread = await thinking_message.create_thread(name=f"Fred - {interaction.user.display_name}", auto_archive_duration=1440)
+            try:
+                await thread.join()
+            except Exception:
+                pass
+        except discord.errors.HTTPException as e:
+            if e.code != 160004:
+                logger.error(f"ask-fred thread creation failed: {e}")
+
+        target = thread or interaction.channel
+        await target.send(f"{interaction.user.mention} asked:\n{prompt_text}")
+        logger.info(f"User {interaction.user.name} ({user_id}) used /ask-fred in guild {guild_id}; prompt_len={len(prompt_text)}")
+
+    except Exception as e:
+        logger.error(f"Error in /ask-fred command: {str(e)}", exc_info=True)
+        await interaction.response.send_message("An error occurred. Please try again later.", ephemeral=True)
+
