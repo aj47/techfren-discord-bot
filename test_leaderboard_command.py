@@ -58,6 +58,10 @@ def test_balance_board_still_available_for_people_checking_their_wallet():
 
     assert 'points left to spend' in message
     assert '🥇 **tazr**: 336 left · 1017 earned' in message
+    # This board does rank on the wallet, so it must not borrow the all-time
+    # board's "spending never lowers it" line and contradict itself.
+    assert 'ranks on what is left in the wallet' in message
+    assert 'spending points never lowers it' not in message
 
 
 def test_spenders_board_names_what_the_points_went_on():

@@ -57,6 +57,11 @@ def format_leaderboard_message(leaderboard: List[Dict[str, Any]], order_by: str)
 
     if order_by == "spenders":
         message += "\nPoints are spent on a role colour, a GIF bypass or frenbot access."
+    elif order_by == "balance":
+        message += (
+            "\nThis board ranks on what is left in the wallet. For who has contributed most, "
+            "use `/leaderboard board:all-time (earned)`."
+        )
     else:
         message += (
             "\nRanked on everything a member has earned — spending points never lowers it. "
