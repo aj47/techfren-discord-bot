@@ -276,8 +276,8 @@ def migrate_database() -> None:
                 conn.commit()
                 logger.info("Successfully added free_change_started_at column")
 
-            # total_points is a wallet: colours, GIF bypasses, frenbot access and
-            # /ask-fred all spend it, so it stops being an answer to "how much has
+            # total_points is a wallet: colours, GIF bypasses and frenbot access
+            # all spend it, so it stops being an answer to "how much has
             # this member earned". lifetime_points only ever goes up.
             #
             # The backfill reads daily_point_awards, which has recorded every
