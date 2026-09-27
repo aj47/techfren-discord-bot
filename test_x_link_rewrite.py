@@ -27,7 +27,9 @@ class TestIsRewritableXUrl:
         "https://www.x.com/user/status/123",
         "https://mobile.twitter.com/user/status/123",
         "http://x.com/user/status/123",
-        "https://x.com/someprofile",
+        "https://x.com/user/status/123/photo/1",       # media sub-path of a post
+        "https://x.com/i/web/status/123",              # fallback permalink form
+        "https://twitter.com/user/statuses/123",       # legacy /statuses/
     ])
     def test_rewritable_urls(self, url):
         assert is_rewritable_x_url(url) is True
@@ -37,7 +39,16 @@ class TestIsRewritableXUrl:
         "https://x.com/",                      # bare domain with slash
         "https://x.com/home",                  # app UI, not content
         "https://x.com/search?q=test",         # app UI, not content
+        "https://x.com/PierrunoYT",            # a profile is not a post
+        "https://x.com/PierrunoYT?s=21",       # ...with a share param
+        "https://x.com/someprofile/media",     # profile tab, not a post
+        "https://x.com/someprofile/with_replies",
+        "https://x.com/hashtag/buildinpublic", # hashtag feed, not a post
+        "https://x.com/i/lists/123",           # list, not a post
+        "https://x.com/user/status/",          # no post id
+        "https://x.com/user/status/abc",       # not a post id
         "https://fixupx.com/user/status/123",  # already a fixed mirror
+        "https://fixupx.com/PierrunoYT",       # mirror profile, left alone too
         "https://fxtwitter.com/user/status/1", # already a fixed mirror
         "https://example.com/x.com/fake",      # x.com only in the path
         "https://notx.com/user/status/123",    # different domain
@@ -93,12 +104,17 @@ class TestRewriteXUrl:
         assert rewrite_x_url("https://x.com/user/status/123", language="") == \
             "https://fixupx.com/user/status/123"
 
+    def test_profile_link_is_not_rewritten(self):
+        # A profile is a link to a person, not a post - fixupx has no post to embed
+        assert rewrite_x_url("https://x.com/PierrunoYT") is None
+        assert rewrite_x_url("https://x.com/someprofile") is None
+
     @pytest.mark.parametrize("url,expected", [
-        # No translation route for a profile or a media sub-path - leave them bare
-        ("https://x.com/someprofile", "https://fixupx.com/someprofile"),
+        # No translation route for a media sub-path - leave it bare
         ("https://x.com/user/status/123/photo/1", "https://fixupx.com/user/status/123/photo/1"),
+        ("https://x.com/i/web/status/123", "https://fixupx.com/i/web/status/123"),
     ])
-    def test_language_only_applied_to_tweet_permalinks(self, url, expected):
+    def test_language_only_applied_to_bare_tweet_permalinks(self, url, expected):
         assert rewrite_x_url(url) == expected
 
 
@@ -162,6 +178,20 @@ class TestFindXLinkRewrites:
         content = "https://youtube.com/watch?v=abc https://x.com/user/status/123"
         rewrites = find_x_link_rewrites(content)
         assert [new for _, new in rewrites] == ["https://fixupx.com/user/status/123/en"]
+
+    def test_ignores_profile_links(self):
+        # Regression: a profile link used to be reposted as fixupx.com/<handle>,
+        # which deleted the author's message and pointed at a page with no post.
+        content = "https://x.com/PierrunoYT 👀 Pierruno face reveal?"
+        assert find_x_link_rewrites(content) == []
+
+    def test_ignores_profile_only_message_with_mirror_profile(self):
+        assert find_x_link_rewrites("https://x.com/someprofile/media") == []
+
+    def test_rewrites_post_link_and_leaves_profile_link_alone(self):
+        content = "https://x.com/PierrunoYT https://x.com/user/status/123"
+        rewrites = find_x_link_rewrites(content)
+        assert rewrites == [("https://x.com/user/status/123", "https://fixupx.com/user/status/123/en")]
 
 
 class TestBuildRewriteNotice:
@@ -258,6 +288,18 @@ class TestRewriteContentLinks:
     def test_uses_custom_domain(self):
         content, _ = rewrite_content_links("https://x.com/u/status/1", rewrite_domain="vxtwitter.com")
         assert content == "https://vxtwitter.com/u/status/1/en"
+
+    def test_profile_link_survives_while_post_link_is_swapped(self):
+        original = "https://x.com/PierrunoYT and https://x.com/u/status/1"
+        content, rewrites = rewrite_content_links(original)
+        assert content == "https://x.com/PierrunoYT and https://fixupx.com/u/status/1/en"
+        assert rewrites == [("https://x.com/u/status/1", "https://fixupx.com/u/status/1/en")]
+
+    def test_profile_only_message_is_untouched(self):
+        original = "https://x.com/PierrunoYT 👀 face reveal?"
+        content, rewrites = rewrite_content_links(original)
+        assert content == original
+        assert rewrites == []
 
 
 class TestNormalizeXUrl:
@@ -787,6 +829,17 @@ class TestRepostMode:
 
         message.channel.send.assert_not_awaited()
         message.delete.assert_not_awaited()
+
+    async def test_leaves_a_profile_link_message_alone(self, bot_module):
+        # Regression: linking an X profile used to be reposted as fixupx.com/<handle>
+        message = _make_message(content="https://x.com/PierrunoYT 👀 face reveal?")
+
+        await bot_module.handle_x_link_rewrite(message)
+
+        message.channel.send.assert_not_awaited()
+        message.delete.assert_not_awaited()
+        message.create_thread.assert_not_awaited()
+        message.reply.assert_not_awaited()
 
     async def test_starting_a_thread_keeps_the_original(self, bot_module):
         message = _make_message(in_thread=True, message_id=42)

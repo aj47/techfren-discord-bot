@@ -1,9 +1,16 @@
 """
-Utilities for rewriting x.com / twitter.com links to an embed-friendly mirror.
+Utilities for rewriting x.com / twitter.com post links to an embed-friendly mirror.
 
 Discord's embeds for x.com posts are unreliable (no video, no images, often no
 text at all). Mirrors like fixupx.com serve the same post with proper OpenGraph
 tags so Discord renders a usable embed.
+
+Only a *post permalink* counts as rewritable: /<handle>/status/<id> (or the
+/i/web/status/<id> form X's own UI uses), including media sub-paths such as
+/photo/1. Everything else on x.com - a bare profile, a profile tab (/media,
+/with_replies), a hashtag, a list, the app UI - means something different as a
+link the poster chose, and the mirror has no post to embed for it, so those URLs
+are left exactly as the author wrote them.
 
 These helpers are pure functions so they can be unit tested without Discord.
 The stored message row (and therefore the author's point credit) is always keyed
@@ -24,8 +31,19 @@ DEFAULT_REWRITE_DOMAIN = "fixupx.com"
 # no translation route.
 DEFAULT_LANGUAGE = "en"
 
-# Matches a tweet permalink path: /<handle>/status/<id> (twitter also used /statuses/)
+# Matches a tweet permalink path and nothing else: /<handle>/status/<id>
+# (twitter also used /statuses/). Strict on purpose - the mirror's language
+# segment can only be appended to a bare permalink.
 _STATUS_PATH_RE = re.compile(r"^/[^/]+/status(?:es)?/\d+/?$", re.IGNORECASE)
+
+# Matches any x.com path worth rewriting: the same permalink, plus the
+# /i/web/status/<id> form X's own UI generates and any trailing sub-path such as
+# /photo/1. A profile, a profile tab (/media, /with_replies), a hashtag or a list
+# never matches - those links mean something other than "here is a post", so the
+# author's URL is left exactly as written.
+_TWEET_PATH_RE = re.compile(
+    r"^/(?:[^/]+/|i/web/)status(?:es)?/\d+(?:/[^/]+)*/?$", re.IGNORECASE
+)
 
 # Hosts we rewrite (compared after stripping a leading "www.")
 X_POST_HOSTS = {
@@ -44,17 +62,6 @@ X_MIRROR_HOSTS = {
     "vxtwitter.com",
     "fixvx.com",
     "twittpr.com",
-}
-
-# First path segments that are app UI rather than shareable content
-_NON_CONTENT_SEGMENTS = {
-    "home",
-    "explore",
-    "notifications",
-    "messages",
-    "settings",
-    "search",
-    "compose",
 }
 
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -115,7 +122,11 @@ def _strip_language(path: str) -> str:
 
 
 def is_rewritable_x_url(url: str) -> bool:
-    """Return True if the URL points at an x.com/twitter.com post worth rewriting."""
+    """Return True if the URL points at a specific x.com post worth rewriting.
+
+    Post permalinks only. A profile link (https://x.com/handle) is a link to a
+    person, not to anything the mirror can embed better, so it is not rewritten.
+    """
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -128,15 +139,7 @@ def is_rewritable_x_url(url: str) -> bool:
     if host in X_MIRROR_HOSTS or host not in X_POST_HOSTS:
         return False
 
-    path_segments = [segment for segment in parts.path.split("/") if segment]
-    if not path_segments:
-        # Bare domain link (https://x.com) - nothing to embed
-        return False
-
-    if path_segments[0].lower() in _NON_CONTENT_SEGMENTS:
-        return False
-
-    return True
+    return bool(_TWEET_PATH_RE.match(parts.path))
 
 
 def rewrite_x_url(

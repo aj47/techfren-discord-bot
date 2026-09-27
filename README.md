@@ -88,10 +88,14 @@ A simple Discord bot built with discord.py.
 ## X/Twitter Link Rewriting
 
 Discord's embeds for x.com posts are unreliable (no video, no images, often no text).
-When someone posts an x.com/twitter.com link, the bot serves that link through an
-embed-friendly mirror (fixupx.com by default), which Discord renders properly. Tweet
-links get a language segment appended (`/en`) so the embed always reads in English,
-whatever the poster's locale.
+When someone posts an x.com/twitter.com **post link** (`/<handle>/status/<id>`), the bot
+serves that link through an embed-friendly mirror (fixupx.com by default), which Discord
+renders properly. Post links also get a language segment appended (`/en`) so the embed
+always reads in English, whatever the poster's locale.
+
+Only post links are rewritten. A profile link (`https://x.com/handle`), a profile tab
+(`/media`, `/with_replies`), a hashtag or a list is left exactly as posted - there is no
+post behind those URLs for the mirror to render.
 
 By default (`repost` mode) the bot reposts the message as its own and deletes the
 original, so the channel shows one clean, working post:
@@ -137,9 +141,11 @@ Notes:
 - Links inside code blocks/inline code, and links the author wrapped in
   `<angle brackets>` to suppress embeds, are left alone.
 - Links that already use a mirror (fixupx, fxtwitter, vxtwitter) are not touched.
+- Only post permalinks are rewritten. Profile, profile-tab, hashtag and list links are
+  left as posted, so posting your profile URL never gets your message reposted.
 - The language segment has to be the last path segment, before any query string
-  (`.../status/123/en?s=20`) - the mirror ignores it after the parameters. Profile
-  links and media sub-paths (`/photo/1`) have no translation route, so they stay bare.
+  (`.../status/123/en?s=20`) - the mirror ignores it after the parameters. Media
+  sub-paths (`/photo/1`) have no translation route, so they stay bare.
 
 ## Discord Developer Portal Setup
 
