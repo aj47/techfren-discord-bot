@@ -329,3 +329,42 @@ convex_ingest_url = os.getenv('CONVEX_INGEST_URL')          # e.g. https://<depl
 bridge_secret = os.getenv('BRIDGE_SECRET')                  # shared bearer secret
 bridge_guild_id = os.getenv('BRIDGE_GUILD_ID')              # optional: only mirror this guild
 bridge_exclude_channel_ids = os.getenv('BRIDGE_EXCLUDE_CHANNEL_IDS', '')  # optional: comma-separated
+
+
+# --- honeypot trap ----------------------------------------------------------
+# Catches spam/bot accounts that post in a designated trap channel. Only
+# accounts that are neither holding a trusted role nor carrying any points
+# history are ever actioned, so established members cannot be caught by it.
+#
+# Off by default: nothing is evaluated until HONEYPOT_ENABLED is set, and even
+# then HONEYPOT_DRY_RUN still logs decisions without enforcing them.
+honeypot_enabled = os.getenv('HONEYPOT_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# When true, hits are scored, recorded in the honeypot_hits table and reported to
+# HONEYPOT_LOG_CHANNEL_ID, but no member is timed out or banned.
+honeypot_dry_run = os.getenv('HONEYPOT_DRY_RUN', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+
+HONEYPOT_ENABLED = honeypot_enabled
+HONEYPOT_DRY_RUN = honeypot_dry_run
+
+# Where honeypot decisions are reported. Optional: hits are always written to the
+# database either way, this only adds the Discord embed.
+HONEYPOT_LOG_CHANNEL_ID = os.getenv('HONEYPOT_LOG_CHANNEL_ID')
+
+# Comma-separated role IDs whose holders are immune. Must be an explicit
+# allow-list, not "any role above the join role": the self-assignable /color
+# roles outrank the join role, so a positional rule would let a spam account
+# immunise itself by picking a colour.
+_honeypot_roles_raw = os.getenv('HONEYPOT_TRUSTED_ROLE_IDS', '')
+HONEYPOT_TRUSTED_ROLE_IDS = [
+    rid.strip() for rid in _honeypot_roles_raw.split(',') if rid.strip()
+]
+
+# Seconds a single-trigger hit is timed out for.
+HONEYPOT_TIMEOUT_MINUTES = int(os.getenv('HONEYPOT_TIMEOUT_MINUTES', '60') or 60)
+
+# Everything else about the trap is policy, not configuration, and lives as
+# constants in honeypot_handler.py: the four triggers, the "two triggers or a
+# repeat bans" rule, and the three immunity conditions. That keeps the shape of
+# the behaviour reviewable in one file instead of spread across .env knobs, and
+# stops a bad setting from quietly turning the trap on established members.

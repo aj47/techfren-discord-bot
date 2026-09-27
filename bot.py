@@ -36,6 +36,22 @@ from x_link_utils import (  # X/Twitter link rewriting
     build_repost_content,
     build_thread_name,
 )
+from honeypot_handler import (  # Honeypot trap for new/inactive accounts
+    BAN_TRIGGERS,
+    BLAST_CHANNELS,
+    BLAST_WINDOW_SECONDS,
+    DUPLICATE_CHANNELS,
+    DUPLICATE_WINDOW_MINUTES,
+    FRESH_ACCOUNT_HOURS,
+    MATURE_ACCOUNT_DAYS,
+    SETTLED_JOIN_DAYS,
+    handle_honeypot_message,
+    is_honeypot_channel,
+    register_honeypot_channel,
+    unregister_honeypot_channel,
+    list_honeypot_channels,
+    load_rules as load_honeypot_rules,
+)
 
 GIF_WARNING_DELETE_DELAY = 30  # seconds before deleting warning messages
 
@@ -165,6 +181,11 @@ def _member_has_free_weekly_color_change_role(member: discord.Member) -> bool:
 intents = discord.Intents.default()
 intents.message_content = True  # This is required to read message content in guild channels
 intents.reactions = True  # Required for on_raw_reaction_add to detect reactions for link summarization
+# Optional, off by default: the members intent is privileged (must also be enabled
+# in the Developer Portal) and the bot does not otherwise need it. With it on, the
+# honeypot records join dates for members who never post.
+if getattr(config, 'ENABLE_MEMBERS_INTENT', False):
+    intents.members = True
 
 # Use commands.Bot instead of discord.Client to support slash commands
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -1208,6 +1229,19 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    # Honeypot trap, checked before anything else: a message in a trap channel is
+    # never mirrored to the website, stored, or summarised. This is a no-op
+    # unless HONEYPOT_ENABLED is set and the channel is registered.
+    if message.guild and not message.author.bot:
+        try:
+            if await is_honeypot_channel(str(message.channel.id), str(message.guild.id)):
+                await handle_honeypot_message(message)
+                return
+        except Exception as e:
+            logger.error(
+                f"Honeypot check failed for message {message.id}: {e}", exc_info=True
+            )
+
     # Mirror to techfriendcommunity (never raises; no-op unless enabled)
     await handle_bridge_message(message)
 
@@ -1653,6 +1687,25 @@ async def on_message(message):
         logger.error(f"Error processing command in on_message: {e}", exc_info=True)
         # Optionally notify about the error in the channel if it's a user-facing command error
         # await message.channel.send("Sorry, an error occurred while processing your command.")
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """
+    Record a join in the durable member record.
+
+    Only fires when the members intent is enabled; the record is otherwise
+    created on the member's first message, which is all the honeypot needs.
+    """
+    try:
+        database.record_member_join(
+            user_id=str(member.id),
+            guild_id=str(member.guild.id),
+            user_name=str(member),
+            joined_at=member.joined_at
+        )
+    except Exception as e:
+        logger.error(f"Error recording member join for {member.id}: {e}", exc_info=True)
 
 
 # Catch GIFs added via message edits (e.g., embeds resolving after initial post)
@@ -3157,3 +3210,224 @@ async def ask_fred_command(interaction: discord.Interaction, prompt: str):
     except Exception as e:
         logger.error(f"Error in /ask-fred command: {str(e)}", exc_info=True)
         await interaction.response.send_message("An error occurred. Please try again later.", ephemeral=True)
+
+
+# ============================================================================
+# Honeypot trap commands
+#
+# Register a channel as a trap: anyone who is neither a trusted-role holder nor
+# a member with points history and posts there gets punished. Configure with
+# HONEYPOT_ENABLED / HONEYPOT_DRY_RUN in .env. See honeypot_handler.py.
+# ============================================================================
+
+@app_commands.command(
+    name="honeypot-set",
+    description="Register a channel as a spam honeypot (admin only)"
+)
+@app_commands.describe(
+    channel="The channel to use as a trap",
+    confirm_dry_run="Register even while HONEYPOT_DRY_RUN is on (logs only, no punishment)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def honeypot_set(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    confirm_dry_run: bool = False
+):
+    """Register a channel as a honeypot trap."""
+    try:
+        rules = load_honeypot_rules()
+        if not rules.enabled and not confirm_dry_run:
+            await interaction.response.send_message(
+                "Honeypot is disabled (`HONEYPOT_ENABLED` is not set), so registering a "
+                "trap channel would do nothing. Set `HONEYPOT_ENABLED=true` and restart the "
+                "bot, or pass `confirm_dry_run: True` to register anyway.",
+                ephemeral=True
+            )
+            return
+        if rules.require_trusted_role_ids and not rules.trusted_role_ids:
+            await interaction.response.send_message(
+                "Refusing to register: `HONEYPOT_TRUSTED_ROLE_IDS` is empty, so every member "
+                "without points history would be treated as a suspect. Configure the trusted "
+                "roles first (see .env.sample).",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        ok = await register_honeypot_channel(channel, interaction.user)
+        if not ok:
+            await interaction.followup.send(
+                f"Could not register {channel.mention}. Check the bot's logs.", ephemeral=True
+            )
+            return
+
+        mode = "DRY RUN (logging only)" if rules.dry_run else "LIVE (will punish)"
+        await interaction.followup.send(
+            f"{channel.mention} is now a honeypot trap. Mode: **{mode}**.\n"
+            f"Trusted roles: {len(rules.trusted_role_ids)} configured.\n"
+            f"Action thresholds: {rules.timeout_score} = delete + "
+            f"{rules.timeout_minutes}m timeout, {rules.ban_score} = ban + purge.\n"
+            f"Immunity: trusted role, or any lifetime points history.",
+            ephemeral=True
+        )
+        logger.warning(
+            f"Honeypot: {interaction.user} ({interaction.user.id}) registered "
+            f"#{channel.name} ({channel.id}) in guild {interaction.guild.id}"
+        )
+    except Exception as e:
+        logger.error(f"Error in /honeypot-set: {str(e)}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred. Check the bot logs.", ephemeral=True
+            )
+
+
+@app_commands.command(
+    name="honeypot-remove",
+    description="Stop treating a channel as a spam honeypot (admin only)"
+)
+@app_commands.describe(channel="The channel to deregister")
+@app_commands.checks.has_permissions(administrator=True)
+async def honeypot_remove(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Deregister a honeypot trap channel."""
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        ok = await unregister_honeypot_channel(channel)
+        if ok:
+            await interaction.followup.send(
+                f"{channel.mention} is no longer a honeypot trap.", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"{channel.mention} was not registered as a trap.", ephemeral=True
+            )
+    except Exception as e:
+        logger.error(f"Error in /honeypot-remove: {str(e)}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred. Check the bot logs.", ephemeral=True
+            )
+
+
+@app_commands.command(
+    name="honeypot-status",
+    description="Show honeypot trap configuration and registered channels (admin only)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def honeypot_status(interaction: discord.Interaction):
+    """Report the honeypot's current configuration."""
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        rules = load_honeypot_rules()
+        channels = list_honeypot_channels(str(interaction.guild.id))
+
+        if channels:
+            listing = "\n".join(
+                f"• <#{row['channel_id']}> — added by {row.get('created_by_name') or 'unknown'}"
+                for row in channels
+            )
+        else:
+            listing = "_no channels registered_"
+
+        if not rules.enabled:
+            state = "**disabled** (`HONEYPOT_ENABLED` not set)"
+        elif rules.dry_run:
+            state = "**dry run** (observing and logging, punishing nothing)"
+        else:
+            state = "**LIVE** (punishing)"
+
+        embed = discord.Embed(title="Honeypot status", color=discord.Color.dark_teal())
+        embed.add_field(name="State", value=state, inline=False)
+        embed.add_field(name="Trap channels", value=listing, inline=False)
+        embed.add_field(
+            name="Who is immune (no action at all)",
+            value=(
+                f"{len(rules.trusted_role_ids)} trusted role(s)\n"
+                f"any lifetime points history"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name=f"Never banned, but still timed out",
+            value=(
+                f"an account {MATURE_ACCOUNT_DAYS}+ days old that joined "
+                f"{SETTLED_JOIN_DAYS}+ days ago"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Triggers",
+            value=(
+                f"invite or link in the trap channel\n"
+                f"account under {FRESH_ACCOUNT_HOURS}h old\n"
+                f"posting in {BLAST_CHANNELS}+ channels within "
+                f"{BLAST_WINDOW_SECONDS}s\n"
+                f"identical text in {DUPLICATE_CHANNELS}+ channels "
+                f"within {DUPLICATE_WINDOW_MINUTES}min"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Response",
+            value=(
+                f"1 trigger → delete + {rules.timeout_minutes}m timeout\n"
+                f"{BAN_TRIGGERS}+ triggers, or any trigger on an "
+                f"account caught before → ban\n"
+                f"but an established account is timed out instead of banned"
+            ),
+            inline=False,
+        )
+        if rules.log_channel_id:
+            embed.add_field(name="Log channel", value=f"<#{rules.log_channel_id}>", inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in /honeypot-status: {str(e)}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred. Check the bot logs.", ephemeral=True
+            )
+
+
+@app_commands.command(
+    name="honeypot-hits",
+    description="Show recent honeypot hits (admin only)"
+)
+@app_commands.describe(limit="How many recent hits to show (1-50, default 10)")
+@app_commands.checks.has_permissions(administrator=True)
+async def honeypot_hits(interaction: discord.Interaction, limit: int = 10):
+    """Show the honeypot's recent hits."""
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        limit = max(1, min(int(limit), 50))
+        hits = database.get_recent_honeypot_hits(str(interaction.guild.id), limit=limit)
+        if not hits:
+            await interaction.followup.send("No honeypot hits recorded.", ephemeral=True)
+            return
+
+        lines = []
+        for hit in hits:
+            when = (hit.get('created_at') or '')[:16].replace('T', ' ')
+            lines.append(
+                f"• `{when}` <@{hit['user_id']}> in <#{hit['channel_id']}> — "
+                f"**{hit['action']}** (score {hit['score']})"
+                + (" _(dry run)_" if not hit.get('enforced') else "")
+                + f"\n  {hit.get('reasons') or ''}"
+            )
+        body = "\n".join(lines)
+        if len(body) > 3800:
+            body = body[:3800] + "\n… (truncated)"
+
+        embed = discord.Embed(
+            title=f"Recent honeypot hits ({len(hits)})",
+            description=body,
+            color=discord.Color.dark_orange()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in /honeypot-hits: {str(e)}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred. Check the bot logs.", ephemeral=True
+            )

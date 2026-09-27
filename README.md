@@ -216,6 +216,90 @@ SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
 SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict per-channel daily summaries (general digest still uses all active channels)
 ```
 
+## Honeypot Trap
+
+An anti-spam trap for **new accounts**. A moderator registers a decoy channel with
+`/honeypot-set`; any account that posts in it is checked, and an account that fails
+every immunity check is treated as a spam bot.
+
+Off by default. `HONEYPOT_ENABLED` unset means the trap is completely inert, and even
+once enabled `HONEYPOT_DRY_RUN=true` (the default) records and logs every hit without
+punishing anyone. Run it dry for a week, read `/honeypot-hits`, then switch it off.
+
+### Who is immune
+
+An account is never actioned at all if **either** of these is true:
+
+- it holds a role listed in `HONEYPOT_TRUSTED_ROLE_IDS`
+- it has ever earned a point (`lifetime_points >= 1`)
+
+This is a whitelist, not a spam detector - proving an account has contributed is
+trivial and cannot false-positive, while detecting spam positively is unreliable.
+
+Only 131 members hold a non-join role and 133 have points history, out of 3,555
+humans, so role-and-points alone leaves 3,397 (95.6%) of the server with no
+protection. Age covers the rest:
+
+### Never banned, but still timed out
+
+An account 30+ days old that joined 14+ days ago is **established**: it can still be
+deleted and timed out for posting in the trap channel, but it can never be banned -
+not on a pile of triggers, and not on a repeat.
+
+That is the split that keeps the trap useful. A permaban is irreversible and the one
+response an established member should never receive for a mistake in a dead channel;
+a one-hour timeout is enough to stop the behaviour and is trivially reversible. Any
+account too new to qualify gets the full response.
+
+### What triggers it
+
+Any one of these, in the trap channel:
+
+- posts a link or a Discord invite
+- account under 24 hours old
+- posts in 3 or more channels within 60 seconds
+- posts identical text in 2 or more channels
+
+Everything else - no prior messages, mention spam, a young account, known spam
+phrasing, a bare domain in prose - is recorded in the hit log as context but never
+causes an action by itself.
+
+### What happens
+
+- **one trigger** -> delete the message + a `HONEYPOT_TIMEOUT_MINUTES` timeout
+- **two triggers, or any trigger on an account already caught before** -> ban and
+  purge the last 24 hours of their messages
+- **if the account is established** (30+ days old, 14+ days here) -> the ban is
+  withheld and it is timed out instead
+
+So a first strike is never a permaban, no amount of circumstantial context can ban
+anyone on its own, and an established account can never be banned by the trap at all.
+Every withheld ban is recorded in `honeypot_hits` and the log channel so a moderator
+can still ban by hand if the behaviour warrants it.
+
+### Safety rails
+
+- the trap refuses to act at all while `HONEYPOT_TRUSTED_ROLE_IDS` is empty, rather
+  than degrading into "action everyone without points"
+- trusted roles are an explicit allow-list by ID, not "any role above the join role":
+  the self-assignable `/color` roles outrank the join role, so a positional rule
+  could be self-granted
+- every decision is written to `honeypot_hits` and posted to
+  `HONEYPOT_LOG_CHANNEL_ID` when set, including dry runs and failed actions, so a
+  role-hierarchy problem shows up instead of failing silently
+- messages in the trap channel are dropped before the message log, the website
+  mirror and the summariser ever see them
+
+The thresholds are constants in `honeypot_handler.py` rather than environment
+settings, so the whole behaviour can be reviewed in one file.
+
+### Commands
+
+- `/honeypot-set` - register a channel as a trap and set a warning topic (admin)
+- `/honeypot-remove` - stop treating a channel as a trap (admin)
+- `/honeypot-status` - show the current configuration and registered channels (admin)
+- `/honeypot-hits` - show recent hits (admin)
+
 ## Database
 
 The bot uses a SQLite database located in the `data/` directory with the following tables:
@@ -253,6 +337,18 @@ This comprehensive database structure allows for:
 - Debugging and troubleshooting
 
 The database is initialized when the bot starts up and is used throughout the application to store and retrieve messages and summaries.
+
+### Honeypot Tables
+
+- `honeypot_channels`: registered trap channels, one row per channel, unique on
+  `(channel_id, guild_id)` so re-registering is idempotent
+- `honeypot_hits`: one row per scored decision, recording the score, action,
+  whether it was enforced, the reasons, and the message content
+- `member_first_seen`: durable per-member activity record (`joined_at`,
+  `first_message_at`, `message_count`). Needed because the `messages` table only
+  holds ~3.5 days, so "has this account ever spoken here?" cannot be answered from
+  it. Rows are created on join, or on the member's first message if the bot was
+  offline for the join.
 
 ### Frenbot Access Grants Table
 

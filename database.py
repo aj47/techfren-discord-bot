@@ -145,6 +145,66 @@ CREATE_INDEX_FRENBOT_GRANTS_USER = "CREATE INDEX IF NOT EXISTS idx_frenbot_grant
 CREATE_INDEX_FRENBOT_GRANTS_EXPIRES = "CREATE INDEX IF NOT EXISTS idx_frenbot_grants_expires ON frenbot_access_grants (expires_at);"
 CREATE_INDEX_REPLY_TO = "CREATE INDEX IF NOT EXISTS idx_reply_to_message_id ON messages (reply_to_message_id);"
 
+# --- honeypot trap ---------------------------------------------------------
+
+CREATE_HONEYPOT_CHANNELS_TABLE = """
+CREATE TABLE IF NOT EXISTS honeypot_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    guild_name TEXT,
+    created_at TIMESTAMP NOT NULL,
+    created_by_id TEXT NOT NULL,
+    created_by_name TEXT NOT NULL,
+    UNIQUE(channel_id, guild_id)
+);
+"""
+
+# Audit trail for the honeypot. Every scored hit lands here whether or not it was
+# enforced, so a dry run still produces evidence to tune the thresholds against.
+CREATE_HONEYPOT_HITS_TABLE = """
+CREATE TABLE IF NOT EXISTS honeypot_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    user_name TEXT,
+    channel_id TEXT NOT NULL,
+    channel_name TEXT,
+    guild_id TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    enforced INTEGER NOT NULL DEFAULT 0,
+    reasons TEXT,
+    content TEXT,
+    created_at TIMESTAMP NOT NULL
+);
+"""
+
+# Durable per-member record. The messages table is pruned to ~24h by the daily
+# summary task, so "has this account ever spoken here?" cannot be answered from
+# it. One row per (user, guild), written on join and on first message.
+CREATE_MEMBER_FIRST_SEEN_TABLE = """
+CREATE TABLE IF NOT EXISTS member_first_seen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    user_name TEXT,
+    joined_at TIMESTAMP,
+    first_message_at TIMESTAMP,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL,
+    UNIQUE(user_id, guild_id)
+);
+"""
+
+CREATE_INDEX_HONEYPOT_CHANNEL = "CREATE INDEX IF NOT EXISTS idx_honeypot_channel_id ON honeypot_channels (channel_id);"
+CREATE_INDEX_HONEYPOT_GUILD = "CREATE INDEX IF NOT EXISTS idx_honeypot_guild_id ON honeypot_channels (guild_id);"
+CREATE_INDEX_HONEYPOT_HITS_USER = "CREATE INDEX IF NOT EXISTS idx_honeypot_hits_user ON honeypot_hits (guild_id, user_id);"
+CREATE_INDEX_HONEYPOT_HITS_CREATED = "CREATE INDEX IF NOT EXISTS idx_honeypot_hits_created ON honeypot_hits (created_at);"
+CREATE_INDEX_MEMBER_FIRST_SEEN_USER = "CREATE INDEX IF NOT EXISTS idx_member_first_seen_user ON member_first_seen (guild_id, user_id);"
+CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED = "CREATE INDEX IF NOT EXISTS idx_member_first_seen_joined ON member_first_seen (joined_at);"
+
+
 INSERT_MESSAGE = """
 INSERT INTO messages (
     id, author_id, author_name, channel_id, channel_name,
@@ -195,6 +255,17 @@ def migrate_database() -> None:
             cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
+
+            # Honeypot trap tables (idempotent: CREATE TABLE IF NOT EXISTS)
+            cursor.execute(CREATE_HONEYPOT_CHANNELS_TABLE)
+            cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
+            cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
+            cursor.execute(CREATE_INDEX_HONEYPOT_CHANNEL)
+            cursor.execute(CREATE_INDEX_HONEYPOT_GUILD)
+            cursor.execute(CREATE_INDEX_HONEYPOT_HITS_USER)
+            cursor.execute(CREATE_INDEX_HONEYPOT_HITS_CREATED)
+            cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_USER)
+            cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED)
 
             # Ensure free_change_started_at column exists on user_role_colors
             cursor.execute("PRAGMA table_info(user_role_colors)")
@@ -276,6 +347,9 @@ def init_database() -> None:
             cursor.execute(CREATE_USER_ROLE_COLORS_TABLE)
             cursor.execute(CREATE_ROLE_COLOR_FREE_CHANGE_TABLE)
             cursor.execute(CREATE_FRENBOT_ACCESS_GRANTS_TABLE)
+            cursor.execute(CREATE_HONEYPOT_CHANNELS_TABLE)
+            cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
+            cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -303,6 +377,14 @@ def init_database() -> None:
             # Create indexes for frenbot_access_grants table
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_USER)
             cursor.execute(CREATE_INDEX_FRENBOT_GRANTS_EXPIRES)
+
+            # Create indexes for the honeypot trap tables
+            cursor.execute(CREATE_INDEX_HONEYPOT_CHANNEL)
+            cursor.execute(CREATE_INDEX_HONEYPOT_GUILD)
+            cursor.execute(CREATE_INDEX_HONEYPOT_HITS_USER)
+            cursor.execute(CREATE_INDEX_HONEYPOT_HITS_CREATED)
+            cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_USER)
+            cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -490,6 +572,13 @@ def store_message(
                     reply_to_message_id
                 )
             )
+
+            # Same durable write: keep the per-member activity record current so
+            # the honeypot can answer "has this account ever spoken here?".
+            # Piggybacked on this transaction rather than opened separately
+            # because this runs for every message.
+            if not is_bot and guild_id:
+                _touch_member_activity_cursor(cursor, author_id, guild_id, author_name, created_at_str)
 
             conn.commit()
 
@@ -2588,3 +2677,506 @@ def mark_frenbot_access_swept(author_id: str, guild_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error marking frenbot access swept for {author_id}: {str(e)}", exc_info=True)
         return False
+
+
+# =============================================================================
+# HONEYPOT TRAP
+#
+# Supporting tables and queries for honeypot_handler.py. Registrations live in
+# `honeypot_channels`, every scored hit lands in `honeypot_hits` (enforced or
+# not), and `member_first_seen` keeps the one durable per-member fact the trap
+# needs: whether this account has ever spoken in this guild. The messages table
+# cannot answer that because the daily summary task prunes it to ~24h.
+# =============================================================================
+
+def add_honeypot_channel(
+    channel_id: str,
+    channel_name: str,
+    guild_id: str,
+    guild_name: Optional[str],
+    created_by_id: str,
+    created_by_name: str
+) -> bool:
+    """
+    Register a channel as a honeypot.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        channel_name (str): The channel name
+        guild_id (str): The Discord guild ID
+        guild_name (Optional[str]): The guild name
+        created_by_id (str): The ID of the moderator who registered it
+        created_by_name (str): The name of that moderator
+
+    Returns:
+        bool: True if the channel is registered, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO honeypot_channels (
+                    channel_id, channel_name, guild_id, guild_name,
+                    created_at, created_by_id, created_by_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(channel_id, guild_id) DO UPDATE SET
+                    channel_name = excluded.channel_name
+                """,
+                (
+                    channel_id,
+                    channel_name,
+                    guild_id,
+                    guild_name,
+                    datetime.now(timezone.utc).isoformat(),
+                    created_by_id,
+                    created_by_name
+                )
+            )
+            conn.commit()
+        logger.info(f"Registered honeypot channel {channel_name} ({channel_id}) in guild {guild_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error registering honeypot channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def remove_honeypot_channel(channel_id: str, guild_id: str) -> bool:
+    """
+    Remove a channel's honeypot status.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        bool: True if a registration was removed, False if there was none
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM honeypot_channels WHERE channel_id = ? AND guild_id = ?",
+                (channel_id, guild_id)
+            )
+            rows_affected = cursor.rowcount
+            conn.commit()
+        if rows_affected:
+            logger.info(f"Removed honeypot channel {channel_id} from guild {guild_id}")
+        return bool(rows_affected)
+    except Exception as e:
+        logger.error(f"Error removing honeypot channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def is_honeypot_channel(channel_id: str, guild_id: str) -> bool:
+    """
+    Check whether a channel is registered as a honeypot in a guild.
+
+    Args:
+        channel_id (str): The Discord channel ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        bool: True if the channel is a honeypot, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM honeypot_channels WHERE channel_id = ? AND guild_id = ? LIMIT 1",
+                (channel_id, guild_id)
+            )
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error checking honeypot status for channel {channel_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_honeypot_channels_for_guild(guild_id: str) -> List[Dict[str, Any]]:
+    """
+    List the honeypot channels registered in a guild.
+
+    Args:
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        List[Dict[str, Any]]: Registration rows, oldest first
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT channel_id, channel_name, guild_id, guild_name,
+                       created_at, created_by_id, created_by_name
+                FROM honeypot_channels
+                WHERE guild_id = ?
+                ORDER BY created_at ASC
+                """,
+                (guild_id,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error listing honeypot channels for guild {guild_id}: {str(e)}", exc_info=True)
+        return []
+
+
+def record_honeypot_hit(
+    user_id: str,
+    user_name: str,
+    channel_id: str,
+    channel_name: str,
+    guild_id: str,
+    score: int,
+    action: str,
+    enforced: bool,
+    reasons: str,
+    content: str
+) -> bool:
+    """
+    Record a honeypot hit for review.
+
+    Rows are written whether or not the action was enforced, so a dry run still
+    leaves evidence for tuning the thresholds.
+
+    Args:
+        user_id (str): The Discord user ID that triggered the trap
+        user_name (str): The username at the time of the hit
+        channel_id (str): The honeypot channel ID
+        channel_name (str): The honeypot channel name
+        guild_id (str): The Discord guild ID
+        score (int): The computed suspicion score
+        action (str): The action that was decided ('ban', 'timeout', 'log')
+        enforced (bool): Whether the action was actually applied
+        reasons (str): Human-readable signal summary
+        content (str): The triggering message content
+
+    Returns:
+        bool: True if the hit was recorded, False otherwise
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO honeypot_hits (
+                    user_id, user_name, channel_id, channel_name, guild_id,
+                    score, action, enforced, reasons, content, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    user_name,
+                    channel_id,
+                    channel_name,
+                    guild_id,
+                    int(score),
+                    action,
+                    1 if enforced else 0,
+                    reasons,
+                    (content or "")[:2000],
+                    datetime.now(timezone.utc).isoformat()
+                )
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error recording honeypot hit for {user_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_recent_honeypot_hits(guild_id: str, limit: int = 25) -> List[Dict[str, Any]]:
+    """
+    Most recent honeypot hits in a guild.
+
+    Args:
+        guild_id (str): The Discord guild ID
+        limit (int): Maximum number of rows to return
+
+    Returns:
+        List[Dict[str, Any]]: Hit rows, newest first
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT user_id, user_name, channel_id, channel_name, score,
+                       action, enforced, reasons, content, created_at
+                FROM honeypot_hits
+                WHERE guild_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (guild_id, int(limit))
+            )
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error listing honeypot hits for guild {guild_id}: {str(e)}", exc_info=True)
+        return []
+
+
+def count_honeypot_hits(user_id: str, guild_id: str) -> int:
+    """
+    Number of honeypot hits recorded against a user in a guild.
+
+    Used to tell a first strike from a repeat offender: a ban requires either a
+    prior recorded hit or several independent primary signals.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        int: Hit count, 0 when unknown
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM honeypot_hits WHERE user_id = ? AND guild_id = ?",
+                (user_id, guild_id)
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+    except Exception as e:
+        logger.error(f"Error counting honeypot hits for {user_id}: {str(e)}", exc_info=True)
+        return 0
+
+
+def record_member_join(
+    user_id: str,
+    guild_id: str,
+    user_name: str,
+    joined_at: Optional[datetime] = None
+) -> bool:
+    """
+    Record that a member joined the guild. Idempotent: an existing row is kept.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+        user_name (str): The username at join time
+        joined_at (Optional[datetime]): When they joined, defaults to now
+
+    Returns:
+        bool: True if the row exists after the call, False on error
+    """
+    try:
+        timestamp = (joined_at or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO member_first_seen (user_id, guild_id, user_name, joined_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, guild_id) DO NOTHING
+                """,
+                (
+                    user_id,
+                    guild_id,
+                    user_name,
+                    timestamp,
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+                )
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error recording member join for {user_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def _touch_member_activity_cursor(
+    cursor: sqlite3.Cursor,
+    user_id: str,
+    guild_id: str,
+    user_name: str,
+    timestamp_iso: str
+) -> None:
+    """
+    Upsert a member's durable activity row using an existing cursor/transaction.
+
+    The caller owns the commit. Used by store_message so the counter costs no
+    extra connection on the per-message path.
+
+    Args:
+        cursor (sqlite3.Cursor): Cursor inside an open transaction
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+        user_name (str): The username at the time of the message
+        timestamp_iso (str): Message time, naive UTC ISO format
+    """
+    cursor.execute(
+        """
+        INSERT INTO member_first_seen (
+            user_id, guild_id, user_name, first_message_at, message_count, created_at
+        ) VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT(user_id, guild_id) DO UPDATE SET
+            message_count = member_first_seen.message_count + 1,
+            first_message_at = COALESCE(member_first_seen.first_message_at, excluded.first_message_at),
+            user_name = excluded.user_name
+        """,
+        (
+            user_id,
+            guild_id,
+            user_name,
+            timestamp_iso,
+            datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        )
+    )
+
+
+def touch_member_activity(
+    user_id: str,
+    guild_id: str,
+    user_name: str,
+    at: Optional[datetime] = None
+) -> bool:
+    """
+    Count a message against a member's durable activity record.
+
+    Creates the row if the member was never seen joining (the bot was offline, or
+    they predate this feature) and sets `first_message_at` only once.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+        user_name (str): The username at the time of the message
+        at (Optional[datetime]): Message time, defaults to now
+
+    Returns:
+        bool: True if the counter was updated, False on error
+    """
+    try:
+        timestamp = (at or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            _touch_member_activity_cursor(cursor, user_id, guild_id, user_name, timestamp)
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating member activity for {user_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def get_member_activity(user_id: str, guild_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Durable activity record for one member.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+
+    Returns:
+        Optional[Dict[str, Any]]: Keys joined_at, first_message_at and
+        message_count, or None when the member has never been recorded.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT joined_at, first_message_at, message_count
+                FROM member_first_seen
+                WHERE user_id = ? AND guild_id = ?
+                """,
+                (user_id, guild_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                'joined_at': row['joined_at'],
+                'first_message_at': row['first_message_at'],
+                'message_count': row['message_count'] or 0
+            }
+    except Exception as e:
+        logger.error(f"Error reading member activity for {user_id}: {str(e)}", exc_info=True)
+        return None
+
+
+def get_recent_channel_ids(
+    user_id: str,
+    guild_id: str,
+    seconds: int = 60
+) -> List[str]:
+    """
+    Distinct channels an author posted in recently, for blast detection.
+
+    Bounded by the messages table's retention (~24h), which is far longer than
+    any blast window, so it is sufficient for this purpose.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+        seconds (int): How far back to look
+
+    Returns:
+        List[str]: Distinct channel IDs
+    """
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=int(seconds))).replace(tzinfo=None)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT DISTINCT channel_id FROM messages
+                WHERE author_id = ? AND guild_id = ? AND created_at >= ?
+                """,
+                (user_id, guild_id, cutoff.isoformat())
+            )
+            return [row['channel_id'] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error reading recent channels for {user_id}: {str(e)}", exc_info=True)
+        return []
+
+
+def get_recent_duplicate_channels(
+    user_id: str,
+    guild_id: str,
+    normalized_content: str,
+    minutes: int = 5
+) -> List[str]:
+    """
+    Channels where this author posted the same content recently.
+
+    Comparison is on a normalized form (lowercased, whitespace collapsed) so
+    trivial edits don't defeat it. Empty content matches nothing: identical
+    one-word replies are not evidence of a blast.
+
+    Args:
+        user_id (str): The Discord user ID
+        guild_id (str): The Discord guild ID
+        normalized_content (str): Normalized content to match
+        minutes (int): How far back to look
+
+    Returns:
+        List[str]: Distinct channel IDs
+    """
+    if not normalized_content:
+        return []
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=int(minutes))).replace(tzinfo=None)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT channel_id, content FROM messages
+                WHERE author_id = ? AND guild_id = ? AND created_at >= ?
+                """,
+                (user_id, guild_id, cutoff.isoformat())
+            )
+            matches: List[str] = []
+            for row in cursor.fetchall():
+                # Normalize here rather than in SQL: whitespace collapsing has no
+                # clean SQLite equivalent and the row count is small.
+                candidate = " ".join((row['content'] or "").split()).lower()
+                if candidate and candidate == normalized_content:
+                    if row['channel_id'] not in matches:
+                        matches.append(row['channel_id'])
+            return matches
+    except Exception as e:
+        logger.error(f"Error reading duplicate content for {user_id}: {str(e)}", exc_info=True)
+        return []
