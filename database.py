@@ -3152,6 +3152,37 @@ def get_recent_channel_ids(
         return []
 
 
+def get_recent_message_ids(
+    user_id: str,
+    guild_id: str,
+    seconds: int = 300,
+) -> List[Dict]:
+    """
+    Recent messages from an author, for deleting a blast after a timeout.
+
+    Returns ``{message_id, channel_id}`` dicts. Bounded by the messages table's
+    retention; the caller passes a window covering both blast triggers.
+    """
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=int(seconds))).replace(tzinfo=None)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id AS message_id, channel_id FROM messages
+                WHERE author_id = ? AND guild_id = ? AND created_at >= ?
+                """,
+                (user_id, guild_id, cutoff.isoformat())
+            )
+            return [
+                {"message_id": row["message_id"], "channel_id": row["channel_id"]}
+                for row in cursor.fetchall()
+            ]
+    except Exception as e:
+        logger.error(f"Error reading recent messages for {user_id}: {str(e)}", exc_info=True)
+        return []
+
+
 def get_recent_duplicate_channels(
     user_id: str,
     guild_id: str,

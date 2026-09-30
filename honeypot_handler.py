@@ -1,31 +1,23 @@
 """
-Honeypot trap for new and inactive accounts.
+Guild-wide anti-spam for new and inactive accounts.
 
-A honeypot channel is a channel that real members have no reason to post in. It
-is left visible (so link-spamming bots and raid accounts can find it) and marked
-with an unmistakable warning in its topic. Anything that posts there is a signal
-in itself, because a human who reads the warning does not post.
-
-The handler runs in two stages:
+No decoy channel. Every guild message is checked, but nothing happens unless the
+account fails immunity AND shows raid-shaped behaviour: blasting 3+ channels in
+60s, or posting identical text in 3+ channels. A first post, a link, or a young
+account on its own is never enough — those only made sense as triggers inside a
+channel members were told not to post in.
 
 1. IMMUNITY - established members are never actioned. Two tests, either one is
    enough:
      * the member holds a trusted role (see ``Rules.trusted_role_ids``)
      * the member has any lifetime points history in this guild
-   Membership of neither means the account has never contributed here, which for
-   a channel members are told not to post in is itself the finding.
 
-2. TRIGGERS - non-immune accounts are checked for four triggers: a link or invite
-   in the trap channel, an account under 24h old, a post blasted across 3+ channels
-   within 60s, or identical text in 2+ channels. Neighbouring context (no prior
-   messages, mention spam, young account, scam phrasing) is recorded in the hit log
-   but never causes an action on its own.
+2. TRIGGERS - blast (3+ channels / 60s) or duplicate text (3+ channels / 5min).
+   Neighbouring context (no prior messages, mention spam, young account, scam
+   phrasing) is recorded on a hit but never causes an action on its own.
 
-3. RESPONSE - one trigger is a delete plus a timeout. Two triggers, or any trigger
-   on an account already caught before, is a ban. An established account (see
-   ``established_reason``) is still timed out but can never be banned. So a first
-   strike is never a permaban and a single circumstantial signal can never ban
-   anyone.
+3. RESPONSE - any trigger is a 24h timeout, delete of the blast copies, and a ping
+   to the owner in the log channel. This never bans; a human decides that.
 
 ``Rules.dry_run`` defaults to True: decisions are logged and announced but no
 member is timed out or banned until it is explicitly switched off.
@@ -67,25 +59,26 @@ class Action:
 # ---------------------------------------------------------------------------
 # Policy
 #
-# Deliberately constants rather than settings. The whole behaviour is "one
-# trigger = delete + timeout, two triggers or a repeat = ban"; the only things
-# worth configuring are which roles are immune and how long a timeout lasts.
+# Deliberately constants rather than settings. The whole behaviour is "any
+# trigger = delete the blast + 24h timeout + ping the owner"; it never bans.
 # ---------------------------------------------------------------------------
 
-# Trigger: an account younger than this.
-FRESH_ACCOUNT_HOURS = 24
 # Trigger: posting in this many distinct channels within the window.
 BLAST_CHANNELS = 3
 BLAST_WINDOW_SECONDS = 60
 # Trigger: identical text in this many distinct channels within the window.
-DUPLICATE_CHANNELS = 2
+# 3, not 2: pasting the same question in two rooms is a real (if messy) human
+# move; the raid pattern is the same copy in three places.
+DUPLICATE_CHANNELS = 3
 DUPLICATE_WINDOW_MINUTES = 5
-# (The fourth trigger, a link or invite in the trap channel, needs no threshold.)
 
-# Two triggers ban outright; a single trigger bans only on a repeat.
-BAN_TRIGGERS = 2
-# Seconds of history purged on a ban (Discord caps this at 7 days).
-BAN_PURGE_SECONDS = 86400
+# How far back to delete copies of the blast (covers both trigger windows).
+PURGE_WINDOW_SECONDS = max(BLAST_WINDOW_SECONDS, DUPLICATE_WINDOW_MINUTES * 60)
+
+# Owner pinged on every actionable hit (AJ). A constant, not a setting: there
+# is one person who asked to be notified, and a mis-set env would silently
+# notify nobody.
+NOTIFY_USER_ID = "200272755520700416"
 
 # Immunity: an account at least this old, in the server at least this long, is
 # established even with no role and no points history. Without this, "trusted
@@ -100,8 +93,8 @@ YOUNG_ACCOUNT_DAYS = 30
 MENTION_SPAM_COUNT = 5
 RECENT_JOIN_MINUTES = 30
 
-# What one trigger does.
-DEFAULT_TIMEOUT_MINUTES = 60
+# What a trigger does. Discord timeouts cap at 28 days; 24h is the ask.
+DEFAULT_TIMEOUT_MINUTES = 24 * 60
 
 # Scam/recruitment phrasing seen in this server's own ban history.
 _SCAM_PHRASES = (
@@ -329,10 +322,10 @@ def established_reason(
     """
     Return why this account is too established to ban, or None.
 
-    Established accounts are not immune: a link in the trap channel still means a
-    deleted message and a timeout. But an account this old, in the server this
-    long, has earned the benefit of the doubt on intent, and a permaban is the one
-    response it can never receive -- however it behaves, and however often.
+    Established accounts are not immune: a blast still means a deleted message
+    and a timeout. But an account this old, in the server this long, has earned
+    the benefit of the doubt on intent, and a permaban is the one response it can
+    never receive -- however it behaves, and however often.
     """
     created = _as_utc(facts.account_created_at)
     joined = _as_utc(facts.joined_at)
@@ -388,15 +381,8 @@ def find_triggers(
 
     # --- triggers -----------------------------------------------------------
 
-    if contains_invite(facts.content):
-        triggers.append("invite_in_trap_channel")
-    elif _URL_RE.search(facts.content or ""):
-        triggers.append("link_in_trap_channel")
-
     created = _as_utc(facts.account_created_at)
     account_age = now - created if created is not None else None
-    if account_age is not None and account_age < timedelta(hours=FRESH_ACCOUNT_HOURS):
-        triggers.append(f"account_age:{account_age.days}d{account_age.seconds // 3600}h")
 
     if len(facts.channels_in_blast_window) >= BLAST_CHANNELS:
         triggers.append(
@@ -430,11 +416,6 @@ def find_triggers(
     if matches_scam_phrasing(facts.content):
         context.append("scam_phrasing")
 
-    if not triggers and _BARE_DOMAIN_RE.search(facts.content or ""):
-        # "spam.com" in prose is suspect but could be an honest mention, so it is
-        # recorded without triggering anything.
-        context.append("bare_domain_in_trap_channel")
-
     if facts.prior_hits:
         context.append(f"prior_strikes:{facts.prior_hits}")
 
@@ -447,11 +428,11 @@ def classify(
     now: Optional[datetime] = None,
 ) -> Decision:
     """
-    Decide what to do about a message posted in a honeypot channel.
+    Decide what to do about a guild message from a non-immune account.
 
-    One trigger is a delete plus a timeout. Two independent triggers, or any
-    trigger on an account already caught before, is a ban -- so a first strike is
-    never a permaban and a single circumstantial signal can never ban anyone.
+    Any trigger is a 24h timeout. This function never returns ``Action.BAN`` —
+    a human decides bans. Context-only messages are ignored (not logged): this
+    runs on every message.
     """
     rules = rules or Rules()
 
@@ -461,27 +442,13 @@ def classify(
 
     triggers, context = find_triggers(facts, rules, now=now)
 
-    if not triggers:
-        action = Action.LOG if context else Action.NONE
-    elif len(triggers) >= BAN_TRIGGERS or facts.prior_hits >= 1:
-        action = Action.BAN
-    else:
-        action = Action.TIMEOUT
-
-    # An established account is still timed out, but never banned -- not on a pile
-    # of triggers, and not on a repeat (a prior hit of its own was a timeout too).
-    shield = established_reason(facts, now=now)
-    if shield is not None and action == Action.BAN:
-        action = Action.TIMEOUT
-    else:
-        shield = None
+    action = Action.TIMEOUT if triggers else Action.NONE
 
     return Decision(
         immune=False,
         action=action,
         triggers=tuple(triggers),
         context=tuple(context),
-        ban_withheld=shield,
     )
 
 
@@ -530,9 +497,10 @@ def trusted_role_names(member: discord.Member, rules: Rules) -> Tuple[str, ...]:
     """
     if not rules.trusted_role_ids:
         return ()
+    trusted = {str(rid) for rid in rules.trusted_role_ids}
     names = []
     for role in getattr(member, "roles", ()) or ():
-        if role.id in rules.trusted_role_ids and not role.managed:
+        if str(role.id) in trusted and not role.managed:
             names.append(role.name)
     return tuple(names)
 
@@ -566,8 +534,8 @@ async def collect_facts(message: discord.Message, rules: Rules) -> HitFacts:
     prior_message_count: Optional[int] = None
     try:
         activity = database.get_member_activity(user_id, guild_id)
-        # store_message runs after the trap check, so a trap-channel message is
-        # never counted here: the count is exactly the messages that preceded it.
+        # store_message runs after this check, so the current message is not
+        # counted here: the count is exactly the messages that preceded it.
         if activity is None or activity.get("message_count") is None:
             prior_message_count = None
         else:
@@ -651,14 +619,10 @@ async def _post_log_embed(
         return
 
     mode = "enforced" if enforced else "DRY RUN"
-    colour = {
-        Action.BAN: discord.Color.red(),
-        Action.TIMEOUT: discord.Color.orange(),
-        Action.LOG: discord.Color.gold(),
-    }.get(decision.action, discord.Color.light_grey())
+    colour = discord.Color.orange() if decision.action == Action.TIMEOUT else discord.Color.gold()
 
     embed = discord.Embed(
-        title=f"🍯 Honeypot {decision.action.upper()} ({mode})",
+        title=f"🍯 Anti-spam TIMEOUT ({mode})",
         description=decision.explain(),
         color=colour,
         timestamp=datetime.now(timezone.utc),
@@ -678,17 +642,63 @@ async def _post_log_embed(
     if created is not None:
         age_days = (datetime.now(timezone.utc) - created).days
         embed.add_field(name="Account age", value=f"{age_days}d", inline=True)
-    me = message.guild.me
-    if me is not None and getattr(message.channel, "permissions_for", None):
-        if message.channel.permissions_for(me).read_message_history:
-            embed.add_field(name="Message ID", value=f"`{message.id}`", inline=True)
+    embed.add_field(
+        name="Timeout",
+        value=f"{rules.timeout_minutes}m — not banned, ban by hand if needed",
+        inline=True,
+    )
     body = (message.content or "").strip() or "*(no text content)*"
     embed.add_field(name="Content", value=body[:1000], inline=False)
 
     try:
-        await channel.send(embed=embed)
+        await channel.send(content=f"<@{NOTIFY_USER_ID}>", embed=embed)
     except Exception as exc:  # pragma: no cover - network/permission dependent
         logger.error(f"Honeypot: failed to post log embed: {exc}", exc_info=True)
+
+
+async def _purge_recent_messages(message: discord.Message) -> int:
+    """Delete this author's recent messages across channels. Best-effort."""
+    guild = message.guild
+    if guild is None:
+        return 0
+    user_id = str(message.author.id)
+    guild_id = str(guild.id)
+    rows = []
+    try:
+        rows = database.get_recent_message_ids(
+            user_id, guild_id, seconds=PURGE_WINDOW_SECONDS
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Honeypot: purge lookup failed for {user_id}: {exc}")
+
+    seen = {(str(message.channel.id), str(message.id))}
+    deleted = 0
+    try:
+        await message.delete()
+        deleted += 1
+    except discord.NotFound:
+        pass
+    except Exception as exc:
+        logger.warning(f"Honeypot: could not delete triggering message {message.id}: {exc}")
+
+    for row in rows:
+        key = (str(row["channel_id"]), str(row["message_id"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        channel = guild.get_channel(int(row["channel_id"]))
+        if channel is None or not hasattr(channel, "get_partial_message"):
+            continue
+        try:
+            await channel.get_partial_message(int(row["message_id"])).delete()
+            deleted += 1
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            continue
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                f"Honeypot: could not delete {row['message_id']} in {row['channel_id']}: {exc}"
+            )
+    return deleted
 
 
 async def _enforce(
@@ -696,7 +706,9 @@ async def _enforce(
     decision: Decision,
     rules: Rules,
 ) -> bool:
-    """Apply the decided action. Returns True when Discord accepted it."""
+    """Timeout and delete the blast. Never bans. Returns True when the timeout landed."""
+    if decision.action != Action.TIMEOUT:
+        return False
     member = message.author
     if not isinstance(member, discord.Member):
         logger.warning(
@@ -705,32 +717,36 @@ async def _enforce(
         )
         return False
 
-    reason = f"Honeypot channel #{getattr(message.channel, 'name', message.channel.id)}: {decision.explain()}"
+    reason = (
+        f"Anti-spam #{getattr(message.channel, 'name', message.channel.id)}: "
+        f"{decision.explain()}"
+    )
 
+    timed_out = False
     try:
-        if decision.action == Action.BAN:
-            await member.ban(reason=reason, delete_message_seconds=BAN_PURGE_SECONDS)
-            return True
-        if decision.action == Action.TIMEOUT:
-            await message.delete()
-            await member.timeout(
-                timedelta(minutes=rules.timeout_minutes), reason=reason
-            )
-            return True
-        return False
+        await member.timeout(
+            timedelta(minutes=rules.timeout_minutes), reason=reason
+        )
+        timed_out = True
     except discord.Forbidden:
         logger.error(
-            f"Honeypot: cannot {decision.action} {member.id} - missing permission or "
+            f"Honeypot: cannot timeout {member.id} - missing permission or "
             f"role hierarchy ({reason})"
         )
     except discord.HTTPException as exc:
-        logger.error(f"Honeypot: {decision.action} failed for {member.id}: {exc}")
+        logger.error(f"Honeypot: timeout failed for {member.id}: {exc}")
     except Exception as exc:  # pragma: no cover - defensive
         logger.error(
-            f"Honeypot: unexpected error during {decision.action} for {member.id}: {exc}",
+            f"Honeypot: unexpected error during timeout for {member.id}: {exc}",
             exc_info=True,
         )
-    return False
+
+    try:
+        await _purge_recent_messages(message)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Honeypot: purge failed for {member.id}: {exc}", exc_info=True)
+
+    return timed_out
 
 
 async def handle_honeypot_message(
@@ -738,11 +754,12 @@ async def handle_honeypot_message(
     rules: Optional[Rules] = None,
 ) -> Optional[Decision]:
     """
-    Score and (unless dry-running) act on a message posted in a honeypot channel.
+    Score and (unless dry-running) act on a guild message.
 
-    Returns the decision, or None when the message was ignored because the
-    member is immune. Never raises: a honeypot failure must not break normal
-    message handling.
+    Returns the decision, or None when the message was ignored (disabled,
+    immune, or no trigger). Never raises: a failure must not break normal
+    message handling. Immune members are skipped before any database work so
+    this is cheap on ordinary chat.
     """
     rules = rules or load_rules()
 
@@ -754,49 +771,49 @@ async def handle_honeypot_message(
         # trap at most of the server. Refuse to act rather than degrade into that.
         logger.error(
             "Honeypot: refusing to act - HONEYPOT_TRUSTED_ROLE_IDS is empty. "
-            "Set the trusted role IDs before enabling the trap."
+            "Set the trusted role IDs before enabling."
         )
+        return None
+
+    author = message.author
+    if getattr(author, "bot", False) or getattr(message, "webhook_id", None):
+        return None
+    if isinstance(author, discord.Member) and trusted_role_names(author, rules):
         return None
 
     try:
         facts = await collect_facts(message, rules)
         decision = classify(facts, rules)
 
-        if decision.immune:
-            logger.info(
-                f"Honeypot: ignoring {facts.user_id} in #{getattr(message.channel, 'name', '?')} - "
-                f"{decision.immune_reason}"
-            )
+        if decision.immune or not decision.actionable:
             return None
 
         enforced = False
-        if decision.actionable and not rules.dry_run:
+        if not rules.dry_run:
             enforced = await _enforce(message, decision, rules)
-        elif decision.actionable:
+        else:
             logger.warning(
                 f"Honeypot DRY RUN: would {decision.action} {facts.user_id} "
                 f"(#{getattr(message.channel, 'name', '?')}) - {decision.explain()}"
             )
 
-        if decision.action != Action.NONE:
-            try:
-                database.record_honeypot_hit(
-                    user_id=facts.user_id,
-                    user_name=facts.author_name,
-                    channel_id=str(message.channel.id),
-                    channel_name=str(getattr(message.channel, "name", "")),
-                    guild_id=str(getattr(message.guild, "id", "")),
-                    score=decision.score,
-                    action=decision.action,
-                    enforced=enforced,
-                    reasons=decision.explain(),
-                    content=message.content or "",
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error(f"Honeypot: failed to record hit: {exc}", exc_info=True)
+        try:
+            database.record_honeypot_hit(
+                user_id=facts.user_id,
+                user_name=facts.author_name,
+                channel_id=str(message.channel.id),
+                channel_name=str(getattr(message.channel, "name", "")),
+                guild_id=str(getattr(message.guild, "id", "")),
+                score=decision.score,
+                action=decision.action,
+                enforced=enforced,
+                reasons=decision.explain(),
+                content=message.content or "",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"Honeypot: failed to record hit: {exc}", exc_info=True)
 
-            await _post_log_embed(message, decision, rules, enforced)
-
+        await _post_log_embed(message, decision, rules, enforced)
         return decision
 
     except Exception as exc:  # pragma: no cover - defensive
