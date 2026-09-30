@@ -81,7 +81,7 @@ def test_frenbot_config_defaults():
     """Fred access constants exist and are sane."""
     import config
 
-    assert config.FRENBOT_ACCESS_COST >= 1
+    assert config.FRENBOT_ACCESS_COST == 10
     assert config.FRENBOT_ACCESS_DURATION_HOURS >= 1
     assert config.FRENBOT_ACCESS_ROLE_NAME == 'fred-access'
     assert config.FRENBOT_ACCESS_MAX_HOURS >= 0

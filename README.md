@@ -168,7 +168,7 @@ To use the message content intent, you need to enable it in the Discord Develope
 ### Points Redemptions
 
 - `/fred`: Spends points for an hour talking to Fred (the Hermes agent, nick of frenbot), granted via a Discord role
-  - Costs `FRENBOT_ACCESS_COST` points (default 25) per `FRENBOT_ACCESS_DURATION_HOURS` (default 1)
+  - Costs `FRENBOT_ACCESS_COST` points (default 10) per `FRENBOT_ACCESS_DURATION_HOURS` (default 1)
   - Redeeming while access is already active **stacks** the duration and charges again
   - Capped at `FRENBOT_ACCESS_MAX_HOURS` of banked access (default 24, `0` disables the cap)
   - Rate limited to 1 use per 30 seconds per user per guild; all replies are ephemeral

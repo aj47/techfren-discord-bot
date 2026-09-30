@@ -238,11 +238,11 @@ except (ValueError, TypeError):
 # Fred Access Configuration
 # Points charged per block of Fred (Hermes agent, nick of frenbot) access sold by /fred
 try:
-    FRENBOT_ACCESS_COST = int(os.getenv('FRENBOT_ACCESS_COST', '25'))
+    FRENBOT_ACCESS_COST = int(os.getenv('FRENBOT_ACCESS_COST', '10'))
     if FRENBOT_ACCESS_COST < 1:
         FRENBOT_ACCESS_COST = 1  # Minimum 1 point cost
 except (ValueError, TypeError):
-    FRENBOT_ACCESS_COST = 25  # Default to 25 if invalid value
+    FRENBOT_ACCESS_COST = 10  # Default to 10 if invalid value
 
 # Hours of access granted per redemption
 try:

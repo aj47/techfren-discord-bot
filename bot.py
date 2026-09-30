@@ -2966,7 +2966,7 @@ async def fred_slash(interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         user_name = interaction.user.name
 
-        cost = getattr(config, 'FRENBOT_ACCESS_COST', 25)
+        cost = getattr(config, 'FRENBOT_ACCESS_COST', 10)
         hours = getattr(config, 'FRENBOT_ACCESS_DURATION_HOURS', 1)
         role_name = getattr(config, 'FRENBOT_ACCESS_ROLE_NAME', 'fred-access')
         max_hours = getattr(config, 'FRENBOT_ACCESS_MAX_HOURS', 24)
