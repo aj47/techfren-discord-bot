@@ -21,6 +21,7 @@ from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_co
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
 from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep  # Import summarization tasks
+from open_questions import daily_open_questions, set_discord_client as set_open_questions_client
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
 from firecrawl_handler import scrape_url_content  # Import Firecrawl handler
@@ -1136,6 +1137,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @bot.event
 async def on_ready():
     set_discord_client(bot) # Set the client instance for summarization tasks
+    set_open_questions_client(bot)
     logger.info(f'Bot has successfully connected as {bot.user}')
     logger.info(f'Bot ID: {bot.user.id}')
     logger.info(f'Connected to {len(bot.guilds)} guilds')
@@ -1189,6 +1191,11 @@ async def on_ready():
     if not frenbot_access_expiry_sweep.is_running():
         frenbot_access_expiry_sweep.start()
         logger.info("Started Fred access expiry sweep task")
+
+    # Start the 23:00 UTC open-questions thread (before the 00:00 prune)
+    if not daily_open_questions.is_running():
+        daily_open_questions.start()
+        logger.info("Started daily open-questions task")
 
     # Log details about each connected guild
     for guild in bot.guilds:

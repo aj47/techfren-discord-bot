@@ -95,6 +95,14 @@ if _summary_channel_ids_raw:
 else:
     summary_channel_ids = None
 
+# Open-questions thread in #general (23:00 UTC, before the 00:00 prune)
+# Environment variables: OPEN_QUESTIONS_HOUR, OPEN_QUESTIONS_MINUTE,
+#                        OPEN_QUESTIONS_LOOKBACK_HOURS, OPEN_QUESTIONS_LIMIT
+open_questions_hour = int(os.getenv('OPEN_QUESTIONS_HOUR', '23'))
+open_questions_minute = int(os.getenv('OPEN_QUESTIONS_MINUTE', '0'))
+open_questions_lookback_hours = int(os.getenv('OPEN_QUESTIONS_LOOKBACK_HOURS', '24'))
+open_questions_limit = int(os.getenv('OPEN_QUESTIONS_LIMIT', '12'))
+
 # Links Dump Channel Configuration (optional)
 # Environment variable: LINKS_DUMP_CHANNEL_ID
 # Channel where only links are allowed - text messages will be auto-deleted

@@ -60,3 +60,7 @@ summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"  # For channel summaries
 general_channel_id = "YOUR_GENERAL_CHANNEL_ID"  # For the server-wide daily digest and point awards
 summary_channel_ids = ["YOUR_CHANNEL_ID_1", "YOUR_CHANNEL_ID_2"]  # Optional: restrict per-channel summaries
+open_questions_hour = 23
+open_questions_minute = 0
+open_questions_lookback_hours = 24
+open_questions_limit = 12

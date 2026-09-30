@@ -220,6 +220,8 @@ To configure the automated summarization:
 SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
 SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
 SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict per-channel daily summaries (general digest still uses all active channels)
+OPEN_QUESTIONS_HOUR=23  # Unanswered-questions thread in #general (UTC)
+OPEN_QUESTIONS_MINUTE=0
 ```
 
 ## Anti-spam (guild-wide)
