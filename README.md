@@ -167,13 +167,13 @@ To use the message content intent, you need to enable it in the Discord Develope
 
 ### Points Redemptions
 
-- `/redeem-frenbot`: Spends points for timed access to frenbot (the Hermes agent), granted via a Discord role
-  - Costs `FRENBOT_ACCESS_COST` points (default 25) per `FRENBOT_ACCESS_DURATION_HOURS` (default 1)
+- `/fred`: Spends points for an hour talking to Fred (the Hermes agent, nick of frenbot), granted via a Discord role
+  - Costs `FRENBOT_ACCESS_COST` points (default 10) per `FRENBOT_ACCESS_DURATION_HOURS` (default 1)
   - Redeeming while access is already active **stacks** the duration and charges again
   - Capped at `FRENBOT_ACCESS_MAX_HOURS` of banked access (default 24, `0` disables the cap)
   - Rate limited to 1 use per 30 seconds per user per guild; all replies are ephemeral
   - Confirms with a Discord relative timestamp, so users see "expires in 58 minutes"
-  - **The `frenbot-access` role must be created by an admin** and must sit *below* the bot's
+  - **The `fred-access` role must be created by an admin** and must sit *below* the bot's
     highest role. The bot deliberately never creates it: it gates access to another bot, so
     the command refuses rather than silently provisioning an access role. Both problems are
     reported before any points are charged.
@@ -356,9 +356,9 @@ The database is initialized when the bot starts up and is used throughout the ap
   it. Rows are created on join, or on the member's first message if the bot was
   offline for the join.
 
-### Frenbot Access Grants Table
+### Fred Access Grants Table
 
-`frenbot_access_grants` is append-only: one row per `/redeem-frenbot` redemption, recording
+`frenbot_access_grants` is append-only: one row per `/fred` grant, recording
 `points_spent`, `hours_granted`, `granted_at` and `expires_at`. This doubles as the purchase
 history - there is no separate spend ledger.
 

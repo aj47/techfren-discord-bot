@@ -1,5 +1,5 @@
 """
-Tests for the /redeem-frenbot points-for-access feature.
+Tests for the /fred points-for-access feature.
 
 Covers the grant/stacking arithmetic in the database layer and the expiry
 sweep that actually removes the role when access lapses.
@@ -57,7 +57,7 @@ def _insert_raw_grant(author_id, guild_id, expires_at, swept=0, hours=1, points=
         conn.commit()
 
 
-def _make_guild(role_name="frenbot-access", member_has_role=True, remove_side_effect=None):
+def _make_guild(role_name="fred-access", member_has_role=True, remove_side_effect=None):
     """Build a mock guild/role/member trio for sweeper tests."""
     role = MagicMock()
     role.name = role_name
@@ -78,13 +78,12 @@ def _make_guild(role_name="frenbot-access", member_has_role=True, remove_side_ef
 # ---------------------------------------------------------------------------
 
 def test_frenbot_config_defaults():
-    """Frenbot access constants exist and are sane."""
+    """Fred access constants exist and are sane."""
     import config
 
-    assert config.FRENBOT_ACCESS_COST >= 1
+    assert config.FRENBOT_ACCESS_COST == 10
     assert config.FRENBOT_ACCESS_DURATION_HOURS >= 1
-    assert isinstance(config.FRENBOT_ACCESS_ROLE_NAME, str)
-    assert config.FRENBOT_ACCESS_ROLE_NAME
+    assert config.FRENBOT_ACCESS_ROLE_NAME == 'fred-access'
     assert config.FRENBOT_ACCESS_MAX_HOURS >= 0
 
 

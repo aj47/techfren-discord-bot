@@ -78,7 +78,7 @@ def format_leaderboard_message(leaderboard: List[Dict[str, Any]], order_by: str)
         message += f"{medal} **{entry['author_name']}**: {detail}\n"
 
     if order_by == "spent":
-        message += "\nPoints are spent on a role colour, a GIF bypass or frenbot access."
+        message += "\nPoints are spent on a role colour, a GIF bypass or talking to Fred."
     elif order_by == "balance":
         message += (
             "\nThis board ranks on what is left in the wallet. The default board — "
