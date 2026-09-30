@@ -1,7 +1,7 @@
 """
 Tests for lifetime point tracking.
 
-total_points is a wallet — role colours, GIF bypasses and frenbot access all
+total_points is a wallet — role colours, GIF bypasses and talking to Fred all
 spend it — so it cannot answer "how much has this member earned".
 lifetime_points answers that, and nothing may ever reduce it.
 """

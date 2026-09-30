@@ -811,7 +811,7 @@ async def before_daily_role_color_charging():
 
 async def process_frenbot_access_expiries():
     """
-    Remove the frenbot access role from users whose access has lapsed.
+    Remove the Fred access role from users whose access has lapsed.
 
     Runs frequently (access is sold in hours, not days) and is idempotent:
     once a user's expired grants are marked swept they are not reconsidered,
@@ -821,7 +821,7 @@ async def process_frenbot_access_expiries():
     while the bot was offline are cleaned up on boot.
     """
     if not discord_client:
-        logger.error("Discord client not set. Cannot process frenbot access expiries.")
+        logger.error("Discord client not set. Cannot process Fred access expiries.")
         return
 
     try:
@@ -830,7 +830,7 @@ async def process_frenbot_access_expiries():
         if not expired_users:
             return
 
-        role_name = getattr(config, 'FRENBOT_ACCESS_ROLE_NAME', 'frenbot-access')
+        role_name = getattr(config, 'FRENBOT_ACCESS_ROLE_NAME', 'fred-access')
         total_removed = 0
         total_skipped = 0
 
@@ -863,14 +863,14 @@ async def process_frenbot_access_expiries():
 
             if role in member.roles:
                 try:
-                    await member.remove_roles(role, reason="frenbot access expired")
+                    await member.remove_roles(role, reason="Fred access expired")
                     total_removed += 1
-                    logger.info(f"Removed expired frenbot access from {author_name} ({author_id}) in guild {guild_id}")
+                    logger.info(f"Removed expired Fred access from {author_name} ({author_id}) in guild {guild_id}")
                 except (discord.Forbidden, discord.HTTPException) as e:
                     # Leave rows unswept so the next pass retries once the
                     # permission or hierarchy problem is fixed.
                     logger.error(
-                        f"Could not remove frenbot access role from {author_name} ({author_id}): {str(e)}"
+                        f"Could not remove Fred access role from {author_name} ({author_id}): {str(e)}"
                     )
                     continue
             else:
@@ -880,16 +880,16 @@ async def process_frenbot_access_expiries():
 
         if total_removed or total_skipped:
             logger.info(
-                f"frenbot access expiry sweep complete: {total_removed} role(s) removed, {total_skipped} skipped"
+                f"Fred access expiry sweep complete: {total_removed} role(s) removed, {total_skipped} skipped"
             )
 
     except Exception as e:
-        logger.error(f"Error processing frenbot access expiries: {str(e)}", exc_info=True)
+        logger.error(f"Error processing Fred access expiries: {str(e)}", exc_info=True)
 
 
 @tasks.loop(minutes=1)
 async def frenbot_access_expiry_sweep():
-    """Scheduled task to expire frenbot access grants."""
+    """Scheduled task to expire Fred access grants."""
     await process_frenbot_access_expiries()
 
 
@@ -908,7 +908,7 @@ async def before_frenbot_access_expiry_sweep():
 
     try:
         await discord_client.wait_until_ready()
-        logger.info("frenbot access expiry sweep starting (runs every minute)")
+        logger.info("Fred access expiry sweep starting (runs every minute)")
     except Exception as e:
         logger.error(f"Error in before_frenbot_access_expiry_sweep: {str(e)}", exc_info=True)
         await asyncio.sleep(60)

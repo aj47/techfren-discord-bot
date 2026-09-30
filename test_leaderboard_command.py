@@ -82,7 +82,7 @@ def test_spenders_board_names_what_the_points_went_on():
 
     assert 'points used in the server' in message
     assert '🥇 **tazr**: 681 spent · 336 left' in message
-    assert 'role colour, a GIF bypass or frenbot access' in message
+    assert 'role colour, a GIF bypass or talking to Fred' in message
     # The spenders board is not the all-time board; it must not carry its
     # footer either.
     assert 'spending points never lowers it' not in message
