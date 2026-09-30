@@ -243,12 +243,6 @@ An account is never actioned at all if **either** of these is true:
 This is a whitelist, not a spam detector - proving an account has contributed is
 trivial and cannot false-positive, while detecting spam positively is unreliable.
 
-### Never banned, but still timed out
-
-An account 30+ days old that joined 14+ days ago is **established**: it can still be
-deleted and timed out for a blast, but it can never be banned - not on a pile of
-triggers, and not on a repeat.
-
 ### What triggers it
 
 Any one of these, in any channel:
@@ -263,16 +257,10 @@ a hit as context but never causes an action by itself.
 
 ### What happens
 
-- **one trigger** -> delete the message + a `HONEYPOT_TIMEOUT_MINUTES` timeout
-- **two triggers, or any trigger on an account already caught before** -> ban and
-  purge the last 24 hours of their messages
-- **if the account is established** (30+ days old, 14+ days here) -> the ban is
-  withheld and it is timed out instead
+Any trigger -> delete the blast copies + a 24h timeout (`HONEYPOT_TIMEOUT_MINUTES`,
+default 1440) + ping the owner in `HONEYPOT_LOG_CHANNEL_ID`.
 
-So a first strike is never a permaban, no amount of circumstantial context can ban
-anyone on its own, and an established account can never be banned by this at all.
-Every withheld ban is recorded in `honeypot_hits` and the log channel so a moderator
-can still ban by hand if the behaviour warrants it.
+**Never auto-bans.** Ban by hand from the ping if it looks right.
 
 ### Safety rails
 

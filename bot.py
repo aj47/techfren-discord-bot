@@ -38,13 +38,10 @@ from x_link_utils import (  # X/Twitter link rewriting
     build_thread_name,
 )
 from honeypot_handler import (  # Guild-wide anti-spam for new/inactive accounts
-    BAN_TRIGGERS,
     BLAST_CHANNELS,
     BLAST_WINDOW_SECONDS,
     DUPLICATE_CHANNELS,
     DUPLICATE_WINDOW_MINUTES,
-    MATURE_ACCOUNT_DAYS,
-    SETTLED_JOIN_DAYS,
     handle_honeypot_message,
     load_rules as load_honeypot_rules,
 )
@@ -3162,14 +3159,6 @@ async def honeypot_status(interaction: discord.Interaction):
             inline=False,
         )
         embed.add_field(
-            name="Never banned, but still timed out",
-            value=(
-                f"an account {MATURE_ACCOUNT_DAYS}+ days old that joined "
-                f"{SETTLED_JOIN_DAYS}+ days ago"
-            ),
-            inline=False,
-        )
-        embed.add_field(
             name="Triggers",
             value=(
                 f"posting in {BLAST_CHANNELS}+ channels within "
@@ -3182,10 +3171,9 @@ async def honeypot_status(interaction: discord.Interaction):
         embed.add_field(
             name="Response",
             value=(
-                f"1 trigger → delete + {rules.timeout_minutes}m timeout\n"
-                f"{BAN_TRIGGERS}+ triggers, or any trigger on an "
-                f"account caught before → ban\n"
-                f"but an established account is timed out instead of banned"
+                f"any trigger → delete the blast + {rules.timeout_minutes}m timeout\n"
+                f"ping the owner in the log channel\n"
+                f"**never auto-bans** — ban by hand if needed"
             ),
             inline=False,
         )

@@ -121,7 +121,7 @@ class TestImmunity:
 
 
 class TestBanShield:
-    """An established account can be timed out, never banned."""
+    """The trap never bans anyone. Established or not, the ceiling is a timeout."""
 
     def test_established_account_is_shielded(self):
         assert established_reason(make_facts()) is not None
@@ -154,8 +154,8 @@ class TestBanShield:
         assert decision.action == Action.TIMEOUT
         assert decision.actionable is True
 
-    def test_shield_downgrades_a_ban_to_a_timeout(self, trusted_rules):
-        """Two triggers would ban a new account; an established one is timed out."""
+    def test_two_triggers_still_timeout(self, trusted_rules):
+        """Blast + duplicate used to ban; now it is still only a timeout."""
         facts = make_facts(
             channels_in_blast_window=("1", "2", "3"),
             channels_with_duplicate_content=("1", "2", "3"),
@@ -163,27 +163,26 @@ class TestBanShield:
         decision = classify(facts, trusted_rules)
         assert len(decision.triggers) >= 2
         assert decision.action == Action.TIMEOUT
-        assert decision.ban_withheld is not None
+        assert decision.action != Action.BAN
 
-    def test_shield_holds_on_a_repeat(self, trusted_rules):
-        """Even caught before, an established account is not banned."""
+    def test_repeat_still_timeout(self, trusted_rules):
+        """A prior hit does not escalate to a ban."""
         facts = make_facts(
             channels_in_blast_window=("1", "2", "3"),
             prior_hits=3,
         )
         decision = classify(facts, trusted_rules)
         assert decision.action == Action.TIMEOUT
-        assert decision.ban_withheld is not None
 
-    def test_new_account_with_the_same_profile_is_banned(self, trusted_rules):
-        """The shield must not leak onto the accounts the trap is actually for."""
+    def test_new_account_with_the_same_profile_is_not_banned(self, trusted_rules):
+        """The kitty profile: blast + duplicate, 5-day-old account — timeout, never ban."""
         facts = make_young_facts(
             channels_in_blast_window=("1", "2", "3"),
             channels_with_duplicate_content=("1", "2", "3"),
         )
         decision = classify(facts, trusted_rules)
-        assert decision.action == Action.BAN
-        assert decision.ban_withheld is None
+        assert decision.action == Action.TIMEOUT
+        assert decision.action != Action.BAN
 
     def test_immunity_beats_an_egregious_score(self):
         """Even a channel blast is ignored for a trusted member."""
@@ -299,7 +298,7 @@ class TestTriggers:
 
 
 class TestResponse:
-    """One trigger times out; two, or a repeat, bans."""
+    """Any trigger times out. Nothing bans."""
 
     def test_one_trigger_times_out(self, trusted_rules):
         decision = classify(
@@ -319,25 +318,23 @@ class TestResponse:
         assert len(decision.triggers) == 1
         assert decision.action == Action.TIMEOUT
 
-    def test_two_triggers_ban_on_a_first_strike(self, trusted_rules):
-        """Blast + duplicate is unambiguous, so no prior strike is required."""
+    def test_two_triggers_still_only_timeout(self, trusted_rules):
         facts = make_young_facts(
             channels_in_blast_window=("1", "2", "3"),
             channels_with_duplicate_content=("1", "2", "3"),
         )
         decision = classify(facts, trusted_rules)
         assert len(decision.triggers) >= 2
-        assert decision.action == Action.BAN
+        assert decision.action == Action.TIMEOUT
 
-    def test_repeat_offender_bans_on_the_same_evidence(self, trusted_rules):
-        """The identical blast bans once the account has a recorded hit."""
+    def test_repeat_offender_still_only_timeouts(self, trusted_rules):
         facts = make_facts(
             channels_in_blast_window=("1", "2", "3"),
             account_created_at=datetime.now(timezone.utc) - timedelta(days=3),
             prior_message_count=0,
             prior_hits=1,
         )
-        assert classify(facts, trusted_rules).action == Action.BAN
+        assert classify(facts, trusted_rules).action == Action.TIMEOUT
 
     def test_blast_alone_is_a_timeout_not_a_ban(self, trusted_rules):
         """Three channels in 60s with different text is a first strike."""
@@ -349,7 +346,7 @@ class TestResponse:
         decision = classify(facts, trusted_rules)
         assert decision.action == Action.TIMEOUT
 
-    def test_the_kitty_incident_bans(self, trusted_rules):
+    def test_the_kitty_incident_timeouts_not_bans(self, trusted_rules):
         """2026-09-30: 5-day-old account pasted the same pitch in 5 channels in 2.5 min."""
         facts = make_facts(
             account_created_at=datetime.now(timezone.utc) - timedelta(days=5),
@@ -361,7 +358,19 @@ class TestResponse:
             ),
         )
         decision = classify(facts, trusted_rules)
-        assert decision.action == Action.BAN
+        assert decision.action == Action.TIMEOUT
+        assert decision.action != Action.BAN
+
+    def test_classify_never_returns_ban(self, trusted_rules):
+        facts = make_young_facts(
+            channels_in_blast_window=("1", "2", "3", "4", "5"),
+            channels_with_duplicate_content=("1", "2", "3", "4", "5"),
+            prior_hits=9,
+        )
+        assert classify(facts, trusted_rules).action == Action.TIMEOUT
+
+    def test_default_timeout_is_24_hours(self):
+        assert hp.DEFAULT_TIMEOUT_MINUTES == 24 * 60
 
     def test_scam_phrasing_is_recorded(self, trusted_rules):
         facts = make_facts(content="come check us out, free giveaway inside")
@@ -482,6 +491,23 @@ class TestDatabaseLayer:
             guild_id="999",
         )
         assert database.get_recent_channel_ids("42", "999", seconds=60) == []
+
+    def test_recent_message_ids_within_window(self, temp_database):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        database.store_message(
+            message_id="10", channel_id="111", channel_name="a", author_id="42",
+            author_name="spammer", content="hi", created_at=now, is_bot=False,
+            guild_id="999",
+        )
+        database.store_message(
+            message_id="11", channel_id="222", channel_name="b", author_id="42",
+            author_name="spammer", content="hi", created_at=now, is_bot=False,
+            guild_id="999",
+        )
+        rows = database.get_recent_message_ids("42", "999", seconds=60)
+        assert {(r["channel_id"], r["message_id"]) for r in rows} == {
+            ("111", "10"), ("222", "11"),
+        }
 
     def test_duplicate_content_across_channels(self, temp_database):
         now = datetime.now(timezone.utc).replace(tzinfo=None)

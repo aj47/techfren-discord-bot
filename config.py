@@ -360,9 +360,9 @@ HONEYPOT_TRUSTED_ROLE_IDS = [
     rid.strip() for rid in _honeypot_roles_raw.split(',') if rid.strip()
 ]
 
-# Seconds a single-trigger hit is timed out for.
-HONEYPOT_TIMEOUT_MINUTES = int(os.getenv('HONEYPOT_TIMEOUT_MINUTES', '60') or 60)
+# Minutes a hit is timed out for (default 1440 = 24 hours).
+HONEYPOT_TIMEOUT_MINUTES = int(os.getenv('HONEYPOT_TIMEOUT_MINUTES', '1440') or 1440)
 
 # Everything else about the trap is policy, not configuration, and lives as
-# constants in honeypot_handler.py: the two triggers (blast / duplicate), the
-# "two triggers or a repeat bans" rule, and the immunity conditions.
+# constants in honeypot_handler.py: the two triggers (blast / duplicate),
+# timeout-only (never ban), and the immunity conditions.

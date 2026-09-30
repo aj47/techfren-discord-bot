@@ -16,9 +16,8 @@ channel members were told not to post in.
    Neighbouring context (no prior messages, mention spam, young account, scam
    phrasing) is recorded on a hit but never causes an action on its own.
 
-3. RESPONSE - one trigger is a delete plus a timeout. Two triggers, or any trigger
-   on an account already caught before, is a ban. An established account (see
-   ``established_reason``) is still timed out but can never be banned.
+3. RESPONSE - any trigger is a 24h timeout, delete of the blast copies, and a ping
+   to the owner in the log channel. This never bans; a human decides that.
 
 ``Rules.dry_run`` defaults to True: decisions are logged and announced but no
 member is timed out or banned until it is explicitly switched off.
@@ -60,9 +59,8 @@ class Action:
 # ---------------------------------------------------------------------------
 # Policy
 #
-# Deliberately constants rather than settings. The whole behaviour is "one
-# trigger = delete + timeout, two triggers or a repeat = ban"; the only things
-# worth configuring are which roles are immune and how long a timeout lasts.
+# Deliberately constants rather than settings. The whole behaviour is "any
+# trigger = delete the blast + 24h timeout + ping the owner"; it never bans.
 # ---------------------------------------------------------------------------
 
 # Trigger: posting in this many distinct channels within the window.
@@ -74,10 +72,13 @@ BLAST_WINDOW_SECONDS = 60
 DUPLICATE_CHANNELS = 3
 DUPLICATE_WINDOW_MINUTES = 5
 
-# Two triggers ban outright; a single trigger bans only on a repeat.
-BAN_TRIGGERS = 2
-# Seconds of history purged on a ban (Discord caps this at 7 days).
-BAN_PURGE_SECONDS = 86400
+# How far back to delete copies of the blast (covers both trigger windows).
+PURGE_WINDOW_SECONDS = max(BLAST_WINDOW_SECONDS, DUPLICATE_WINDOW_MINUTES * 60)
+
+# Owner pinged on every actionable hit (AJ). A constant, not a setting: there
+# is one person who asked to be notified, and a mis-set env would silently
+# notify nobody.
+NOTIFY_USER_ID = "200272755520700416"
 
 # Immunity: an account at least this old, in the server at least this long, is
 # established even with no role and no points history. Without this, "trusted
@@ -92,8 +93,8 @@ YOUNG_ACCOUNT_DAYS = 30
 MENTION_SPAM_COUNT = 5
 RECENT_JOIN_MINUTES = 30
 
-# What one trigger does.
-DEFAULT_TIMEOUT_MINUTES = 60
+# What a trigger does. Discord timeouts cap at 28 days; 24h is the ask.
+DEFAULT_TIMEOUT_MINUTES = 24 * 60
 
 # Scam/recruitment phrasing seen in this server's own ban history.
 _SCAM_PHRASES = (
@@ -429,10 +430,9 @@ def classify(
     """
     Decide what to do about a guild message from a non-immune account.
 
-    One trigger is a delete plus a timeout. Two independent triggers, or any
-    trigger on an account already caught before, is a ban -- so a first strike is
-    never a permaban and a single circumstantial signal can never ban anyone.
-    Context-only messages are ignored (not logged): this runs on every message.
+    Any trigger is a 24h timeout. This function never returns ``Action.BAN`` —
+    a human decides bans. Context-only messages are ignored (not logged): this
+    runs on every message.
     """
     rules = rules or Rules()
 
@@ -442,27 +442,13 @@ def classify(
 
     triggers, context = find_triggers(facts, rules, now=now)
 
-    if not triggers:
-        action = Action.NONE
-    elif len(triggers) >= BAN_TRIGGERS or facts.prior_hits >= 1:
-        action = Action.BAN
-    else:
-        action = Action.TIMEOUT
-
-    # An established account is still timed out, but never banned -- not on a pile
-    # of triggers, and not on a repeat (a prior hit of its own was a timeout too).
-    shield = established_reason(facts, now=now)
-    if shield is not None and action == Action.BAN:
-        action = Action.TIMEOUT
-    else:
-        shield = None
+    action = Action.TIMEOUT if triggers else Action.NONE
 
     return Decision(
         immune=False,
         action=action,
         triggers=tuple(triggers),
         context=tuple(context),
-        ban_withheld=shield,
     )
 
 
@@ -633,14 +619,10 @@ async def _post_log_embed(
         return
 
     mode = "enforced" if enforced else "DRY RUN"
-    colour = {
-        Action.BAN: discord.Color.red(),
-        Action.TIMEOUT: discord.Color.orange(),
-        Action.LOG: discord.Color.gold(),
-    }.get(decision.action, discord.Color.light_grey())
+    colour = discord.Color.orange() if decision.action == Action.TIMEOUT else discord.Color.gold()
 
     embed = discord.Embed(
-        title=f"🍯 Anti-spam {decision.action.upper()} ({mode})",
+        title=f"🍯 Anti-spam TIMEOUT ({mode})",
         description=decision.explain(),
         color=colour,
         timestamp=datetime.now(timezone.utc),
@@ -660,17 +642,63 @@ async def _post_log_embed(
     if created is not None:
         age_days = (datetime.now(timezone.utc) - created).days
         embed.add_field(name="Account age", value=f"{age_days}d", inline=True)
-    me = message.guild.me
-    if me is not None and getattr(message.channel, "permissions_for", None):
-        if message.channel.permissions_for(me).read_message_history:
-            embed.add_field(name="Message ID", value=f"`{message.id}`", inline=True)
+    embed.add_field(
+        name="Timeout",
+        value=f"{rules.timeout_minutes}m — not banned, ban by hand if needed",
+        inline=True,
+    )
     body = (message.content or "").strip() or "*(no text content)*"
     embed.add_field(name="Content", value=body[:1000], inline=False)
 
     try:
-        await channel.send(embed=embed)
+        await channel.send(content=f"<@{NOTIFY_USER_ID}>", embed=embed)
     except Exception as exc:  # pragma: no cover - network/permission dependent
         logger.error(f"Honeypot: failed to post log embed: {exc}", exc_info=True)
+
+
+async def _purge_recent_messages(message: discord.Message) -> int:
+    """Delete this author's recent messages across channels. Best-effort."""
+    guild = message.guild
+    if guild is None:
+        return 0
+    user_id = str(message.author.id)
+    guild_id = str(guild.id)
+    rows = []
+    try:
+        rows = database.get_recent_message_ids(
+            user_id, guild_id, seconds=PURGE_WINDOW_SECONDS
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Honeypot: purge lookup failed for {user_id}: {exc}")
+
+    seen = {(str(message.channel.id), str(message.id))}
+    deleted = 0
+    try:
+        await message.delete()
+        deleted += 1
+    except discord.NotFound:
+        pass
+    except Exception as exc:
+        logger.warning(f"Honeypot: could not delete triggering message {message.id}: {exc}")
+
+    for row in rows:
+        key = (str(row["channel_id"]), str(row["message_id"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        channel = guild.get_channel(int(row["channel_id"]))
+        if channel is None or not hasattr(channel, "get_partial_message"):
+            continue
+        try:
+            await channel.get_partial_message(int(row["message_id"])).delete()
+            deleted += 1
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            continue
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                f"Honeypot: could not delete {row['message_id']} in {row['channel_id']}: {exc}"
+            )
+    return deleted
 
 
 async def _enforce(
@@ -678,7 +706,9 @@ async def _enforce(
     decision: Decision,
     rules: Rules,
 ) -> bool:
-    """Apply the decided action. Returns True when Discord accepted it."""
+    """Timeout and delete the blast. Never bans. Returns True when the timeout landed."""
+    if decision.action != Action.TIMEOUT:
+        return False
     member = message.author
     if not isinstance(member, discord.Member):
         logger.warning(
@@ -687,32 +717,36 @@ async def _enforce(
         )
         return False
 
-    reason = f"Honeypot channel #{getattr(message.channel, 'name', message.channel.id)}: {decision.explain()}"
+    reason = (
+        f"Anti-spam #{getattr(message.channel, 'name', message.channel.id)}: "
+        f"{decision.explain()}"
+    )
 
+    timed_out = False
     try:
-        if decision.action == Action.BAN:
-            await member.ban(reason=reason, delete_message_seconds=BAN_PURGE_SECONDS)
-            return True
-        if decision.action == Action.TIMEOUT:
-            await message.delete()
-            await member.timeout(
-                timedelta(minutes=rules.timeout_minutes), reason=reason
-            )
-            return True
-        return False
+        await member.timeout(
+            timedelta(minutes=rules.timeout_minutes), reason=reason
+        )
+        timed_out = True
     except discord.Forbidden:
         logger.error(
-            f"Honeypot: cannot {decision.action} {member.id} - missing permission or "
+            f"Honeypot: cannot timeout {member.id} - missing permission or "
             f"role hierarchy ({reason})"
         )
     except discord.HTTPException as exc:
-        logger.error(f"Honeypot: {decision.action} failed for {member.id}: {exc}")
+        logger.error(f"Honeypot: timeout failed for {member.id}: {exc}")
     except Exception as exc:  # pragma: no cover - defensive
         logger.error(
-            f"Honeypot: unexpected error during {decision.action} for {member.id}: {exc}",
+            f"Honeypot: unexpected error during timeout for {member.id}: {exc}",
             exc_info=True,
         )
-    return False
+
+    try:
+        await _purge_recent_messages(message)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Honeypot: purge failed for {member.id}: {exc}", exc_info=True)
+
+    return timed_out
 
 
 async def handle_honeypot_message(
