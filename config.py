@@ -331,10 +331,10 @@ bridge_guild_id = os.getenv('BRIDGE_GUILD_ID')              # optional: only mir
 bridge_exclude_channel_ids = os.getenv('BRIDGE_EXCLUDE_CHANNEL_IDS', '')  # optional: comma-separated
 
 
-# --- honeypot trap ----------------------------------------------------------
-# Catches spam/bot accounts that post in a designated trap channel. Only
-# accounts that are neither holding a trusted role nor carrying any points
-# history are ever actioned, so established members cannot be caught by it.
+# --- honeypot / guild-wide anti-spam ----------------------------------------
+# Catches new accounts that blast the same pitch across channels. Only accounts
+# that are neither holding a trusted role nor carrying any points history are
+# ever actioned, so established members cannot be caught by it.
 #
 # Off by default: nothing is evaluated until HONEYPOT_ENABLED is set, and even
 # then HONEYPOT_DRY_RUN still logs decisions without enforcing them.
@@ -364,7 +364,5 @@ HONEYPOT_TRUSTED_ROLE_IDS = [
 HONEYPOT_TIMEOUT_MINUTES = int(os.getenv('HONEYPOT_TIMEOUT_MINUTES', '60') or 60)
 
 # Everything else about the trap is policy, not configuration, and lives as
-# constants in honeypot_handler.py: the four triggers, the "two triggers or a
-# repeat bans" rule, and the three immunity conditions. That keeps the shape of
-# the behaviour reviewable in one file instead of spread across .env knobs, and
-# stops a bad setting from quietly turning the trap on established members.
+# constants in honeypot_handler.py: the two triggers (blast / duplicate), the
+# "two triggers or a repeat bans" rule, and the immunity conditions.

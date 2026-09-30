@@ -148,8 +148,8 @@ class TestBanShield:
         assert established_reason(facts) is None
 
     def test_shielded_account_is_still_timed_out(self, trusted_rules):
-        """A link in the trap channel is deleted and timed out either way."""
-        facts = make_facts(content="https://example.com/promo")  # 400d old, 200d here
+        """A blast is deleted and timed out even for an established account."""
+        facts = make_facts(channels_in_blast_window=("1", "2", "3"))
         decision = classify(facts, trusted_rules)
         assert decision.action == Action.TIMEOUT
         assert decision.actionable is True
@@ -157,8 +157,8 @@ class TestBanShield:
     def test_shield_downgrades_a_ban_to_a_timeout(self, trusted_rules):
         """Two triggers would ban a new account; an established one is timed out."""
         facts = make_facts(
-            content="https://discord.gg/spam",
             channels_in_blast_window=("1", "2", "3"),
+            channels_with_duplicate_content=("1", "2", "3"),
         )
         decision = classify(facts, trusted_rules)
         assert len(decision.triggers) >= 2
@@ -168,7 +168,6 @@ class TestBanShield:
     def test_shield_holds_on_a_repeat(self, trusted_rules):
         """Even caught before, an established account is not banned."""
         facts = make_facts(
-            content="https://discord.gg/spam",
             channels_in_blast_window=("1", "2", "3"),
             prior_hits=3,
         )
@@ -179,8 +178,8 @@ class TestBanShield:
     def test_new_account_with_the_same_profile_is_banned(self, trusted_rules):
         """The shield must not leak onto the accounts the trap is actually for."""
         facts = make_young_facts(
-            content="https://discord.gg/spam",
             channels_in_blast_window=("1", "2", "3"),
+            channels_with_duplicate_content=("1", "2", "3"),
         )
         decision = classify(facts, trusted_rules)
         assert decision.action == Action.BAN
@@ -219,31 +218,32 @@ class TestTriggers:
     """A trigger acts on its own; context never does."""
 
     def test_clean_message_is_never_punished(self, trusted_rules):
-        """A benign post in the trap channel is recorded at most, never actioned."""
+        """A first post in a real channel, even from a new account, is ignored."""
         decision = classify(
             make_young_facts(content="good morning everyone"), trusted_rules
         )
         assert decision.triggers == ()
         assert decision.actionable is False
+        assert decision.action == Action.NONE
 
-    def test_link_is_a_trigger(self, trusted_rules):
+    def test_link_is_not_a_trigger(self, trusted_rules):
+        """A URL in a real channel is not enough — that was a decoy-channel rule."""
         facts = make_facts(content="https://example.com/promo")
         triggers, _ = find_triggers(facts, trusted_rules)
-        assert triggers == ["link_in_trap_channel"]
+        assert triggers == []
 
-    def test_invite_outranks_a_plain_link(self, trusted_rules):
-        """An invite is one trigger, not two: it is the same behaviour."""
+    def test_invite_is_not_a_trigger(self, trusted_rules):
         facts = make_facts(content="join https://discord.gg/spam now")
         triggers, _ = find_triggers(facts, trusted_rules)
-        assert triggers == ["invite_in_trap_channel"]
+        assert triggers == []
 
-    def test_fresh_account_is_a_trigger(self, trusted_rules):
+    def test_fresh_account_is_not_a_trigger(self, trusted_rules):
         facts = make_facts(
             account_created_at=datetime.now(timezone.utc) - timedelta(hours=2),
             prior_message_count=100,
         )
         triggers, _ = find_triggers(facts, trusted_rules)
-        assert any(s.startswith("account_age:") for s in triggers)
+        assert not any(s.startswith("account_age:") for s in triggers)
 
     def test_channel_blast_is_a_trigger(self, trusted_rules):
         facts = make_facts(channels_in_blast_window=("1", "2", "3"))
@@ -251,9 +251,15 @@ class TestTriggers:
         assert any(s.startswith("blast:") for s in triggers)
 
     def test_duplicate_content_across_channels_is_a_trigger(self, trusted_rules):
-        facts = make_facts(channels_with_duplicate_content=("1", "2"))
+        facts = make_facts(channels_with_duplicate_content=("1", "2", "3"))
         triggers, _ = find_triggers(facts, trusted_rules)
         assert any(s.startswith("duplicate_content:") for s in triggers)
+
+    def test_duplicate_in_two_channels_is_not_a_trigger(self, trusted_rules):
+        """Pasting the same question in two rooms is a messy human, not a raid."""
+        facts = make_facts(channels_with_duplicate_content=("1", "2"))
+        triggers, _ = find_triggers(facts, trusted_rules)
+        assert not any(s.startswith("duplicate_content:") for s in triggers)
 
     def test_blast_below_threshold_is_not_a_trigger(self, trusted_rules):
         facts = make_facts(channels_in_blast_window=("1", "2"))  # needs 3
@@ -275,7 +281,7 @@ class TestTriggers:
     def test_scam_phrasing_alone_cannot_act(self, trusted_rules):
         """A single context signal is recorded but never punished."""
         decision = classify(make_young_facts(content="come check us out"), trusted_rules)
-        assert decision.action == Action.LOG
+        assert decision.action == Action.NONE
         assert decision.actionable is False
 
     def test_context_in_bulk_never_bans(self, trusted_rules):
@@ -289,7 +295,7 @@ class TestTriggers:
         )
         decision = classify(facts, trusted_rules)
         assert decision.triggers == ()
-        assert decision.action == Action.LOG
+        assert decision.action == Action.NONE
 
 
 class TestResponse:
@@ -297,7 +303,7 @@ class TestResponse:
 
     def test_one_trigger_times_out(self, trusted_rules):
         decision = classify(
-            make_young_facts(content="https://example.com/promo"), trusted_rules
+            make_young_facts(channels_in_blast_window=("1", "2", "3")), trusted_rules
         )
         assert decision.action == Action.TIMEOUT
         assert decision.actionable is True
@@ -305,7 +311,7 @@ class TestResponse:
     def test_first_strike_with_context_still_only_times_out(self, trusted_rules):
         """One trigger plus as much context as you like is still a first strike."""
         facts = make_facts(
-            content="https://example.com/promo",
+            channels_in_blast_window=("1", "2", "3"),
             account_created_at=datetime.now(timezone.utc) - timedelta(days=3),
             prior_message_count=0,
         )
@@ -314,32 +320,45 @@ class TestResponse:
         assert decision.action == Action.TIMEOUT
 
     def test_two_triggers_ban_on_a_first_strike(self, trusted_rules):
-        """Blast + invite is unambiguous, so no prior strike is required."""
+        """Blast + duplicate is unambiguous, so no prior strike is required."""
         facts = make_young_facts(
-            content="https://discord.gg/spam",
             channels_in_blast_window=("1", "2", "3"),
+            channels_with_duplicate_content=("1", "2", "3"),
         )
         decision = classify(facts, trusted_rules)
         assert len(decision.triggers) >= 2
         assert decision.action == Action.BAN
 
     def test_repeat_offender_bans_on_the_same_evidence(self, trusted_rules):
-        """The identical message bans once the account has a recorded hit."""
+        """The identical blast bans once the account has a recorded hit."""
         facts = make_facts(
-            content="https://example.com/promo",
+            channels_in_blast_window=("1", "2", "3"),
             account_created_at=datetime.now(timezone.utc) - timedelta(days=3),
             prior_message_count=0,
             prior_hits=1,
         )
         assert classify(facts, trusted_rules).action == Action.BAN
 
-    def test_the_prettygirls_incident_bans(self, trusted_rules):
-        """The real incident: a 5-day-old account, invite, 3 channels in 60s."""
+    def test_blast_alone_is_a_timeout_not_a_ban(self, trusted_rules):
+        """Three channels in 60s with different text is a first strike."""
         facts = make_facts(
-            content="https://discord.gg/prettygirls",
             account_created_at=datetime.now(timezone.utc) - timedelta(days=5),
             prior_message_count=0,
             channels_in_blast_window=("links", "ai", "llm"),
+        )
+        decision = classify(facts, trusted_rules)
+        assert decision.action == Action.TIMEOUT
+
+    def test_the_kitty_incident_bans(self, trusted_rules):
+        """2026-09-30: 5-day-old account pasted the same pitch in 5 channels in 2.5 min."""
+        facts = make_facts(
+            account_created_at=datetime.now(timezone.utc) - timedelta(days=5),
+            joined_at=datetime.now(timezone.utc) - timedelta(minutes=54),
+            prior_message_count=0,
+            channels_in_blast_window=("collabs", "introductions", "general"),
+            channels_with_duplicate_content=(
+                "collabs", "introductions", "general", "ai-models", "paid-work",
+            ),
         )
         decision = classify(facts, trusted_rules)
         assert decision.action == Action.BAN
@@ -569,11 +588,13 @@ class TestHandlerInterlocks:
             enabled=True, dry_run=True,
             trusted_role_ids=frozenset({"999"}),
         )
+        facts = make_young_facts(
+            user_id="42", channels_in_blast_window=("1", "2", "3"),
+        )
         with patch.object(hp, "load_rules", return_value=rules), \
+             patch.object(hp, "collect_facts", new=AsyncMock(return_value=facts)), \
              patch.object(hp, "_enforce", new=AsyncMock()) as enforce:
-            decision = await hp.handle_honeypot_message(
-                make_message(content="https://discord.gg/spam", account_days_old=5, joined_days_ago=2)
-            )
+            decision = await hp.handle_honeypot_message(make_message())
             assert decision is not None
             assert decision.actionable is True
             enforce.assert_not_awaited()
@@ -584,16 +605,18 @@ class TestHandlerInterlocks:
 
     @pytest.mark.asyncio
     async def test_enforced_hit_calls_enforce(self, temp_database):
-        """The same message is acted on once dry run is off."""
+        """The same blast is acted on once dry run is off."""
         rules = Rules(
             enabled=True, dry_run=False,
             trusted_role_ids=frozenset({"999"}),
         )
+        facts = make_young_facts(
+            user_id="42", channels_in_blast_window=("1", "2", "3"),
+        )
         with patch.object(hp, "load_rules", return_value=rules), \
+             patch.object(hp, "collect_facts", new=AsyncMock(return_value=facts)), \
              patch.object(hp, "_enforce", new=AsyncMock(return_value=True)) as enforce:
-            decision = await hp.handle_honeypot_message(
-                make_message(content="https://discord.gg/spam", account_days_old=5, joined_days_ago=2)
-            )
+            decision = await hp.handle_honeypot_message(make_message())
             assert decision is not None
             enforce.assert_awaited_once()
 
@@ -603,18 +626,19 @@ class TestHandlerInterlocks:
 
     @pytest.mark.asyncio
     async def test_established_member_is_timed_out_but_never_banned(self, temp_database):
-        """An established account posting in the trap is timed out, not banned --
+        """An established account blasting is timed out, not banned --
         and the hit is still recorded so a moderator can see it."""
         rules = Rules(
             enabled=True, dry_run=False,
             trusted_role_ids=frozenset({"999"}),
         )
+        facts = make_facts(
+            user_id="42", channels_in_blast_window=("1", "2", "3"),
+        )
         with patch.object(hp, "load_rules", return_value=rules), \
+             patch.object(hp, "collect_facts", new=AsyncMock(return_value=facts)), \
              patch.object(hp, "_enforce", new=AsyncMock(return_value=True)) as enforce:
-            # account_days_old/joined_days_ago default to 400/200 in make_message
-            decision = await hp.handle_honeypot_message(
-                make_message(content="https://discord.gg/spam")
-            )
+            decision = await hp.handle_honeypot_message(make_message())
             assert decision is not None
             assert decision.action == Action.TIMEOUT
             enforce.assert_awaited_once()
@@ -622,6 +646,20 @@ class TestHandlerInterlocks:
         hits = database.get_recent_honeypot_hits("999", limit=5)
         assert len(hits) == 1
         assert hits[0]["action"] == Action.TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_ordinary_chat_is_not_recorded(self, temp_database):
+        """A first message with no blast/duplicate must not write a hit row."""
+        rules = Rules(
+            enabled=True, dry_run=False,
+            trusted_role_ids=frozenset({"999"}),
+        )
+        with patch.object(hp, "load_rules", return_value=rules), \
+             patch.object(hp, "_enforce", new=AsyncMock()) as enforce:
+            decision = await hp.handle_honeypot_message(make_message())
+            assert decision is None
+            enforce.assert_not_awaited()
+        assert database.get_recent_honeypot_hits("999", limit=5) == []
 
 
 if __name__ == "__main__":  # pragma: no cover
