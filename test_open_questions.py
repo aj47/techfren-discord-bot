@@ -106,6 +106,39 @@ class TestOpenQuestionsScout(unittest.TestCase):
         self.assertNotIn("<@", text)
         self.assertNotIn("<#", text)
 
+    def test_resolves_general_like_digest_when_env_unset(self):
+        class _Ch:
+            def __init__(self, cid, name):
+                self.id = cid
+                self.name = name
+
+        class _Guild:
+            def __init__(self):
+                self.text_channels = [
+                    _Ch(111, "bots"),
+                    _Ch(1053882445017124977, "general"),
+                    _Ch(222, "off-topic"),
+                ]
+
+        class _Client:
+            guilds = [_Guild()]
+
+        self.assertEqual(
+            oq.resolve_general_channel_id("999", _Client()),
+            "999",
+        )
+        self.assertEqual(
+            oq.resolve_general_channel_id(None, _Client()),
+            "1053882445017124977",
+        )
+        self.assertEqual(
+            oq.resolve_general_channel_id("", _Client()),
+            "1053882445017124977",
+        )
+        self.assertIsNone(oq.resolve_general_channel_id(None, None))
+        empty = type("C", (), {"guilds": []})()
+        self.assertIsNone(oq.resolve_general_channel_id(None, empty))
+
 
 if __name__ == "__main__":
     unittest.main()

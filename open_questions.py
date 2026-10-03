@@ -304,16 +304,38 @@ def _seconds_until(hour: int, minute: int) -> float:
     return (future - now).total_seconds()
 
 
+def resolve_general_channel_id(configured_id: Optional[str], client) -> Optional[str]:
+    """Same as the digest: honor GENERAL_CHANNEL_ID, else a channel named general."""
+    if configured_id:
+        return str(configured_id)
+    if not client:
+        return None
+    for guild in getattr(client, "guilds", None) or []:
+        for channel in getattr(guild, "text_channels", None) or []:
+            name = (getattr(channel, "name", None) or "").lower()
+            if name == "general" and getattr(channel, "id", None) is not None:
+                return str(channel.id)
+    return None
+
+
 async def run_open_questions_once():
     """Scout the rolling cache and post the #general thread. Empty list = no post."""
     if not discord_client:
         logger.error("Discord client not set. Cannot post open questions.")
         return
 
-    general_channel_id = getattr(config, "general_channel_id", None)
+    configured_id = getattr(config, "general_channel_id", None)
+    general_channel_id = resolve_general_channel_id(configured_id, discord_client)
     if not general_channel_id:
-        logger.warning("GENERAL_CHANNEL_ID not configured. Skipping open questions.")
+        logger.warning(
+            "GENERAL_CHANNEL_ID not configured and no channel named general. Skipping open questions."
+        )
         return
+    if not configured_id:
+        logger.info(
+            "GENERAL_CHANNEL_ID not configured. Auto-detected general channel: %s",
+            general_channel_id,
+        )
 
     hours = int(getattr(config, "open_questions_lookback_hours", 24))
     limit = int(getattr(config, "open_questions_limit", 12))
