@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import re
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
 import discord
 
@@ -74,6 +75,70 @@ DUPLICATE_WINDOW_MINUTES = 5
 
 # How far back to delete copies of the blast (covers both trigger windows).
 PURGE_WINDOW_SECONDS = max(BLAST_WINDOW_SECONDS, DUPLICATE_WINDOW_MINUTES * 60)
+
+# In-memory copy of recent posts. ``on_message`` runs the honeypot *before*
+# ``store_message``, and image posts wait on vision analysis before they are
+# stored. A 5-channel image blast can therefore fire (or be purged) while the
+# earlier copies are still in-flight and missing from the DB. Bound by the
+# longer trigger window; a restart empties it (the DB is the fallback).
+_RECENT_POST_MAX_PER_USER = 40
+_recent_posts: Dict[Tuple[str, str], Deque["_RecentPost"]] = defaultdict(deque)
+
+
+@dataclass(frozen=True)
+class _RecentPost:
+    message_id: str
+    channel_id: str
+    created_at: float  # time.monotonic()
+    normalized_content: str
+
+
+def reset_recent_posts() -> None:
+    """Drop the in-memory ring. Tests only."""
+    _recent_posts.clear()
+
+
+def remember_message(message: discord.Message) -> None:
+    """Record a guild message so blast/purge can see it before it is stored."""
+    guild = getattr(message, "guild", None)
+    author = getattr(message, "author", None)
+    channel = getattr(message, "channel", None)
+    if guild is None or author is None or channel is None:
+        return
+    key = (str(guild.id), str(author.id))
+    post = _RecentPost(
+        message_id=str(message.id),
+        channel_id=str(channel.id),
+        created_at=time.monotonic(),
+        normalized_content=normalize_content(getattr(message, "content", "") or ""),
+    )
+    bucket = _recent_posts[key]
+    bucket.append(post)
+    _prune_recent_posts(bucket)
+    while len(bucket) > _RECENT_POST_MAX_PER_USER:
+        bucket.popleft()
+
+
+def _prune_recent_posts(bucket: Deque[_RecentPost], now: Optional[float] = None) -> None:
+    cutoff = (now if now is not None else time.monotonic()) - PURGE_WINDOW_SECONDS
+    while bucket and bucket[0].created_at < cutoff:
+        bucket.popleft()
+
+
+def remembered_posts(
+    user_id: str,
+    guild_id: str,
+    seconds: int,
+    now: Optional[float] = None,
+) -> List[_RecentPost]:
+    """Posts remembered for this author inside ``seconds``."""
+    bucket = _recent_posts.get((str(guild_id), str(user_id)))
+    if not bucket:
+        return []
+    current = now if now is not None else time.monotonic()
+    _prune_recent_posts(bucket, now=current)
+    cutoff = current - int(seconds)
+    return [post for post in bucket if post.created_at >= cutoff]
 
 # Owner pinged on every actionable hit (AJ). A constant, not a setting: there
 # is one person who asked to be notified, and a mis-set env would silently
@@ -562,10 +627,26 @@ async def collect_facts(message: discord.Message, rules: Rules) -> HitFacts:
     except Exception as exc:  # pragma: no cover - defensive
         logger.error(f"Honeypot: behaviour lookup failed for {user_id}: {exc}")
 
+    # Union in-flight posts the DB has not stored yet (image analysis holds
+    # store_message until after this handler has already run on later copies).
+    for post in remembered_posts(user_id, guild_id, BLAST_WINDOW_SECONDS):
+        if post.channel_id not in channels_in_window:
+            channels_in_window = channels_in_window + (post.channel_id,)
+    current_norm = normalize_content(message.content)
+    if current_norm:
+        for post in remembered_posts(
+            user_id, guild_id, DUPLICATE_WINDOW_MINUTES * 60
+        ):
+            if (
+                post.normalized_content == current_norm
+                and post.channel_id not in duplicates
+            ):
+                duplicates = duplicates + (post.channel_id,)
+
     current_channel = str(message.channel.id)
     if current_channel not in channels_in_window:
         channels_in_window = channels_in_window + (current_channel,)
-    if normalize_content(message.content) and current_channel not in duplicates:
+    if current_norm and current_channel not in duplicates:
         duplicates = duplicates + (current_channel,)
 
     member = author if isinstance(author, discord.Member) else None
@@ -656,6 +737,18 @@ async def _post_log_embed(
         logger.error(f"Honeypot: failed to post log embed: {exc}", exc_info=True)
 
 
+def _resolve_purge_channel(guild: discord.Guild, channel_id: int):
+    """Text channel or thread; ``get_channel`` alone misses threads."""
+    getter = getattr(guild, "get_channel_or_thread", None)
+    if getter is not None:
+        return getter(channel_id)
+    channel = guild.get_channel(channel_id)
+    if channel is not None:
+        return channel
+    get_thread = getattr(guild, "get_thread", None)
+    return get_thread(channel_id) if get_thread is not None else None
+
+
 async def _purge_recent_messages(message: discord.Message) -> int:
     """Delete this author's recent messages across channels. Best-effort."""
     guild = message.guild
@@ -665,11 +758,18 @@ async def _purge_recent_messages(message: discord.Message) -> int:
     guild_id = str(guild.id)
     rows = []
     try:
-        rows = database.get_recent_message_ids(
-            user_id, guild_id, seconds=PURGE_WINDOW_SECONDS
+        rows = list(
+            database.get_recent_message_ids(
+                user_id, guild_id, seconds=PURGE_WINDOW_SECONDS
+            )
         )
     except Exception as exc:  # pragma: no cover - defensive
         logger.error(f"Honeypot: purge lookup failed for {user_id}: {exc}")
+
+    for post in remembered_posts(user_id, guild_id, PURGE_WINDOW_SECONDS):
+        rows.append(
+            {"message_id": post.message_id, "channel_id": post.channel_id}
+        )
 
     seen = {(str(message.channel.id), str(message.id))}
     deleted = 0
@@ -686,13 +786,25 @@ async def _purge_recent_messages(message: discord.Message) -> int:
         if key in seen:
             continue
         seen.add(key)
-        channel = guild.get_channel(int(row["channel_id"]))
+        try:
+            channel = _resolve_purge_channel(guild, int(row["channel_id"]))
+        except (TypeError, ValueError):
+            continue
         if channel is None or not hasattr(channel, "get_partial_message"):
+            logger.warning(
+                f"Honeypot: purge skipped {row['message_id']} — "
+                f"channel {row['channel_id']} not in cache"
+            )
             continue
         try:
             await channel.get_partial_message(int(row["message_id"])).delete()
             deleted += 1
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+        except discord.NotFound:
+            continue
+        except (discord.Forbidden, discord.HTTPException, ValueError) as exc:
+            logger.warning(
+                f"Honeypot: could not delete {row['message_id']} in {row['channel_id']}: {exc}"
+            )
             continue
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
@@ -742,7 +854,11 @@ async def _enforce(
         )
 
     try:
-        await _purge_recent_messages(message)
+        deleted = await _purge_recent_messages(message)
+        logger.info(
+            f"Honeypot: purged {deleted} message(s) for {member.id} "
+            f"({decision.explain()})"
+        )
     except Exception as exc:  # pragma: no cover - defensive
         logger.error(f"Honeypot: purge failed for {member.id}: {exc}", exc_info=True)
 
@@ -780,6 +896,10 @@ async def handle_honeypot_message(
         return None
     if isinstance(author, discord.Member) and trusted_role_names(author, rules):
         return None
+
+    # Record before scoring so a later copy in the same blast can see this one
+    # even if store_message has not run yet.
+    remember_message(message)
 
     try:
         facts = await collect_facts(message, rules)
