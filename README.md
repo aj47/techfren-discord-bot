@@ -179,6 +179,10 @@ To use the message content intent, you need to enable it in the Discord Develope
     reported before any points are charged.
   - A background task sweeps every minute and removes the role once access lapses, including
     grants that expired while the bot was offline
+  - If a member pings Fred (`@fred` / frenbot) without an active grant or the
+    `fred-access` role, tfbot replies once pointing them at `/fred`. Cooldown is
+    10 minutes per member per guild so a thread of pings does not get a stack of
+    hints. Members who already have access are left alone.
 
 ### Channel Summarization
 
