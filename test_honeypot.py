@@ -57,6 +57,14 @@ def trusted_rules():
     )
 
 
+@pytest.fixture(autouse=True)
+def _clear_recent_posts():
+    """The in-memory ring is process-global; wipe it between tests."""
+    hp.reset_recent_posts()
+    yield
+    hp.reset_recent_posts()
+
+
 def make_young_facts(**overrides) -> HitFacts:
     """Facts for a newly created account that has just joined."""
     now = datetime.now(timezone.utc)
@@ -559,7 +567,7 @@ class TestDatabaseLayer:
 # ---------------------------------------------------------------------------
 
 def make_message(content="hello", *, is_bot=False, member_spec=True, joined_days_ago=200,
-                 account_days_old=400, guild_id=999, channel_id=111):
+                 account_days_old=400, guild_id=999, channel_id=111, message_id=555):
     """Build a message double that satisfies the handler's isinstance checks."""
     member = MagicMock(spec=__import__("discord").Member)
     member.id = 42
@@ -570,7 +578,7 @@ def make_message(content="hello", *, is_bot=False, member_spec=True, joined_days
     member.__str__ = lambda self: "suspicious#0001"
 
     message = MagicMock()
-    message.id = 555
+    message.id = message_id
     message.content = content
     message.author = member
     message.mentions = []
@@ -686,6 +694,91 @@ class TestHandlerInterlocks:
             assert decision is None
             enforce.assert_not_awaited()
         assert database.get_recent_honeypot_hits("999", limit=5) == []
+
+
+# ---------------------------------------------------------------------------
+# In-memory ring: in-flight copies the DB has not stored yet
+# ---------------------------------------------------------------------------
+
+class TestRecentPostRing:
+    """Image posts are stored after vision analysis, which runs *after* the
+    honeypot check. The ring is what lets blast detection and purge see those
+    copies anyway (WorksLeaf 2026-10-05: timeout landed, #general copy stayed)."""
+
+    def test_remembered_posts_are_visible_before_store(self):
+        hp.remember_message(make_message(channel_id=111, message_id=1))
+        hp.remember_message(make_message(channel_id=222, message_id=2))
+        posts = hp.remembered_posts("42", "999", seconds=60)
+        assert {(p.channel_id, p.message_id) for p in posts} == {
+            ("111", "1"),
+            ("222", "2"),
+        }
+
+    def test_remembered_posts_expire(self):
+        start = 1_000.0
+        with patch.object(hp.time, "monotonic", return_value=start):
+            hp.remember_message(make_message(channel_id=111, message_id=1))
+        with patch.object(hp.time, "monotonic", return_value=start + hp.PURGE_WINDOW_SECONDS + 1):
+            assert hp.remembered_posts("42", "999", seconds=hp.PURGE_WINDOW_SECONDS) == []
+
+    @pytest.mark.asyncio
+    async def test_collect_facts_unions_in_flight_channels(self, temp_database, trusted_rules):
+        """WorksLeaf shape: nothing in the DB yet, three image posts in flight."""
+        hp.remember_message(make_message(content="", channel_id=111, message_id=1))
+        hp.remember_message(make_message(content="", channel_id=222, message_id=2))
+        current = make_message(content="", channel_id=333, message_id=3)
+        hp.remember_message(current)
+        facts = await hp.collect_facts(current, trusted_rules)
+        assert set(facts.channels_in_blast_window) == {"111", "222", "333"}
+        # Empty content is still not a duplicate trigger.
+        assert facts.channels_with_duplicate_content == ()
+
+    @pytest.mark.asyncio
+    async def test_collect_facts_unions_in_flight_duplicates(self, temp_database, trusted_rules):
+        hp.remember_message(make_message(content="same pitch", channel_id=111, message_id=1))
+        hp.remember_message(make_message(content="same pitch", channel_id=222, message_id=2))
+        current = make_message(content="same pitch", channel_id=333, message_id=3)
+        hp.remember_message(current)
+        facts = await hp.collect_facts(current, trusted_rules)
+        assert set(facts.channels_with_duplicate_content) == {"111", "222", "333"}
+
+    @pytest.mark.asyncio
+    async def test_purge_deletes_in_flight_copies_missing_from_db(self, temp_database):
+        """The paste-dump copy fired; Lounge/introductions/general were not stored yet."""
+        hp.remember_message(make_message(content="", channel_id=111, message_id=10))
+        hp.remember_message(make_message(content="", channel_id=222, message_id=11))
+        hp.remember_message(make_message(content="", channel_id=333, message_id=12))
+        trigger = make_message(content="", channel_id=444, message_id=13)
+        hp.remember_message(trigger)
+        trigger.delete = AsyncMock()
+
+        channels = {}
+        for cid in (111, 222, 333, 444):
+            ch = MagicMock()
+            ch.get_partial_message.return_value.delete = AsyncMock()
+            channels[cid] = ch
+        trigger.guild.get_channel_or_thread.side_effect = lambda cid: channels.get(cid)
+        trigger.guild.get_channel.side_effect = lambda cid: None
+
+        deleted = await hp._purge_recent_messages(trigger)
+        assert deleted == 4
+        trigger.delete.assert_awaited_once()
+        for cid, mid in ((111, 10), (222, 11), (333, 12)):
+            channels[cid].get_partial_message.assert_called_with(mid)
+            channels[cid].get_partial_message.return_value.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_purge_logs_when_channel_is_not_cached(self, temp_database):
+        hp.remember_message(make_message(channel_id=111, message_id=10))
+        trigger = make_message(channel_id=222, message_id=11)
+        trigger.delete = AsyncMock()
+        trigger.guild.get_channel_or_thread.return_value = None
+        trigger.guild.get_channel.return_value = None
+        trigger.guild.get_thread.return_value = None
+        with patch.object(hp.logger, "warning") as warning:
+            deleted = await hp._purge_recent_messages(trigger)
+        assert deleted == 1
+        assert any("not in cache" in str(c) for c in warning.call_args_list)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -266,6 +266,11 @@ a hit as context but never causes an action by itself.
 Any trigger -> delete the blast copies + a 24h timeout (`HONEYPOT_TIMEOUT_MINUTES`,
 default 1440) + ping the owner in `HONEYPOT_LOG_CHANNEL_ID`.
 
+Purge and blast detection use an in-memory ring of recent posts as well as the
+messages table. Image posts are stored only after vision analysis, so a
+cross-channel blast can fire while earlier copies are still in-flight; without
+the ring those copies were left behind.
+
 **Never auto-bans.** Ban by hand from the ping if it looks right.
 
 ### Safety rails
