@@ -38,6 +38,7 @@ from x_link_utils import (  # X/Twitter link rewriting
     build_repost_content,
     build_thread_name,
 )
+from fred_mention_nudge import handle_fred_mention_nudge
 from honeypot_handler import (  # Guild-wide anti-spam for new/inactive accounts
     BLAST_CHANNELS,
     BLAST_WINDOW_SECONDS,
@@ -186,6 +187,13 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Keep client reference for backward compatibility
 client = bot
+
+
+def _fred_slash_command_id() -> Optional[str]:
+    """Command id for a clickable </fred:id> mention, or None before sync."""
+    command = bot.tree.get_command("fred")
+    command_id = getattr(command, "id", None) if command is not None else None
+    return str(command_id) if command_id else None
 
 async def process_url(message_id: str, url: str):
     """
@@ -1664,6 +1672,10 @@ async def on_message(message):
     # Scheduled as a background task so its thread-creation delay doesn't hold up
     # command handling below.
     asyncio.create_task(handle_x_link_rewrite(message))
+
+    # If someone pings Fred without having paid for access, reply once with
+    # how to enable it. Fred itself stays silent for those members.
+    asyncio.create_task(handle_fred_mention_nudge(message, command_id=_fred_slash_command_id()))
 
     # Check if this is a command
     bot_mention = f'<@{bot.user.id}>'
