@@ -20,7 +20,7 @@ from rate_limiter import check_rate_limit, update_rate_limit_config  # Import ra
 from llm_handler import call_llm_api, call_llm_for_summary, summarize_scraped_content, summarize_url_with_llm, call_llm_with_database_context  # Import LLM functions
 from message_utils import split_long_message, fetch_referenced_message, is_discord_message_link  # Import message utility functions
 from youtube_handler import is_youtube_url, scrape_youtube_content  # Import YouTube functions
-from summarization_tasks import daily_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep  # Import summarization tasks
+from summarization_tasks import daily_channel_summarization, morning_channel_summarization, set_discord_client, before_daily_summarization, daily_role_color_charging, frenbot_access_expiry_sweep  # Import summarization tasks
 from open_questions import daily_open_questions, set_discord_client as set_open_questions_client
 from config_validator import validate_config  # Import config validator
 from command_handler import handle_bot_command, handle_sum_day_command, handle_sum_hr_command  # Import command handlers
@@ -1189,6 +1189,10 @@ async def on_ready():
     if not daily_channel_summarization.is_running():
         daily_channel_summarization.start()
         logger.info("Started daily channel summarization task")
+
+    if not morning_channel_summarization.is_running():
+        morning_channel_summarization.start()
+        logger.info("Started morning channel summarization task")
 
     # Start the daily role color charging task if not already running
     if not daily_role_color_charging.is_running():

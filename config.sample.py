@@ -55,6 +55,7 @@ apify_api_token = "YOUR_APIFY_API_TOKEN"
 
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS, GENERAL_CHANNEL_ID
+# Plus a second digest at 08:00 America/Los_Angeles.
 summary_hour = 0
 summary_minute = 0
 reports_channel_id = "YOUR_CHANNEL_ID"  # For channel summaries

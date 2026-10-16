@@ -81,7 +81,7 @@ apify_api_token = os.getenv('APIFY_API_TOKEN')
 
 # Daily Summary Configuration (optional)
 # Environment variables: SUMMARY_HOUR, SUMMARY_MINUTE, REPORTS_CHANNEL_ID, SUMMARY_CHANNEL_IDS, GENERAL_CHANNEL_ID
-# Default time: 00:00 UTC
+# Default times: 00:00 UTC and 08:00 America/Los_Angeles (overlap is intended).
 summary_hour = int(os.getenv('SUMMARY_HOUR', '0'))
 summary_minute = int(os.getenv('SUMMARY_MINUTE', '0'))
 reports_channel_id = os.getenv('REPORTS_CHANNEL_ID')
