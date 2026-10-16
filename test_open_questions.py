@@ -100,6 +100,95 @@ class TestOpenQuestionsScout(unittest.TestCase):
         self.assertIn("**cayc** — Is that one open source?", body)
         self.assertNotIn("<t:", body)
 
+    def test_drops_rhetoric_recruiting_and_url_question_marks(self):
+        """Oct 15 thread: URL ?, quotes, insults, status, and recruiting leaked in."""
+        payload = _channel(
+            "g",
+            "general",
+            [
+                _msg(
+                    "yt",
+                    "bird",
+                    "https://www.youtube.com/watch?v=zrs_eJ_XGt4\n\nI got to watch this recently and it was very good",
+                ),
+                _msg(
+                    "quote",
+                    "bird",
+                    '"What is a number that a man may know it, and a man, that he may know a number?"\n\nman droppin bars',
+                    created_at=datetime(2026, 9, 30, 12, 1, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "insult",
+                    "bird",
+                    "Are they literally retarded?",
+                    created_at=datetime(2026, 9, 30, 12, 2, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "rhetorical",
+                    "bird",
+                    "They can't generate a contrived character?",
+                    created_at=datetime(2026, 9, 30, 12, 3, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "status",
+                    "tazr",
+                    "light day? 6% ... well, the setup is done, just adding clipping due to collapse",
+                    created_at=datetime(2026, 9, 30, 12, 4, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "recruit",
+                    "nhoj",
+                    "We're bringing exceptional engineers together for a paid residency in India at a US-registered technology company working at the frontier of AI and systems. Interested? DM me.",
+                    created_at=datetime(2026, 9, 30, 12, 5, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "statement",
+                    "tazr",
+                    "could just be this chat, last time i just needed to get rid of the chat",
+                    created_at=datetime(2026, 9, 30, 12, 6, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "rant",
+                    "bird",
+                    "Who the fuck is naming their models like this, fire that intern.",
+                    created_at=datetime(2026, 9, 30, 12, 7, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "real1",
+                    "pierre",
+                    "guys I see gpt 6 inside chat gpt web but is it astra or what model is it?",
+                    created_at=datetime(2026, 9, 30, 12, 8, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "real2",
+                    "realtime",
+                    "anyone got contacts in the database world?",
+                    created_at=datetime(2026, 9, 30, 12, 9, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "real3",
+                    "bhavnesh",
+                    "Oh, so do this mean the model can do more thinking internally without generating as many reasoning tokens? 🤔",
+                    created_at=datetime(2026, 9, 30, 12, 10, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "real4",
+                    "tazr",
+                    "i don't know about deepseek engram do you know if they tied it to scratchpad?",
+                    created_at=datetime(2026, 9, 30, 12, 11, tzinfo=timezone.utc),
+                ),
+                _msg(
+                    "real5",
+                    "bird",
+                    "I am curious, could Claude read the RYS sagas and then use nnsight to set up probe studies to find the most important layers in 3.8 27B to loop?",
+                    created_at=datetime(2026, 9, 30, 12, 12, tzinfo=timezone.utc),
+                ),
+            ],
+        )
+        qs = oq.scout_questions(payload, guild_id=GUILD, limit=12)
+        ids = [q["id"] for q in qs]
+        self.assertEqual(ids, ["real1", "real2", "real3", "real4", "real5"])
+
     def test_parent_has_no_pings(self):
         text = oq.parent_content(3, "September 30, 2026")
         self.assertIn("Open questions — September 30, 2026", text)
