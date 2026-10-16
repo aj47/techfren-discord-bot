@@ -54,11 +54,28 @@ URL_RE = re.compile(r"https?://\S+|www\.\S+", re.I)
 MENTION_RE = re.compile(r"<@!?\d+>|<@&\d+>|<#\d+>|<a?:\w+:\d+>")
 CODE_RE = re.compile(r"```[\s\S]*?```|`[^`]+`")
 WS_RE = re.compile(r"\s+")
-QSTART = re.compile(
-    r"^(?:hey |hi |yo |sup |so |ok |okay |please |pls |quick q[:.,]? )*"
-    r"(?:how|what|why|where|when|who|which|can|could|would|should|"
+# Bare "?" is not enough: YouTube watch?v=, quotes, and "light day?" leaked.
+QUOTE_RE = re.compile(r'"[^"]*"|“[^”]*”')
+_FILLER = (
+    r"(?:hey |hi |yo |sup |so |ok |okay |please |pls |quick q[:.,]? |guys |"
+    r"oh[, ]+(?:so )?|i(?:'m| am) curious[, ]+|i was wondering[, ]+)*"
+)
+# With a real "?": "What's up with Pi?", "Would y'all drop out?"
+ASK_START = re.compile(
+    rf"^{_FILLER}"
+    r"(?:how|what|whats|what's|why|where|when|who|which|"
+    r"can|could|would|should|is|are|do|does|did|"
     r"is there|are there|does anyone|has anyone|anyone|anybody|"
     r"any chance|do you|did anyone)\b",
+    re.I,
+)
+# Without "?": only explicit help-asks. Old QSTART treated "could just be this chat" as a question.
+ASK_NO_Q = re.compile(
+    rf"^{_FILLER}"
+    r"(?:how (?:do i|do you|does|can|to|would|should)|"
+    r"is there|are there|does anyone|has anyone|anyone|anybody|"
+    r"any chance|do you know|did anyone|"
+    r"can (?:someone|anybody|anyone))\b",
     re.I,
 )
 HELP = re.compile(
@@ -67,16 +84,28 @@ HELP = re.compile(
     r"stuck on|what's the best|whats the best|recommend (?:a|an|any))\b",
     re.I,
 )
+# Mid-sentence ask: "…but is it astra or what model is it?"
+MID_ASK = re.compile(
+    r"\b(?:anyone|anybody|someone|what model|is it|"
+    r"does this mean|do this mean|how do i|how to|do you know)\b",
+    re.I,
+)
 JUNK = re.compile(
     r"^(wait|what|huh|lol|lmao|wtf|bro|fr|right|sure|ok|okay|nice|cool|"
     r"true|based|why|who|eh|hmm)\??$",
     re.I,
 )
 RHETORICAL = re.compile(r"\b(lmao|lol|lmaooo|kek|bruh)\b", re.I)
+INSULT = re.compile(
+    r"\b(?:retarded|retard|idiot|stupid|dumbass|moron|the fuck)\b",
+    re.I,
+)
 SPAM = re.compile(
     r"(we're currently expanding|looking for people who want to work with us|"
     r"public ai training platforms|flexible opportunity|dm me if interested|"
-    r"guaranteed (?:income|returns)|work from home opportunity)",
+    r"guaranteed (?:income|returns)|work from home opportunity|"
+    r"paid residency|exceptional engineers|we're bringing|"
+    r"interested\?\s*dm me|dm me\.?$)",
     re.I,
 )
 INTRO = re.compile(
@@ -122,6 +151,12 @@ def strip_noise(content: str) -> str:
     return WS_RE.sub(" ", text).strip()
 
 
+def _ask_text(stripped: str) -> str:
+    """Drop quoted rants so a quoted '?' does not count as the author's ask."""
+    text = QUOTE_RE.sub(" ", stripped or "")
+    return WS_RE.sub(" ", text).strip()
+
+
 def is_question(content: str, stripped: str) -> bool:
     if len(stripped) < 28:
         return False
@@ -129,14 +164,26 @@ def is_question(content: str, stripped: str) -> bool:
         return False
     if SPAM.search(content or "") or SPAM.search(stripped):
         return False
-    if INTRO.search(stripped) and "?" not in (content or ""):
+    if INTRO.search(stripped) and "?" not in stripped:
         return False
     if RHETORICAL.search(stripped) and len(stripped) < 80:
         return False
+    if INSULT.search(stripped):
+        return False
     if CHATTY.search(stripped):
         return False
-    has_q = "?" in (content or "")
-    return bool(has_q or QSTART.search(stripped) or HELP.search(stripped))
+    text = _ask_text(stripped)
+    if not text:
+        return False
+    if HELP.search(text) or ASK_NO_Q.search(text):
+        return True
+    if "?" not in text:
+        return False
+    # "?" must sit in the last clause, not "light day? 6% ... well, the setup is done".
+    last = re.split(r"[.!]+\s+", text)[-1].strip()
+    if "?" not in last:
+        return False
+    return bool(ASK_START.search(text) or ASK_START.search(last) or MID_ASK.search(last))
 
 
 def has_topic_token(stripped: str) -> bool:
