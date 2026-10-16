@@ -1,6 +1,7 @@
 import asyncio
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 import discord
 from discord.ext import tasks
 import database
@@ -442,9 +443,28 @@ async def run_daily_summarization_once(now: datetime | None = None):
         logger.error(f"Error in daily channel summarization task: {str(e)}", exc_info=True)
 
 
-@tasks.loop(hours=24)
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def daily_summary_run_times():
+    """Midnight UTC plus 08:00 America/Los_Angeles. Overlapping 24h windows are intended."""
+    hour = int(getattr(config, "summary_hour", 0))
+    minute = int(getattr(config, "summary_minute", 0))
+    return [
+        time(hour, minute, tzinfo=timezone.utc),
+        time(8, 0, tzinfo=PACIFIC),
+    ]
+
+
+@tasks.loop(time=time(int(getattr(config, "summary_hour", 0)), int(getattr(config, "summary_minute", 0)), tzinfo=timezone.utc))
 async def daily_channel_summarization():
-    """Scheduled task wrapper that runs the daily summarization once per day."""
+    """Midnight UTC digest. Points + prune live here."""
+    await run_daily_summarization_once()
+
+
+@tasks.loop(time=time(8, 0, tzinfo=PACIFIC))
+async def morning_channel_summarization():
+    """08:00 America/Los_Angeles digest. Same 24h lookback; overlap is intended."""
     await run_daily_summarization_once()
 
 async def post_summary_to_reports_channel(channel_id, channel_name, date, summary_text, point_awards_data=None):
@@ -605,31 +625,31 @@ async def post_daily_summary_with_points(date, point_awards_result, max_points=5
 
 @daily_channel_summarization.before_loop
 async def before_daily_summarization():
-    """Wait until a specific time to start the daily summarization task."""
+    """Wait until the client is ready. discord.py fires at the loop time."""
     if not discord_client:
         logger.error("Discord client not set in summarization_tasks. Cannot start before_daily_summarization.")
-        # Fallback to prevent loop from erroring out immediately if client isn't ready
         await asyncio.sleep(60)
         return
-
     try:
-        summary_hour = getattr(config, 'summary_hour', 0)
-        summary_minute = getattr(config, 'summary_minute', 0)
-        logger.info(f"Daily summarization scheduled for {summary_hour:02d}:{summary_minute:02d} UTC")
-
+        scheduled = ", ".join(
+            t.strftime("%H:%M %Z") if t.tzinfo else t.strftime("%H:%M")
+            for t in daily_summary_run_times()
+        )
+        logger.info("Daily summarization scheduled for %s", scheduled)
         await discord_client.wait_until_ready()
-
-        now = datetime.now(timezone.utc)
-        future = datetime(now.year, now.month, now.day, summary_hour, summary_minute, tzinfo=timezone.utc)
-        if now.hour > summary_hour or (now.hour == summary_hour and now.minute >= summary_minute):
-            future += timedelta(days=1)
-
-        seconds_to_wait = (future - now).total_seconds()
-        logger.info(f"Waiting {seconds_to_wait:.1f} seconds until first daily summarization")
-        await asyncio.sleep(seconds_to_wait)
     except Exception as e:
         logger.error(f"Error in before_daily_summarization: {str(e)}", exc_info=True)
         await asyncio.sleep(60)
+
+
+@morning_channel_summarization.before_loop
+async def before_morning_summarization():
+    if not discord_client:
+        logger.error("Discord client not set. Cannot start before_morning_summarization.")
+        await asyncio.sleep(60)
+        return
+    logger.info("Morning summarization scheduled for 08:00 America/Los_Angeles")
+    await discord_client.wait_until_ready()
 
 
 # ==================== Daily Role Color Charging ====================

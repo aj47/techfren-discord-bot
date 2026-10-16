@@ -1,8 +1,11 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import summarization_tasks
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
@@ -187,6 +190,25 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
 
         mock_update.assert_called_once()
         mock_deduct.assert_not_called()
+
+    def test_daily_summary_also_runs_at_8am_pacific(self):
+        times = summarization_tasks.daily_summary_run_times()
+        self.assertIn(time(8, 0, tzinfo=PACIFIC), times)
+        self.assertIn(time(0, 0, tzinfo=timezone.utc), times)
+        pdt = datetime(2026, 10, 16, 8, 0, tzinfo=PACIFIC)
+        pst = datetime(2026, 1, 15, 8, 0, tzinfo=PACIFIC)
+        self.assertEqual(pdt.astimezone(timezone.utc).hour, 15)
+        self.assertEqual(pst.astimezone(timezone.utc).hour, 16)
+        midnight = summarization_tasks.daily_channel_summarization.time
+        morning = summarization_tasks.morning_channel_summarization.time
+        if not isinstance(midnight, (list, tuple)):
+            midnight = [midnight]
+        if not isinstance(morning, (list, tuple)):
+            morning = [morning]
+        self.assertTrue(any(t.tzinfo is timezone.utc and t.hour == 0 for t in midnight))
+        self.assertTrue(
+            any(t.hour == 8 and str(t.tzinfo) == "America/Los_Angeles" for t in morning)
+        )
 
     def _message(self, message_id, author_name, content, is_bot=False, is_command=False):
         return {

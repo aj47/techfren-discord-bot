@@ -72,6 +72,7 @@ A simple Discord bot built with discord.py.
    MAX_REQUESTS_PER_MINUTE=6  # Maximum requests per user per minute
    SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
    SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
+   # A second digest also posts at 08:00 America/Los_Angeles.
    SUMMARY_CHANNEL_IDS=channel_id1,channel_id2  # Optional: restrict daily summaries to these channels (comma-separated)
    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  # Base URL for OpenRouter API
    HTTP_REFERER=https://techfren.net  # HTTP Referer header for API requests
@@ -223,6 +224,7 @@ To configure the automated summarization:
 # In .env file or environment variables
 SUMMARY_HOUR=0  # Hour of the day to run summarization (UTC, 0-23)
 SUMMARY_MINUTE=0  # Minute of the hour to run summarization (0-59)
+# A second digest also posts at 08:00 America/Los_Angeles. Overlapping 24h windows are intended.
 SUMMARY_CHANNEL_IDS=CHANNEL_ID_1,CHANNEL_ID_2  # Optional: restrict per-channel daily summaries (general digest still uses all active channels)
 OPEN_QUESTIONS_HOUR=23  # Unanswered-questions thread in #general (UTC)
 OPEN_QUESTIONS_MINUTE=0
