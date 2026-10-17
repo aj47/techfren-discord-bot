@@ -186,7 +186,8 @@ class TestGetMessageContext:
         
         # Mock the functions
         with patch('message_utils.fetch_referenced_message', return_value=referenced_msg), \
-             patch('message_utils.fetch_message_from_link', return_value=linked_msg):
+             patch('message_utils.fetch_message_from_link', return_value=linked_msg), \
+             patch('message_utils.fetch_nearby_messages', new_callable=AsyncMock, return_value=[]):
             
             context = await get_message_context(message, bot)
         

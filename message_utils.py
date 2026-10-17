@@ -244,6 +244,67 @@ def extract_message_links(text: str) -> list[str]:
     pattern = r'https://discord\.com/channels/(?:@me|\d+)/\d+/\d+'
     return re.findall(pattern, text)
 
+NEARBY_MESSAGE_COUNT = 4
+# Fetch extra history so empty/whitespace lines and skipped ids still leave 4.
+_NEARBY_HISTORY_FETCH = NEARBY_MESSAGE_COUNT * 5
+
+
+def select_nearby_messages(history, ping_id, skip_ids=None):
+    """Pick up to NEARBY_MESSAGE_COUNT non-empty messages immediately before the ping.
+
+    `history` is newest-first (Discord `channel.history`). The ping itself and
+    any `skip_ids` (the replied-to message) are dropped so they are not duplicated.
+    Return value is oldest-first.
+    """
+    skip = set(skip_ids or ())
+    skip.add(ping_id)
+    selected = []
+    for msg in history:
+        if getattr(msg, "id", None) in skip:
+            continue
+        content = (getattr(msg, "content", None) or "").strip()
+        if not content:
+            continue
+        selected.append(msg)
+        if len(selected) >= NEARBY_MESSAGE_COUNT:
+            break
+    selected.reverse()
+    return selected
+
+
+def format_nearby_messages(messages) -> str:
+    """Format nearby messages for the LLM prompt, oldest first."""
+    if not messages:
+        return ""
+    lines = ["**Nearby Messages:**"]
+    for msg in messages:
+        author = getattr(msg, "author", None)
+        author_name = str(author) if author else "Unknown"
+        content = (getattr(msg, "content", None) or "").strip()
+        lines.append(f"{author_name}: {content}")
+    return "\n".join(lines)
+
+
+async def fetch_nearby_messages(message: discord.Message, skip_ids=None):
+    """Fetch the nearest non-empty messages in this channel before `message`."""
+    channel = getattr(message, "channel", None)
+    history_fn = getattr(channel, "history", None)
+    if history_fn is None:
+        return []
+
+    logger = logging.getLogger(__name__)
+    try:
+        raw = []
+        async for msg in history_fn(limit=_NEARBY_HISTORY_FETCH, before=message):
+            raw.append(msg)
+        return select_nearby_messages(
+            raw, ping_id=getattr(message, "id", None), skip_ids=skip_ids
+        )
+    except Exception as e:
+        logger.warning(f"Failed to fetch nearby messages for {getattr(message, 'id', None)}: {e}")
+        return []
+
+
 async def get_message_context(message: discord.Message, bot: discord.Client) -> Dict[str, Any]:
     """
     Get context for a message including any referenced messages and linked messages.
@@ -258,7 +319,8 @@ async def get_message_context(message: discord.Message, bot: discord.Client) -> 
     context = {
         'original_message': message,
         'referenced_message': None,
-        'linked_messages': []
+        'linked_messages': [],
+        'nearby_messages': [],
     }
 
     # Get referenced message (reply)
@@ -267,10 +329,15 @@ async def get_message_context(message: discord.Message, bot: discord.Client) -> 
         context['referenced_message'] = referenced_msg
 
     # Get messages from links in the message content
-    message_links = extract_message_links(message.content)
+    message_links = extract_message_links(message.content or "")
     for link in message_links:
         linked_msg = await fetch_message_from_link(link, bot)
         if linked_msg:
             context['linked_messages'].append(linked_msg)
+
+    skip_ids = set()
+    if referenced_msg is not None:
+        skip_ids.add(referenced_msg.id)
+    context['nearby_messages'] = await fetch_nearby_messages(message, skip_ids=skip_ids)
 
     return context
