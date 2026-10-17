@@ -95,7 +95,77 @@ class TestMessageReferenceIntegration:
             assert captured_context is not None
             assert captured_context['referenced_message'] == referenced_msg
             assert len(captured_context['linked_messages']) == 0
-    
+
+    @pytest.mark.asyncio
+    async def test_bare_mention_reply_uses_referenced_message_as_query(self):
+        """A ping with no extra text, as a reply, should ask about the parent."""
+        referenced_msg = Mock(spec=discord.Message)
+        referenced_msg.id = 1561144381866508359
+        referenced_msg.author = Mock()
+        referenced_msg.author.__str__ = Mock(return_value="techfren")
+        referenced_msg.content = "whats tern"
+        referenced_msg.created_at = Mock()
+        referenced_msg.created_at.strftime = Mock(return_value="2026-10-17 22:30:25 UTC")
+
+        channel = AsyncMock()
+        channel.name = "agentic-engineering"
+        channel.id = 1310839407221145630
+
+        guild = Mock()
+        guild.name = "Tech Friend Community"
+        guild.id = 1010083670599671838
+
+        client_user = Mock(spec=discord.ClientUser)
+        client_user.id = 1370407888509599804
+
+        message = Mock(spec=discord.Message)
+        message.id = 1561144446148681810
+        message.author = Mock()
+        message.author.__str__ = Mock(return_value="techfren")
+        message.author.display_name = "Tech Friend AJ"
+        message.content = f"<@{client_user.id}>"
+        message.channel = channel
+        message.guild = guild
+        message.reference = Mock()
+        message.reference.message_id = referenced_msg.id
+        message.reference.cached_message = referenced_msg
+        message.reference.channel_id = channel.id
+
+        captured_query = None
+
+        async def mock_llm_call(query, context=None):
+            nonlocal captured_query
+            captured_query = query
+            return "Tern is an agent CLI."
+
+        mock_thread = AsyncMock()
+        mock_context = {
+            "original_message": message,
+            "referenced_message": referenced_msg,
+            "linked_messages": [],
+        }
+
+        with patch("command_handler.get_message_context", return_value=mock_context), \
+             patch("command_handler.call_llm_api", side_effect=mock_llm_call), \
+             patch("command_abstraction.ThreadManager") as mock_thread_manager_class, \
+             patch("command_abstraction.MessageResponseSender") as mock_sender_class, \
+             patch("command_handler.split_long_message", return_value=["Tern is an agent CLI."]), \
+             patch("command_handler.store_bot_response_db"), \
+             patch("command_handler.check_rate_limit", return_value=(False, 0, None)):
+
+            mock_thread_manager = AsyncMock()
+            mock_thread_manager.create_thread_from_message.return_value = mock_thread
+            mock_thread_manager_class.return_value = mock_thread_manager
+
+            mock_sender = AsyncMock()
+            mock_sender.send.return_value = Mock()
+            mock_sender_class.return_value = mock_sender
+
+            await handle_bot_command(message, client_user, Mock(spec=discord.Client))
+
+            assert captured_query == "whats tern"
+            mock_sender.send.assert_any_call("Tern is an agent CLI.")
+
     @pytest.mark.asyncio
     async def test_bot_command_with_linked_message(self):
         """Test that bot command can see linked messages"""
