@@ -3,15 +3,51 @@ import database
 from logging_config import logger
 from rate_limiter import check_rate_limit
 from llm_handler import call_llm_api
-from message_utils import split_long_message, get_message_context
+from message_utils import split_long_message, get_message_context, fetch_referenced_message
 import re
 from typing import Optional
 
+
+def extract_mention_query(content: str, bot_user_id) -> str:
+    """Return the text after stripping one leading/any bot mention."""
+    bot_mention = f'<@{bot_user_id}>'
+    bot_mention_alt = f'<@!{bot_user_id}>'
+    return (content or "").replace(bot_mention, "", 1).replace(bot_mention_alt, "", 1).strip()
+
+
+def mention_query_or_referenced(content: str, bot_user_id, referenced_content: Optional[str]) -> str:
+    """Query from the mention, or from the referenced message if the ping is bare.
+
+    Live 2026-10-17: AJ replied to \"whats tern\" with only @tfbot and got
+    ERROR_MESSAGES['no_query'] instead of an answer.
+    """
+    query = extract_mention_query(content, bot_user_id)
+    if query:
+        return query
+    return (referenced_content or "").strip()
+
+
+async def _referenced_message_content(message: discord.Message) -> Optional[str]:
+    """Return the replied-to message text, if this ping is a reply."""
+    reference = getattr(message, "reference", None)
+    if reference is None or not getattr(reference, "message_id", None):
+        return None
+    cached = getattr(reference, "cached_message", None)
+    if cached is not None:
+        return getattr(cached, "content", None)
+    fetched = await fetch_referenced_message(message)
+    if fetched is None:
+        return None
+    return getattr(fetched, "content", None)
+
+
 async def handle_bot_command(message: discord.Message, client_user: discord.ClientUser, bot_client: discord.Client = None) -> None:
     """Handles the mention command with thread-based replies."""
-    bot_mention = f'<@{client_user.id}>'
-    bot_mention_alt = f'<@!{client_user.id}>'
-    query = message.content.replace(bot_mention, '', 1).replace(bot_mention_alt, '', 1).strip()
+    query = extract_mention_query(message.content, client_user.id)
+    if not query:
+        query = mention_query_or_referenced(
+            message.content, client_user.id, await _referenced_message_content(message)
+        )
 
     if not query:
         import config
