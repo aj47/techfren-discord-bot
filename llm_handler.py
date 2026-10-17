@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List
 import asyncio
 import re
 from datetime import timezone
-from message_utils import generate_discord_message_link, is_discord_message_link
+from message_utils import generate_discord_message_link, is_discord_message_link, format_nearby_messages
 from database import get_scraped_content_by_url
 from discord_formatter import DiscordFormatter
 from gif_utils import is_gif_url, is_discord_emoji_url
@@ -297,6 +297,13 @@ async def call_llm_api(query, message_context=None):
 
                 context_parts.append(f"**Referenced Message (Reply):**\nAuthor: {ref_author_name}\nTime: {ref_time_str}\nContent: {ref_content}")
 
+            # Add nearby channel messages (the 4 messages immediately before the ping)
+            nearby = message_context.get('nearby_messages') or []
+            if nearby:
+                nearby_text = format_nearby_messages(nearby)
+                if nearby_text:
+                    context_parts.append(nearby_text)
+
             # Add linked messages context
             if message_context.get('linked_messages'):
                 for i, linked_msg in enumerate(message_context['linked_messages']):
@@ -322,6 +329,10 @@ async def call_llm_api(query, message_context=None):
                 for linked_msg in message_context['linked_messages']:
                     linked_content = getattr(linked_msg, 'content', '')
                     context_urls.extend(extract_urls_from_text(linked_content))
+
+            for nearby_msg in message_context.get('nearby_messages') or []:
+                nearby_content = getattr(nearby_msg, 'content', '')
+                context_urls.extend(extract_urls_from_text(nearby_content))
 
         # Combine all URLs found
         all_urls = urls_in_query + context_urls
@@ -389,7 +400,7 @@ async def call_llm_api(query, message_context=None):
         system_prompt = """You are an assistant bot to the techfren community discord server. A community of AI coding, Open source and technology enthusiasts.
 Be direct and concise in your responses. Get straight to the point without introductory or concluding paragraphs. Answer questions directly.
 Users can use /sum-day to summarize messages from today, or /sum-hr <hours> to summarize messages from the past N hours (e.g., /sum-hr 6 for past 6 hours).
-When users reference or link to other messages, you can see the content of those messages and should refer to them in your response when relevant.
+When users reference or link to other messages, or when nearby channel messages are provided, you can see that content and should use it when it is relevant.
 IMPORTANT: If you need to present tabular data, use markdown table format (| header | header |) and it will be automatically converted to a formatted table for Discord.
 Keep tables simple with 2-3 columns max. For complex comparisons with many details, use a list format instead of tables.
 CRITICAL: Never wrap large parts of your response in a markdown code block (```). Only use code blocks for specific code snippets. Your response text should be plain text with inline formatting."""

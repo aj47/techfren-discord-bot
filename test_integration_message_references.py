@@ -253,6 +253,62 @@ class TestMessageReferenceIntegration:
             assert captured_context['linked_messages'][0] == linked_msg
 
     @pytest.mark.asyncio
+    async def test_mention_without_reply_still_loads_message_context(self):
+        """A ping that is not a reply still fetches nearby channel messages."""
+        channel = AsyncMock()
+        channel.name = "agentic-engineering"
+        channel.id = 1310839407221145630
+        guild = Mock()
+        guild.name = "Tech Friend Community"
+        guild.id = 1010083670599671838
+        client_user = Mock(spec=discord.ClientUser)
+        client_user.id = 1370407888509599804
+
+        message = Mock(spec=discord.Message)
+        message.id = 50
+        message.author = Mock()
+        message.author.__str__ = Mock(return_value="techfren")
+        message.author.display_name = "Tech Friend AJ"
+        message.content = f"<@{client_user.id}> what is that"
+        message.channel = channel
+        message.guild = guild
+        message.reference = None
+
+        captured_context = None
+
+        async def mock_llm_call(query, context=None):
+            nonlocal captured_context
+            captured_context = context
+            return "ok"
+
+        mock_context = {
+            "original_message": message,
+            "referenced_message": None,
+            "linked_messages": [],
+            "nearby_messages": [Mock(content="whats tern")],
+        }
+
+        with patch("command_handler.get_message_context", return_value=mock_context) as mock_get_ctx, \
+             patch("command_handler.call_llm_api", side_effect=mock_llm_call), \
+             patch("command_abstraction.ThreadManager") as mock_thread_manager_class, \
+             patch("command_abstraction.MessageResponseSender") as mock_sender_class, \
+             patch("command_handler.split_long_message", return_value=["ok"]), \
+             patch("command_handler.store_bot_response_db"), \
+             patch("command_handler.check_rate_limit", return_value=(False, 0, None)):
+
+            mock_thread_manager = AsyncMock()
+            mock_thread_manager.create_thread_from_message.return_value = AsyncMock()
+            mock_thread_manager_class.return_value = mock_thread_manager
+            mock_sender = AsyncMock()
+            mock_sender.send.return_value = Mock()
+            mock_sender_class.return_value = mock_sender
+
+            await handle_bot_command(message, client_user, Mock(spec=discord.Client))
+
+            mock_get_ctx.assert_awaited()
+            assert captured_context["nearby_messages"][0].content == "whats tern"
+
+    @pytest.mark.asyncio
     async def test_llm_api_formats_context_correctly(self):
         """Test that the LLM API formats message context correctly"""
         # Create mock referenced message
