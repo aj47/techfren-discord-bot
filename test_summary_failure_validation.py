@@ -57,6 +57,32 @@ class TestIsSummaryGenerationFailure(unittest.TestCase):
     def test_long_digest_without_markers_is_valid(self):
         self.assertFalse(_is_summary_generation_failure("x" * 800))
 
+    def test_truncated_highlights_stub_is_rejected(self):
+        # 2026-10-19 15:00 UTC: cheapseek returned 257 chars, cut mid-bold
+        # on the second bullet. Header + one Discord link used to make this
+        # pass even though the digest is unfinished.
+        stub = (
+            "**🔥 Highlights**\n\n"
+            "• **Claude Code cloud** - criticized as limited/restricted; "
+            "tools feel gimped vs local CLI - **`pierrunoyt`** "
+            "<t:1792336046:t> "
+            "[source](<https://discord.com/channels/"
+            "1010083670599671838/1053882445017124977/1561395289791668366>)\n"
+            "• **GLM 5.3"
+        )
+        self.assertTrue(_is_summary_generation_failure(stub))
+
+    def test_complete_two_bullet_highlights_digest_is_valid(self):
+        digest = (
+            "**🔥 Highlights**\n\n"
+            "• **Claude Code cloud** - tools feel gimped vs local CLI - "
+            "`pierrunoyt` <t:1792336046:t> "
+            "[source](<https://discord.com/channels/1/2/3>)\n"
+            "• **GLM 5.3 Flash** - faster than DS flash - `sweet_potet` "
+            "<t:1792300111:t> [source](<https://discord.com/channels/1/2/4>)\n"
+        )
+        self.assertFalse(_is_summary_generation_failure(digest))
+
 
 if __name__ == '__main__':
     unittest.main()

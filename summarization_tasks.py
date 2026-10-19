@@ -41,6 +41,24 @@ def _is_human_summary_message(msg):
     """Return True for messages that should be summarized in automated digests."""
     return not msg.get('is_command', False) and not msg.get('is_bot', False)
 
+def _summary_text_looks_truncated(summary_text):
+    """Return True when the model cut off mid-markup or mid-bullet."""
+    text = summary_text.strip()
+    if not text:
+        return False
+    if text.count("**") % 2 == 1:
+        return True
+    last = text.splitlines()[-1].rstrip()
+    if last.count("[") > last.count("]") or last.count("(") > last.count(")"):
+        return True
+    bullet = last.lstrip()
+    if (
+        bullet.startswith("•") or bullet.startswith("- ") or bullet.startswith("* ")
+    ) and not re.search(r"(\)|`|\.|!|\?)$", bullet):
+        return True
+    return False
+
+
 def _is_summary_generation_failure(summary_text):
     """Return True when the LLM helper returned a user-facing failure message."""
     if not isinstance(summary_text, str):
@@ -51,6 +69,12 @@ def _is_summary_generation_failure(summary_text):
         "sorry, the summary request timed out. please try again later.",
         "sorry, i encountered an error while generating the summary. please try again later.",
     }:
+        return True
+
+    # Cut-off Highlights stubs still have a header and often one Discord link
+    # (2026-10-19 15:00: 257 chars ending mid-bold on the second bullet).
+    # Check truncation before those markers can short-circuit as valid.
+    if _summary_text_looks_truncated(summary_text):
         return True
 
     # Guard against junk LLM responses (e.g. a stray "User Safety: safe" one-liner
@@ -170,60 +194,45 @@ async def run_daily_summarization_once(now: datetime | None = None):
         point_awards_result = None
         if all_messages_for_points:
             try:
-                # Get the set of author_ids that appear in the messages being analyzed
-                # This ensures we only include engagement metrics for users who contributed messages
-                # in the analyzed content (note: their engagement metrics may include activity from
-                # all channels in the guild, but we only include users who appear in our analysis)
-                analyzed_author_ids = set(msg.get('author_id') for msg in all_messages_for_points if msg.get('author_id'))
-
-                # Calculate engagement metrics (replies received) for each user
-                # This helps identify quality contributors whose messages sparked discussions
-                engagement_metrics = {}
-                guild_ids_for_metrics = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
-                for metrics_guild_id in guild_ids_for_metrics:
-                    guild_metrics = database.get_user_engagement_metrics(metrics_guild_id, yesterday, now)
-                    # Filter to only include users who appear in the analyzed messages
-                    # This prevents surfacing engagement data for users not in the LLM input
-                    for author_id, metrics in guild_metrics.items():
-                        if author_id in analyzed_author_ids:
-                            engagement_metrics[author_id] = metrics
-
-                logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards with engagement metrics for {len(engagement_metrics)} users (filtered from {len(analyzed_author_ids)} authors)")
-                point_awards_result = await analyze_messages_for_points(
-                    all_messages_for_points,
-                    max_points=max_points_per_day,
-                    engagement_metrics=engagement_metrics
-                )
-
-                if point_awards_result and point_awards_result.get('awards'):
-                    # Get guild_id and validate all messages are from the same guild
-                    guild_ids = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
-
-                    if not guild_ids:
-                        logger.warning("No valid guild_id found in messages. Skipping point awards.")
-                    elif len(guild_ids) > 1:
+                guild_ids = set(msg.get('guild_id') for msg in all_messages_for_points if msg.get('guild_id'))
+                if not guild_ids:
+                    logger.warning("No valid guild_id found in messages. Skipping point awards.")
+                else:
+                    if len(guild_ids) > 1:
                         logger.warning(f"Messages from multiple guilds detected: {guild_ids}. Point awards should be processed per-guild. Using first guild for now.")
-                        guild_id = next(iter(guild_ids))
+                    guild_id = next(iter(guild_ids))
+                    existing_awards = database.get_daily_point_awards(guild_id, yesterday)
+                    if existing_awards:
+                        # Second daily digest (08:00 PT) shares the calendar date
+                        # with midnight UTC. Do not re-run the points LLM or post
+                        # a board that is not the ledger (2026-10-16 / 2026-10-19).
+                        logger.warning(f"Points already awarded for {yesterday.strftime('%Y-%m-%d')} in guild {guild_id}. Skipping duplicate processing.")
                     else:
-                        guild_id = next(iter(guild_ids))
+                        analyzed_author_ids = set(msg.get('author_id') for msg in all_messages_for_points if msg.get('author_id'))
+                        engagement_metrics = {}
+                        for metrics_guild_id in guild_ids:
+                            guild_metrics = database.get_user_engagement_metrics(metrics_guild_id, yesterday, now)
+                            for author_id, metrics in guild_metrics.items():
+                                if author_id in analyzed_author_ids:
+                                    engagement_metrics[author_id] = metrics
 
-                    if guild_ids:
-                        # Check if points have already been awarded for this day
-                        existing_awards = database.get_daily_point_awards(guild_id, yesterday)
-                        if existing_awards:
-                            logger.warning(f"Points already awarded for {yesterday.strftime('%Y-%m-%d')} in guild {guild_id}. Skipping duplicate processing.")
-                        else:
+                        logger.info(f"Analyzing {len(all_messages_for_points)} messages for point awards with engagement metrics for {len(engagement_metrics)} users (filtered from {len(analyzed_author_ids)} authors)")
+                        point_awards_result = await analyze_messages_for_points(
+                            all_messages_for_points,
+                            max_points=max_points_per_day,
+                            engagement_metrics=engagement_metrics
+                        )
+
+                        if point_awards_result and point_awards_result.get('awards'):
                             for award in point_awards_result['awards']:
                                 author_id = award.get('author_id')
                                 author_name = award.get('author_name')
                                 points = award.get('points', 0)
                                 reason = award.get('reason', 'Contribution to the community')
 
-                                # Award points to user
                                 success = database.award_points_to_user(author_id, author_name, guild_id, points)
 
                                 if success:
-                                    # Store the daily award record
                                     database.store_daily_point_award(
                                         author_id=author_id,
                                         author_name=author_name,
@@ -234,9 +243,9 @@ async def run_daily_summarization_once(now: datetime | None = None):
                                     )
                                     logger.info(f"Awarded {points} points to {author_name} for: {reason}")
 
-                        logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
-                else:
-                    logger.info("No points were awarded today.")
+                            logger.info(f"Point awarding complete. Awarded to {len(point_awards_result['awards'])} users.")
+                        else:
+                            logger.info("No points were awarded today.")
             except Exception as e:
                 logger.error(f"Error awarding points: {str(e)}", exc_info=True)
 
