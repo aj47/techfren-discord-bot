@@ -79,8 +79,21 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
             patch.object(summarization_tasks.database, "get_active_channels", return_value=active_channels),
             patch.object(summarization_tasks.database, "get_messages_for_time_range", return_value=messages_by_channel),
             patch.object(summarization_tasks.database, "get_user_engagement_metrics", return_value={}),
+            patch.object(summarization_tasks.database, "get_daily_point_awards", return_value=[]),
             patch.object(summarization_tasks, "analyze_messages_for_points", new=AsyncMock(return_value=None)),
-            patch.object(summarization_tasks, "call_llm_for_summary", new=AsyncMock(return_value="summary")) as mock_summary,
+            patch.object(
+                summarization_tasks,
+                "call_llm_for_summary",
+                new=AsyncMock(
+                    return_value=(
+                        "**🔥 Highlights**\n"
+                        "• **Topic** - context - `Alice` "
+                        "[source](<https://discord.com/channels/1/2/3>)\n"
+                        "• **Other** - more - `Bob` "
+                        "[source](<https://discord.com/channels/1/2/4>)\n"
+                    )
+                ),
+            ) as mock_summary,
             patch.object(summarization_tasks.database, "store_channel_summary", return_value=True) as mock_store,
             patch.object(summarization_tasks.database, "delete_messages_older_than", return_value=0),
             patch.object(summarization_tasks, "post_summary_to_reports_channel", new=AsyncMock()),
@@ -142,6 +155,7 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
             patch.object(summarization_tasks.database, "get_active_channels", return_value=active_channels),
             patch.object(summarization_tasks.database, "get_messages_for_time_range", return_value=messages_by_channel),
             patch.object(summarization_tasks.database, "get_user_engagement_metrics", return_value={}),
+            patch.object(summarization_tasks.database, "get_daily_point_awards", return_value=[]),
             patch.object(summarization_tasks, "analyze_messages_for_points", new=AsyncMock(return_value=None)),
             patch.object(
                 summarization_tasks,
@@ -157,6 +171,73 @@ class TestDailyGeneralSummary(unittest.IsolatedAsyncioTestCase):
         mock_store.assert_not_called()
         mock_post.assert_not_awaited()
         mock_delete.assert_not_called()
+
+    async def test_existing_awards_skip_points_llm_and_do_not_append_board(self):
+        now = datetime(2026, 10, 19, 15, 0, tzinfo=timezone.utc)
+        active_channels = [
+            {
+                "channel_id": "general_id",
+                "channel_name": "general",
+                "guild_id": "guild_id",
+                "guild_name": "TechFren",
+                "message_count": 1,
+            }
+        ]
+        messages_by_channel = {
+            "general_id": {
+                "messages": [self._message("g1", "Alice", "General update")]
+            }
+        }
+        existing = [
+            {
+                "author_id": "bird_id",
+                "author_name": "bird0861",
+                "points_awarded": 3,
+                "reason": "real midnight award",
+            }
+        ]
+        digest = (
+            "**🔥 Highlights**\n"
+            "• **Topic** - context - `Alice` "
+            "[source](<https://discord.com/channels/1/2/3>)\n"
+            "• **Other** - more context - `Bob` "
+            "[source](<https://discord.com/channels/1/2/4>)\n"
+        )
+        phantom = {
+            "awards": [
+                {
+                    "author_id": "crypto_id",
+                    "author_name": "cryptobredda",
+                    "points": 4,
+                    "reason": "phantom morning board",
+                }
+            ]
+        }
+
+        with (
+            patch.object(summarization_tasks.config, "summary_channel_ids", ["general_id"]),
+            patch.object(summarization_tasks.config, "general_channel_id", "general_id"),
+            patch.object(summarization_tasks.database, "get_active_channels", return_value=active_channels),
+            patch.object(summarization_tasks.database, "get_messages_for_time_range", return_value=messages_by_channel),
+            patch.object(summarization_tasks.database, "get_user_engagement_metrics", return_value={}),
+            patch.object(summarization_tasks.database, "get_daily_point_awards", return_value=existing) as mock_existing,
+            patch.object(summarization_tasks.database, "award_points_to_user") as mock_award,
+            patch.object(summarization_tasks.database, "store_daily_point_award") as mock_store_award,
+            patch.object(summarization_tasks, "analyze_messages_for_points", new=AsyncMock(return_value=phantom)) as mock_analyze,
+            patch.object(summarization_tasks, "call_llm_for_summary", new=AsyncMock(return_value=digest)),
+            patch.object(summarization_tasks.database, "store_channel_summary", return_value=True),
+            patch.object(summarization_tasks.database, "delete_messages_older_than", return_value=0),
+            patch.object(summarization_tasks, "post_summary_to_reports_channel", new=AsyncMock()) as mock_post,
+        ):
+            await summarization_tasks.run_daily_summarization_once(now=now)
+
+        mock_existing.assert_called()
+        mock_analyze.assert_not_awaited()
+        mock_award.assert_not_called()
+        mock_store_award.assert_not_called()
+        mock_post.assert_awaited()
+        append_points = mock_post.await_args.args[4]
+        self.assertIsNone(append_points)
 
     async def test_daily_role_color_charge_skips_exempt_role_members(self):
         role = MagicMock()
