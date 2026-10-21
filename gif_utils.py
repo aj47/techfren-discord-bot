@@ -15,6 +15,23 @@ GIFV_URL_PATTERN = re.compile(r"https?://\S+\.gifv(?:\?\S*)?", re.IGNORECASE)
 GIF_PROVIDER_BRANDS = ("tenor", "giphy", "gfycat", "redgifs")
 
 
+def is_forward_reference(message) -> bool:
+    """Return whether a Discord message reference is a native forward."""
+    reference = getattr(message, "reference", None)
+    # Discord API MessageReferenceType.forward is integer 1.
+    return reference is not None and getattr(reference, "type", None) == 1
+
+
+def should_check_gif_reference(message) -> bool:
+    """Only native forwards inherit GIF status from their referenced message.
+
+    Replies are conversation context, not reposted media. Counting GIFs anywhere
+    in a reply ancestry incorrectly rate-limits ordinary text replies.
+    """
+    return is_forward_reference(message)
+
+
+
 def is_gif_url(url: str) -> bool:
     """Return True if the URL appears to point to a GIF.
 

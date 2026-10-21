@@ -29,7 +29,7 @@ from apify_handler import scrape_twitter_content, is_twitter_url  # Import Apify
 from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_gif_bypass
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
-from gif_utils import is_gif_url, is_discord_emoji_url
+from gif_utils import is_gif_url, is_discord_emoji_url, should_check_gif_reference
 from bridge import start_bridge, handle_bridge_message, handle_bridge_message_edit, handle_bridge_message_delete, handle_bridge_reaction  # techfriendcommunity bridge
 from x_link_utils import (  # X/Twitter link rewriting
     find_x_link_rewrites,
@@ -1344,7 +1344,9 @@ async def on_message(message):
 
     # Check if this message references another message (reply or forward)
     # This must happen BEFORE the GIF check because forwards might not have GIF content loaded yet
-    if not message.author.bot and message.reference and message.reference.message_id:
+    # Only native forwards inherit GIF status from the referenced message.
+    # Ordinary replies are conversation context, even if an ancestor has a GIF.
+    if not message.author.bot and should_check_gif_reference(message):
         try:
             logger.info(f"Reference detected - User: {message.author.id} | Ref: {message.reference.message_id}")
 
