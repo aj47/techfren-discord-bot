@@ -204,6 +204,23 @@ CREATE_INDEX_HONEYPOT_HITS_CREATED = "CREATE INDEX IF NOT EXISTS idx_honeypot_hi
 CREATE_INDEX_MEMBER_FIRST_SEEN_USER = "CREATE INDEX IF NOT EXISTS idx_member_first_seen_user ON member_first_seen (guild_id, user_id);"
 CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED = "CREATE INDEX IF NOT EXISTS idx_member_first_seen_joined ON member_first_seen (joined_at);"
 
+# Durable per-message record for the promo-only check. The messages table is
+# pruned to ~24h, so "has this member ever posted anything that is not promo?"
+# cannot be answered from it. One row per message, kept until the account is
+# gone. is_promo is decided by promo_only.is_promotional at write time.
+CREATE_PROMO_MESSAGES_TABLE = """
+CREATE TABLE IF NOT EXISTS promo_messages (
+    message_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    is_promo INTEGER NOT NULL,
+    content TEXT,
+    created_at TIMESTAMP NOT NULL
+);
+"""
+
+CREATE_INDEX_PROMO_MESSAGES_USER = "CREATE INDEX IF NOT EXISTS idx_promo_messages_user ON promo_messages (guild_id, user_id);"
+
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -260,12 +277,14 @@ def migrate_database() -> None:
             cursor.execute(CREATE_HONEYPOT_CHANNELS_TABLE)
             cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
             cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
+            cursor.execute(CREATE_PROMO_MESSAGES_TABLE)
             cursor.execute(CREATE_INDEX_HONEYPOT_CHANNEL)
             cursor.execute(CREATE_INDEX_HONEYPOT_GUILD)
             cursor.execute(CREATE_INDEX_HONEYPOT_HITS_USER)
             cursor.execute(CREATE_INDEX_HONEYPOT_HITS_CREATED)
             cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_USER)
             cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED)
+            cursor.execute(CREATE_INDEX_PROMO_MESSAGES_USER)
 
             # Ensure free_change_started_at column exists on user_role_colors
             cursor.execute("PRAGMA table_info(user_role_colors)")
@@ -350,6 +369,7 @@ def init_database() -> None:
             cursor.execute(CREATE_HONEYPOT_CHANNELS_TABLE)
             cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
             cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
+            cursor.execute(CREATE_PROMO_MESSAGES_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -385,6 +405,7 @@ def init_database() -> None:
             cursor.execute(CREATE_INDEX_HONEYPOT_HITS_CREATED)
             cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_USER)
             cursor.execute(CREATE_INDEX_MEMBER_FIRST_SEEN_JOINED)
+            cursor.execute(CREATE_INDEX_PROMO_MESSAGES_USER)
 
             # NOTE: CREATE_INDEX_REPLY_TO is created in migrate_database() to ensure
             # the column exists first (handles both new DBs and existing DBs)
@@ -3232,3 +3253,92 @@ def get_recent_duplicate_channels(
     except Exception as e:
         logger.error(f"Error reading duplicate content for {user_id}: {str(e)}", exc_info=True)
         return []
+
+
+# =============================================================================
+# PROMO-ONLY HISTORY
+#
+# One durable row per message so promo_only.py can answer "is every message
+# this member has posted promotional?" after the messages table is pruned.
+# =============================================================================
+
+def record_promo_message(
+    user_id: str,
+    guild_id: str,
+    message_id: str,
+    content: str,
+    is_promo: bool,
+) -> bool:
+    """
+    Remember one message for the promo-only check.
+
+    Inserting the same message id twice is a no-op, so a retried handler does
+    not double-count.
+
+    Returns:
+        bool: True if the row was written or already present, False on error.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO promo_messages (
+                    message_id, user_id, guild_id, is_promo, content, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id) DO NOTHING
+                """,
+                (
+                    message_id,
+                    user_id,
+                    guild_id,
+                    1 if is_promo else 0,
+                    content,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error recording promo message {message_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def promo_message_exists(message_id: str) -> bool:
+    """True when this message id is already in the promo record."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM promo_messages WHERE message_id = ?",
+                (message_id,),
+            )
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error reading promo message {message_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def promo_message_counts(user_id: str, guild_id: str) -> Dict[str, int]:
+    """
+    How many messages this member has stored, and how many of them are promo.
+
+    Returns {'total': 0, 'promo': 0} when the member has no rows or the read
+    fails. A failed read must not look like an all-promo history.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total, COALESCE(SUM(is_promo), 0) AS promo
+                FROM promo_messages
+                WHERE user_id = ? AND guild_id = ?
+                """,
+                (user_id, guild_id),
+            )
+            row = cursor.fetchone()
+        return {"total": int(row["total"]), "promo": int(row["promo"])}
+    except Exception as e:
+        logger.error(f"Error counting promo messages for {user_id}: {str(e)}", exc_info=True)
+        return {"total": 0, "promo": 0}
