@@ -107,3 +107,50 @@ def test_judging_a_recorded_message_does_not_double_count(temp_database):
 
     assert verdict.total == 3
     assert verdict.delete is True
+
+
+def test_older_ordinary_message_blocks_delete(temp_database):
+    """A message the bot already forgot still counts. One ordinary post, ever, stops the delete."""
+    database.record_promo_message("42", "101", "old1", "how do I set the temperature?", False)
+    record_message("42", "101", "new1", "join https://discord.gg/aa")
+
+    verdict = verdict_for("42", "101", "free airdrop, DM me")
+
+    assert verdict.delete is False
+    assert verdict.reason == "history is not all promotional"
+
+
+def test_exempt_role_is_never_deleted(temp_database):
+    record_message("42", "101", "m1", "join https://discord.gg/aa")
+
+    verdict = verdict_for("42", "101", "free airdrop, DM me", exempt=True)
+
+    assert verdict.delete is False
+    assert verdict.reason == "exempt role"
+
+
+def test_archive_history_is_loaded_once_and_blocks_delete(temp_database, tmp_path):
+    import sqlite3
+
+    archive = tmp_path / "archive.db"
+    conn = sqlite3.connect(archive)
+    conn.execute("CREATE TABLE messages (id TEXT, guild_id TEXT, author_id TEXT, content TEXT)")
+    conn.executemany(
+        "INSERT INTO messages VALUES (?, ?, ?, ?)",
+        [
+            ("old1", "101", "42", "how do I set the temperature?"),
+            ("old2", "101", "42", "join https://discord.gg/aa"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    from promo_only import load_archive_history
+
+    assert load_archive_history("42", "101", archive) == 2
+    assert load_archive_history("42", "101", archive) == 0
+
+    verdict = verdict_for("42", "101", "free airdrop, DM me")
+
+    assert verdict.delete is False
+    assert verdict.total == 3

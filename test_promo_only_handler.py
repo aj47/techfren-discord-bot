@@ -8,6 +8,12 @@ import promo_only
 from promo_only import handle_promo_message
 
 
+@pytest.fixture(autouse=True)
+def _no_real_archive(monkeypatch):
+    """Handler tests must not read the real message archive."""
+    monkeypatch.setattr(promo_only, "load_archive_history", lambda *a, **k: 0)
+
+
 def _message(author_id="42", content="join https://discord.gg/abc", bot=False):
     message = MagicMock()
     message.id = 555
@@ -15,6 +21,7 @@ def _message(author_id="42", content="join https://discord.gg/abc", bot=False):
     message.webhook_id = None
     message.author.id = int(author_id)
     message.author.bot = bot
+    message.author.roles = []
     message.guild.id = 101
     message.channel.id = 7
     message.channel.name = "general"
@@ -82,4 +89,21 @@ async def test_mixed_history_is_not_deleted(monkeypatch):
     verdict = await handle_promo_message(message, enabled=True, dry_run=False)
 
     assert verdict.delete is False
+    message.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legend_role_is_not_deleted(monkeypatch):
+    message = _message()
+    role = MagicMock()
+    role.id = 1235430975870210149
+    message.author.roles = [role]
+    called = MagicMock()
+    monkeypatch.setattr(promo_only, "verdict_for", called)
+
+    verdict = await handle_promo_message(message, enabled=True, dry_run=False)
+
+    assert verdict.delete is False
+    assert verdict.reason == "exempt role"
+    called.assert_not_called()
     message.delete.assert_not_awaited()
