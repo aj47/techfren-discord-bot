@@ -374,3 +374,10 @@ HONEYPOT_TIMEOUT_MINUTES = int(os.getenv('HONEYPOT_TIMEOUT_MINUTES', '1440') or 
 # Everything else about the trap is policy, not configuration, and lives as
 # constants in honeypot_handler.py: the two triggers (blast / duplicate),
 # timeout-only (never ban), and the immunity conditions.
+
+
+# --- promo-only history ------------------------------------------------------
+# Deletes a message when every stored message from its author is promotional.
+# Off unless enabled. Dry-run logs the would-delete and deletes nothing.
+PROMO_ONLY_ENABLED = os.getenv('PROMO_ONLY_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+PROMO_ONLY_DRY_RUN = os.getenv('PROMO_ONLY_DRY_RUN', 'true').strip().lower() in ('1', 'true', 'yes', 'on')

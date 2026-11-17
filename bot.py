@@ -39,6 +39,7 @@ from x_link_utils import (  # X/Twitter link rewriting
     build_thread_name,
 )
 from fred_mention_nudge import handle_fred_mention_nudge
+from promo_only import handle_promo_message
 from honeypot_handler import (  # Guild-wide anti-spam for new/inactive accounts
     BLAST_CHANNELS,
     BLAST_WINDOW_SECONDS,
@@ -1257,6 +1258,23 @@ async def on_message(message):
         except Exception as e:
             logger.error(
                 f"Honeypot check failed for message {message.id}: {e}", exc_info=True
+            )
+
+    # Promo-only history. Off unless PROMO_ONLY_ENABLED is set, and even then
+    # PROMO_ONLY_DRY_RUN (default on) logs the delete without doing it. A live
+    # delete removes the message, so later handlers must not see it.
+    if message.guild and not message.author.bot:
+        try:
+            verdict = await handle_promo_message(
+                message,
+                enabled=config.PROMO_ONLY_ENABLED,
+                dry_run=config.PROMO_ONLY_DRY_RUN,
+            )
+            if verdict is not None and verdict.delete and not config.PROMO_ONLY_DRY_RUN:
+                return
+        except Exception as e:
+            logger.error(
+                f"Promo-only check failed for message {message.id}: {e}", exc_info=True
             )
 
     # Mirror to techfriendcommunity (never raises; no-op unless enabled)
