@@ -221,6 +221,16 @@ CREATE TABLE IF NOT EXISTS promo_messages (
 
 CREATE_INDEX_PROMO_MESSAGES_USER = "CREATE INDEX IF NOT EXISTS idx_promo_messages_user ON promo_messages (guild_id, user_id);"
 
+CREATE_PROMO_HISTORY_LOADS_TABLE = """
+CREATE TABLE IF NOT EXISTS promo_history_loads (
+    user_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    loaded_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (user_id, guild_id)
+);
+"""
+
+
 
 INSERT_MESSAGE = """
 INSERT INTO messages (
@@ -278,6 +288,7 @@ def migrate_database() -> None:
             cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
             cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
             cursor.execute(CREATE_PROMO_MESSAGES_TABLE)
+            cursor.execute(CREATE_PROMO_HISTORY_LOADS_TABLE)
             cursor.execute(CREATE_INDEX_HONEYPOT_CHANNEL)
             cursor.execute(CREATE_INDEX_HONEYPOT_GUILD)
             cursor.execute(CREATE_INDEX_HONEYPOT_HITS_USER)
@@ -370,6 +381,7 @@ def init_database() -> None:
             cursor.execute(CREATE_HONEYPOT_HITS_TABLE)
             cursor.execute(CREATE_MEMBER_FIRST_SEEN_TABLE)
             cursor.execute(CREATE_PROMO_MESSAGES_TABLE)
+            cursor.execute(CREATE_PROMO_HISTORY_LOADS_TABLE)
 
             # Create indexes for messages table
             cursor.execute(CREATE_INDEX_AUTHOR)
@@ -3342,3 +3354,36 @@ def promo_message_counts(user_id: str, guild_id: str) -> Dict[str, int]:
     except Exception as e:
         logger.error(f"Error counting promo messages for {user_id}: {str(e)}", exc_info=True)
         return {"total": 0, "promo": 0}
+
+
+def promo_history_loaded(user_id: str, guild_id: str) -> bool:
+    """True once this member's older messages have been copied in."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM promo_history_loads WHERE user_id = ? AND guild_id = ?",
+                (user_id, guild_id),
+            )
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error reading promo history load for {user_id}: {str(e)}", exc_info=True)
+        return False
+
+
+def mark_promo_history_loaded(user_id: str, guild_id: str) -> None:
+    """Remember that this member's older messages were copied in."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO promo_history_loads (user_id, guild_id, loaded_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, guild_id) DO NOTHING
+                """,
+                (user_id, guild_id, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error marking promo history loaded for {user_id}: {str(e)}", exc_info=True)
