@@ -28,6 +28,10 @@ EXEMPT_ROLE_IDS = frozenset({
     "1303354826251436045",  # active
 })
 
+# Same room the anti-spam posts to, and the same person it pings.
+LOG_CHANNEL_ID = "1463709753095094292"
+NOTIFY_USER_ID = "200272755520700416"
+
 
 # Short pitches and off-platform funnels. A bare link is not enough: members
 # share GitHub and docs links all day.
@@ -141,6 +145,36 @@ def verdict_for(user_id: str, guild_id: str, content: str, message_id: str = "",
     return Verdict(False, total, promo, "history is not all promotional")
 
 
+async def post_log(message, verdict: Verdict, dry_run: bool) -> None:
+    """Tell the log channel about a delete decision. A missing channel is logged and skipped."""
+    import discord
+
+    guild = getattr(message, "guild", None)
+    if guild is None:
+        return
+    channel = guild.get_channel(int(LOG_CHANNEL_ID))
+    if channel is None:
+        logger.warning(f"Promo-only: log channel {LOG_CHANNEL_ID} not found")
+        return
+    mode = "DRY RUN" if dry_run else "deleted"
+    author = message.author
+    room = getattr(message.channel, "mention", "?")
+    embed = discord.Embed(
+        title=f"Promo-only ({mode})",
+        description=verdict.reason,
+        color=discord.Color.orange(),
+    )
+    embed.add_field(name="Account", value=f"{author.mention} (`{author.id}`)", inline=False)
+    embed.add_field(name="Channel", value=f"{room} (`{message.channel.id}`)", inline=False)
+    embed.add_field(name="History", value=f"{verdict.promo}/{verdict.total} promotional", inline=False)
+    body = (getattr(message, "content", "") or "").strip() or "(no text)"
+    embed.add_field(name="Content", value=body[:1000], inline=False)
+    try:
+        await channel.send(content=f"<@{NOTIFY_USER_ID}>", embed=embed)
+    except Exception as exc:
+        logger.error(f"Promo-only: could not post to the log channel: {exc}")
+
+
 def note_decision(verdict: Verdict, user_id: str, channel_name: str) -> None:
     """Log a would-delete. Dry-run callers use this and then do nothing."""
     if verdict.delete:
@@ -177,6 +211,7 @@ async def handle_promo_message(message, enabled: bool, dry_run: bool) -> Optiona
 
     if not verdict.delete:
         return verdict
+    await post_log(message, verdict, dry_run)
     if dry_run:
         channel = getattr(message, "channel", None)
         note_decision(verdict, user_id, str(getattr(channel, "name", "?")))

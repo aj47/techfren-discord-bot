@@ -107,3 +107,25 @@ async def test_legend_role_is_not_deleted(monkeypatch):
     assert verdict.reason == "exempt role"
     called.assert_not_called()
     message.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_delete_decision_posts_to_the_log_channel(monkeypatch):
+    """A would-delete posts one embed in the log channel and pings AJ, same as anti-spam."""
+    message = _message()
+    log_channel = MagicMock()
+    log_channel.send = AsyncMock()
+    message.guild.get_channel.return_value = log_channel
+    message.author.mention = "<@42>"
+    message.channel.mention = "<#7>"
+    monkeypatch.setattr(promo_only, "verdict_for", lambda *a, **k: promo_only.Verdict(True, 1, 1, "all stored messages are promotional"))
+    monkeypatch.setattr(promo_only, "record_message", MagicMock())
+    monkeypatch.setattr(promo_only, "LOG_CHANNEL_ID", "1463709753095094292")
+
+    await handle_promo_message(message, enabled=True, dry_run=True)
+
+    message.guild.get_channel.assert_called_once_with(1463709753095094292)
+    log_channel.send.assert_awaited_once()
+    content = log_channel.send.await_args.kwargs["content"]
+    assert content == "<@200272755520700416>"
+    assert "DRY RUN" in log_channel.send.await_args.kwargs["embed"].title
