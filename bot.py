@@ -40,6 +40,13 @@ from x_link_utils import (  # X/Twitter link rewriting
 )
 from fred_mention_nudge import handle_fred_mention_nudge
 from promo_only import handle_promo_message
+from link_votes import (
+    VOTE_EMOJIS,
+    member_voted,
+    opposite as opposite_vote,
+    seed_vote_reactions,
+    should_seed as should_seed_votes,
+)
 from honeypot_handler import (  # Guild-wide anti-spam for new/inactive accounts
     BLAST_CHANNELS,
     BLAST_WINDOW_SECONDS,
@@ -767,6 +774,7 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         # If message contains URLs, allow it
         if urls:
             logger.info(f"Message {message.id} in links dump channel contains URL, allowing")
+            await seed_links_dump_votes(message)
             return False
 
         # Always allow forwarded messages from other channels
@@ -1157,6 +1165,8 @@ async def on_ready():
         logger.info(f'Synced {len(synced)} command(s)')
     except Exception as e:
         logger.error(f'Failed to sync commands: {e}')
+
+    bot.add_view(LinkBoardView())
 
     # Initialize the database - critical for bot operation
     try:
@@ -1836,6 +1846,47 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     await handle_bridge_message_delete(payload)
 
 
+async def seed_links_dump_votes(message: discord.Message) -> None:
+    """Add 🔼 then 🔽 on a link posted in #links-dump. Failures are logged."""
+    if not should_seed_votes(message, config.links_dump_channel_id):
+        return
+    try:
+        await seed_vote_reactions(message)
+        logger.info(f"Seeded vote arrows on links-dump message {message.id}")
+    except discord.Forbidden:
+        logger.warning(f"No permission to add vote arrows on message {message.id}")
+    except discord.HTTPException as e:
+        logger.warning(f"Could not add vote arrows on message {message.id}: {e}")
+
+
+async def enforce_one_vote(payload: discord.RawReactionActionEvent) -> None:
+    """A member keeps one arrow. Adding one removes the other."""
+    chosen = str(payload.emoji)
+    other = opposite_vote(chosen)
+    if other is None or payload.user_id == bot.user.id:
+        return
+    if str(payload.channel_id) != str(config.links_dump_channel_id or ""):
+        return
+    try:
+        channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
+        if not hasattr(channel, "fetch_message"):
+            return
+        message = await channel.fetch_message(payload.message_id)
+        for reaction in message.reactions:
+            if str(reaction.emoji) != other:
+                continue
+            voters = [user async for user in reaction.users()]
+            if not member_voted(voters, payload.user_id):
+                return
+            await reaction.remove(discord.Object(id=payload.user_id))
+            logger.info(
+                f"Removed {other} from user {payload.user_id} on message {message.id}"
+            )
+            return
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+        logger.warning(f"Could not enforce one vote on message {payload.message_id}: {e}")
+
+
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     """
@@ -1848,6 +1899,8 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     This ensures only community-approved links are summarized.
     """
     await handle_bridge_reaction(payload)
+    if str(payload.emoji) in VOTE_EMOJIS:
+        await enforce_one_vote(payload)
     # Only process magnifying glass reactions
     if str(payload.emoji) != '🔍':
         return
@@ -3273,6 +3326,58 @@ async def honeypot_hits(interaction: discord.Interaction, limit: int = 10):
             await interaction.response.send_message(
                 "An error occurred. Check the bot logs.", ephemeral=True
             )
+
+
+class LinkBoardView(discord.ui.View):
+    """Hot / New / Top. Each press rewrites this message."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def _show(self, interaction: discord.Interaction, sort: str) -> None:
+        dump_id = config.links_dump_channel_id
+        channel = interaction.channel
+        if dump_id and str(getattr(channel, "id", "")) != str(dump_id):
+            channel = interaction.client.get_channel(int(dump_id))
+        if channel is None or not hasattr(channel, "history"):
+            await interaction.response.send_message(
+                "The links channel is not available.", ephemeral=True
+            )
+            return
+        await interaction.response.defer()
+        from link_votes import collect_rows, order_rows, render_board
+        me = interaction.client.user
+        rows = await collect_rows(channel, me.id if me else 0)
+        text = render_board(order_rows(rows, sort), sort)
+        await interaction.edit_original_response(content=text, view=self)
+
+    @discord.ui.button(label="Hot", style=discord.ButtonStyle.primary, custom_id="links:hot")
+    async def hot(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "hot")
+
+    @discord.ui.button(label="New", style=discord.ButtonStyle.secondary, custom_id="links:new")
+    async def new(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "new")
+
+    @discord.ui.button(label="Top", style=discord.ButtonStyle.secondary, custom_id="links:top")
+    async def top(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "top")
+
+
+@bot.tree.command(name="links", description="Show links from the links channel, sorted")
+@app_commands.describe(sort="hot, new, or top")
+@app_commands.choices(sort=[
+    app_commands.Choice(name="Hot", value="hot"),
+    app_commands.Choice(name="New", value="new"),
+    app_commands.Choice(name="Top", value="top"),
+])
+async def links_board(interaction: discord.Interaction, sort: str = "hot"):
+    """Post the links board. The buttons rewrite this same message."""
+    if sort not in ("hot", "new", "top"):
+        sort = "hot"
+    view = LinkBoardView()
+    await view._show(interaction, sort)
+
 
 try:
     logger.info("Starting bot...")
