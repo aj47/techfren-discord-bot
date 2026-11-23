@@ -3344,12 +3344,22 @@ class LinkBoardView(discord.ui.View):
                 "The links channel is not available.", ephemeral=True
             )
             return
-        await interaction.response.defer()
+        # A slash command has no message yet, so the first call must send one.
+        # A button press edits that same message. A plain defer on the slash
+        # command acknowledges it and then the edit finds nothing to edit.
+        first = interaction.type is discord.InteractionType.application_command
+        if first:
+            await interaction.response.defer(thinking=True)
+        else:
+            await interaction.response.defer()
         from link_votes import collect_rows, order_rows, render_board
         me = interaction.client.user
         rows = await collect_rows(channel, me.id if me else 0)
         text = render_board(order_rows(rows, sort), sort)
-        await interaction.edit_original_response(content=text, view=self)
+        if first:
+            await interaction.followup.send(content=text, view=self)
+        else:
+            await interaction.edit_original_response(content=text, view=self)
 
     @discord.ui.button(label="Hot", style=discord.ButtonStyle.primary, custom_id="links:hot")
     async def hot(self, interaction: discord.Interaction, button: discord.ui.Button):
