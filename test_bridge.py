@@ -78,6 +78,18 @@ def test_reaction_and_delete_events():
     assert b._queue.get_nowait() == {"type": "message.delete", "id": "7"}
 
 
+def test_message_move_event():
+    import bridge as bridge_module
+    b = _make_bridge()
+    previous = bridge_module._bridge
+    bridge_module._bridge = b
+    try:
+        asyncio.run(bridge_module.handle_bridge_message_move("7", "8"))
+    finally:
+        bridge_module._bridge = previous
+    assert b._queue.get_nowait() == {"type": "message.move", "from": "7", "to": "8"}
+
+
 @pytest.mark.asyncio
 async def test_flush_posts_batch_with_bearer():
     b = _make_bridge()

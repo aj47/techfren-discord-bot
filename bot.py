@@ -30,7 +30,7 @@ from gif_limiter import check_and_record_gif_post, check_gif_rate_limit, record_
 import config
 from image_analyzer import analyze_message_images  # Import image analysis functions
 from gif_utils import is_gif_url, is_discord_emoji_url, should_check_gif_reference
-from bridge import start_bridge, handle_bridge_message, handle_bridge_message_edit, handle_bridge_message_delete, handle_bridge_reaction  # techfriendcommunity bridge
+from bridge import start_bridge, handle_bridge_message, handle_bridge_message_edit, handle_bridge_message_delete, handle_bridge_reaction, handle_bridge_message_move  # techfriendcommunity bridge
 from x_link_utils import (  # X/Twitter link rewriting
     find_x_link_rewrites,
     rewrite_content_links,
@@ -993,6 +993,7 @@ async def _repost_with_fixed_links(message: discord.Message, author_display_name
         database.remap_message_id(str(message.id), str(repost.id))
     except Exception as e:
         logger.error(f"Failed to remap stored message {message.id} to {repost.id}: {e}", exc_info=True)
+    await handle_bridge_message_move(str(message.id), str(repost.id))
 
     logger.info(
         f"Reposted message {message.id} as {repost.id} with {len(rewrites)} fixed X link(s)"
@@ -1924,7 +1925,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     Links are summarized when a magnifying glass (🔍) reaction is added to a message containing links.
     This ensures only community-approved links are summarized.
     """
-    await handle_bridge_reaction(payload)
+    # The bot's own seed arrow is not a vote.
+    me = bot.user
+    if not (me is not None and payload.user_id == me.id and str(payload.emoji) in VOTE_EMOJIS):
+        await handle_bridge_reaction(payload)
     if str(payload.emoji) in VOTE_EMOJIS:
         await enforce_one_vote(payload)
     # Only process magnifying glass reactions

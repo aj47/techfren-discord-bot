@@ -439,3 +439,10 @@ async def handle_bridge_message_delete(payload: discord.RawMessageDeleteEvent) -
 
 async def handle_bridge_reaction(payload: discord.RawReactionActionEvent) -> None:
     _safe(lambda p: _bridge.on_raw_reaction_add(p), payload)  # type: ignore[union-attr]
+
+
+async def handle_bridge_message_move(old_id: str, new_id: str) -> None:
+    """The X-link repost replaced a message. Point the site at the one that stays."""
+    if _bridge is None:
+        return
+    _bridge.enqueue({"type": "message.move", "from": old_id, "to": new_id})
