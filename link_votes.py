@@ -26,11 +26,15 @@ _HOT_WINDOW_MS = 45_000_000
 _SORT_LABEL = {"hot": "Hot", "new": "New", "top": "Top"}
 
 
-def should_seed(message, dump_channel_id) -> bool:
-    """True when this message should receive both vote arrows."""
+def should_seed(message, dump_channel_id, human_repost: bool = False) -> bool:
+    """True when this message should receive both vote arrows.
+
+    A bot message is skipped, except an X-link repost. That repost replaces the
+    human's message, and it is the one that stays in the channel.
+    """
     if not dump_channel_id:
         return False
-    if getattr(message.author, "bot", False):
+    if getattr(message.author, "bot", False) and not human_repost:
         return False
     if str(message.channel.id) != str(dump_channel_id):
         return False
@@ -91,11 +95,16 @@ def first_url(content: str):
 BOARD_SCAN_LIMIT = 100
 
 
-async def collect_rows(channel, bot_id: int, limit: int = BOARD_SCAN_LIMIT):
-    """Recent link posts in the dump channel, newest first from history."""
+async def collect_rows(channel, bot_id: int, limit: int = BOARD_SCAN_LIMIT, human_repost_ids=()):
+    """Recent link posts in the dump channel, newest first from history.
+
+    A bot message is skipped, except an X-link repost. That repost is the
+    message people see and vote on.
+    """
     rows = []
+    reposts = {int(i) for i in human_repost_ids}
     async for message in channel.history(limit=limit):
-        if message.author.bot:
+        if message.author.bot and message.id not in reposts and "fixupx.com/" not in (message.content or "") and "fxtwitter.com/" not in (message.content or ""):
             continue
         url = first_url(message.content or "")
         if not url:

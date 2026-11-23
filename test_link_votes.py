@@ -46,6 +46,13 @@ def test_bot_message_is_not_seeded():
     assert link_votes.should_seed(message, dump_channel_id="111") is False
 
 
+def test_x_link_repost_in_the_dump_is_seeded():
+    message = _message("https://fixupx.com/user/status/1", channel_id=111, author_bot=True)
+    assert link_votes.should_seed(message, dump_channel_id="111", human_repost=True) is True
+    other = _message("https://fixupx.com/user/status/1", channel_id=222, author_bot=True)
+    assert link_votes.should_seed(other, dump_channel_id="111", human_repost=True) is False
+
+
 def test_unset_dump_channel_seeds_nothing():
     message = _message("https://example.com/a", channel_id=111)
     assert link_votes.should_seed(message, dump_channel_id=None) is False
@@ -176,3 +183,34 @@ def test_collect_rows_skips_bots_and_text_and_drops_the_bot_arrow():
     assert rows[0]["url"] == "https://example.com/a"
     assert rows[0]["up"] == 2
     assert rows[0]["down"] == 0
+
+
+def test_collect_rows_keeps_an_x_link_repost():
+    repost = _history_message(
+        "posted:\nhttps://fixupx.com/user/status/1",
+        up=1, down=0, created_ms=1_700_000_000_300, author_bot=True,
+    )
+    other_bot = _history_message(
+        "https://example.com/not-a-repost",
+        up=5, down=0, created_ms=1_700_000_000_400, author_bot=True,
+    )
+
+    class _History:
+        def __init__(self, messages):
+            self._messages = messages
+
+        def __aiter__(self):
+            self._i = 0
+            return self
+
+        async def __anext__(self):
+            if self._i >= len(self._messages):
+                raise StopAsyncIteration
+            item = self._messages[self._i]
+            self._i += 1
+            return item
+
+    channel = MagicMock()
+    channel.history = lambda limit: _History([repost, other_bot])
+    rows = asyncio.run(link_votes.collect_rows(channel, bot_id=1))
+    assert [row["url"] for row in rows] == ["https://fixupx.com/user/status/1"]

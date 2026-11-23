@@ -774,7 +774,6 @@ async def handle_links_dump_channel(message: discord.Message) -> bool:
         # If message contains URLs, allow it
         if urls:
             logger.info(f"Message {message.id} in links dump channel contains URL, allowing")
-            await seed_links_dump_votes(message)
             return False
 
         # Always allow forwarded messages from other channels
@@ -977,6 +976,7 @@ async def _repost_with_fixed_links(message: discord.Message, author_display_name
 
     _remember_x_repost(repost.id, message.author.id)
     _remember_x_link_message(repost.id)
+    await seed_links_dump_votes(repost, human_repost=True)
 
     try:
         await message.delete()
@@ -998,6 +998,29 @@ async def _repost_with_fixed_links(message: discord.Message, author_display_name
         f"Reposted message {message.id} as {repost.id} with {len(rewrites)} fixed X link(s)"
     )
     return True
+
+
+async def _message_will_be_reposted(message: discord.Message) -> bool:
+    """True when the X-link rewrite will delete this message and post its own.
+
+    The vote arrows belong on the message that stays. Seeding this one first
+    puts them on a message that is about to disappear.
+    """
+    if getattr(config, "X_LINK_REWRITE_MODE", "repost") != "repost":
+        return False
+    if message.author.bot or message.guild is None:
+        return False
+    if message.id in _x_link_handled_messages:
+        return False
+    if _repost_blocker(message):
+        return False
+    rewrites = find_x_link_rewrites(
+        message.content,
+        rewrite_domain=getattr(config, "X_LINK_REWRITE_DOMAIN", "fixupx.com"),
+        max_links=getattr(config, "X_LINK_REWRITE_MAX_LINKS", 5),
+        language=getattr(config, "X_LINK_REWRITE_LANGUAGE", "en"),
+    )
+    return bool(rewrites)
 
 
 async def handle_x_link_rewrite(message: discord.Message) -> None:
@@ -1704,7 +1727,10 @@ async def on_message(message):
     # Runs after the message is stored so the author's own message (and the point
     # credit derived from it) is already recorded and stays untouched.
     # Scheduled as a background task so its thread-creation delay doesn't hold up
-    # command handling below.
+    # command handling below. An X post in the links channel is seeded on the
+    # repost, because this original message is deleted.
+    if not await _message_will_be_reposted(message):
+        await seed_links_dump_votes(message)
     asyncio.create_task(handle_x_link_rewrite(message))
 
     # If someone pings Fred without having paid for access, reply once with
@@ -1846,9 +1872,9 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     await handle_bridge_message_delete(payload)
 
 
-async def seed_links_dump_votes(message: discord.Message) -> None:
+async def seed_links_dump_votes(message: discord.Message, human_repost: bool = False) -> None:
     """Add 🔼 then 🔽 on a link posted in #links-dump. Failures are logged."""
-    if not should_seed_votes(message, config.links_dump_channel_id):
+    if not should_seed_votes(message, config.links_dump_channel_id, human_repost=human_repost):
         return
     try:
         await seed_vote_reactions(message)
