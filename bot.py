@@ -1892,8 +1892,6 @@ async def enforce_one_vote(payload: discord.RawReactionActionEvent) -> None:
     other = opposite_vote(chosen)
     if other is None or payload.user_id == bot.user.id:
         return
-    if str(payload.channel_id) != str(config.links_dump_channel_id or ""):
-        return
     try:
         channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
         if not hasattr(channel, "fetch_message"):

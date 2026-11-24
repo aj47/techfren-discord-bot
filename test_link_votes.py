@@ -36,9 +36,16 @@ def test_text_only_message_is_not_seeded():
     assert link_votes.should_seed(message, dump_channel_id="111") is False
 
 
-def test_other_channel_is_not_seeded():
+def test_a_link_in_any_channel_is_seeded():
     message = _message("https://example.com/a", channel_id=222)
-    assert link_votes.should_seed(message, dump_channel_id="111") is False
+    assert link_votes.should_seed(message, dump_channel_id="111") is True
+
+
+def test_a_gif_or_an_image_is_not_seeded():
+    gif = _message("https://tenor.com/view/cat-123", channel_id=111)
+    image = _message("https://cdn.discordapp.com/attachments/1/2/pic.png", channel_id=111)
+    assert link_votes.should_seed(gif, dump_channel_id="111") is False
+    assert link_votes.should_seed(image, dump_channel_id="111") is False
 
 
 def test_bot_message_is_not_seeded():
@@ -46,16 +53,16 @@ def test_bot_message_is_not_seeded():
     assert link_votes.should_seed(message, dump_channel_id="111") is False
 
 
-def test_x_link_repost_in_the_dump_is_seeded():
+def test_x_link_repost_in_any_channel_is_seeded():
     message = _message("https://fixupx.com/user/status/1", channel_id=111, author_bot=True)
     assert link_votes.should_seed(message, dump_channel_id="111", human_repost=True) is True
     other = _message("https://fixupx.com/user/status/1", channel_id=222, author_bot=True)
-    assert link_votes.should_seed(other, dump_channel_id="111", human_repost=True) is False
+    assert link_votes.should_seed(other, dump_channel_id="111", human_repost=True) is True
 
 
-def test_unset_dump_channel_seeds_nothing():
+def test_seeding_does_not_need_the_dump_channel():
     message = _message("https://example.com/a", channel_id=111)
-    assert link_votes.should_seed(message, dump_channel_id=None) is False
+    assert link_votes.should_seed(message, dump_channel_id=None) is True
 
 
 def test_seed_adds_up_before_down():

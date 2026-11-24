@@ -26,19 +26,40 @@ _HOT_WINDOW_MS = 45_000_000
 _SORT_LABEL = {"hot": "Hot", "new": "New", "top": "Top"}
 
 
-def should_seed(message, dump_channel_id, human_repost: bool = False) -> bool:
+_GIF_HOSTS = ("tenor.com", "giphy.com", "gfycat.com", "tenor.co", "klipy.com")
+_MEDIA_HOSTS = {
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+    "images-ext-1.discordapp.net",
+    "images-ext-2.discordapp.net",
+    "i.imgur.com",
+}
+_MEDIA_EXT = re.compile(r"\.(png|jpe?g|gif|webp|bmp|svg|mp4|mov|webm|mp3|wav|ogg|zip|rar)$", re.I)
+
+
+def _host(url: str) -> str:
+    return url.split("/")[2].split(":")[0].lower()
+
+
+def is_resource_url(url: str) -> bool:
+    """True for a page the resources list keeps. A GIF, an image, or a clip is not."""
+    host = _host(url)
+    if host in _MEDIA_HOSTS or any(host == name or host.endswith("." + name) for name in _GIF_HOSTS):
+        return False
+    return _MEDIA_EXT.search(url.split("?", 1)[0]) is None
+
+
+def should_seed(message, dump_channel_id=None, human_repost: bool = False) -> bool:
     """True when this message should receive both vote arrows.
 
-    A bot message is skipped, except an X-link repost. That repost replaces the
-    human's message, and it is the one that stays in the channel.
+    Any channel. One real link is enough. The links-channel setting is not
+    used here. The sorted list still uses it. A bot message is skipped, except
+    an X-link repost. That repost is the message that stays.
     """
-    if not dump_channel_id:
-        return False
+    del dump_channel_id
     if getattr(message.author, "bot", False) and not human_repost:
         return False
-    if str(message.channel.id) != str(dump_channel_id):
-        return False
-    return bool(_URL.search(message.content or ""))
+    return any(is_resource_url(url) for url in _URL.findall(message.content or ""))
 
 
 async def seed_vote_reactions(message) -> None:
