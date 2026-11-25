@@ -42,6 +42,28 @@ def test_ordinary_chat_is_not_promotional():
     assert not is_promotional("")
 
 
+def test_a_members_own_earnings_are_not_promotional():
+    """A member reporting their own creator fees is not a pitch. 'earning $5k' still is."""
+    assert not is_promotional("but then i noticed i already earned $500 in creator fees lol")
+    assert is_promotional("I am earning $5k per month")
+
+
+def test_identity_proxy_pitch_is_promotional():
+    """The North Korea pitch names AI training work and a country list. It matches no old phrase."""
+    glse = (
+        "Hello! I currently work with AI training platforms and am generating over "
+        "$10K in monthly revenue. I am seeking to collaborate with reliable individuals "
+        "based in the UK, the US, Canada, or Australia."
+    )
+    amon = (
+        "I am handling AI training task and earning $5k per month. "
+        "But we can only create one account on that platform on one computer. "
+        "Who helps me? UK, US, CA, AU."
+    )
+    assert is_promotional(glse)
+    assert is_promotional(amon)
+
+
 def test_all_promo_history_says_delete(temp_database):
     for n, text in enumerate(("join https://discord.gg/aa", "free airdrop, DM me", "https://t.me/coins now")):
         record_message("42", "101", f"m{n}", text)

@@ -93,6 +93,51 @@ async def test_mixed_history_is_not_deleted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_og_role_is_not_deleted(monkeypatch):
+    message = _message()
+    role = MagicMock()
+    role.id = 1306413611580653599
+    message.author.roles = [role]
+    called = MagicMock()
+    monkeypatch.setattr(promo_only, "verdict_for", called)
+
+    verdict = await handle_promo_message(message, enabled=True, dry_run=False)
+
+    assert verdict.delete is False
+    assert verdict.reason == "exempt role"
+    called.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_long_unmatched_message_asks_the_model(monkeypatch):
+    """A long message that misses the phrase list still gets one model check."""
+    message = _message(content="x" * 180)
+    ask = AsyncMock(return_value=False)
+    monkeypatch.setattr(promo_only, "is_promotional", lambda content: False)
+    monkeypatch.setattr(promo_only, "ask_model", ask)
+    monkeypatch.setattr(promo_only, "record_message", MagicMock())
+    monkeypatch.setattr(promo_only, "verdict_for", lambda *a, **k: promo_only.Verdict(False, 1, 0, "history is not all promotional"))
+
+    await handle_promo_message(message, enabled=True, dry_run=True)
+
+    ask.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_short_unmatched_message_does_not_ask_the_model(monkeypatch):
+    message = _message(content="hello there")
+    ask = AsyncMock(return_value=False)
+    monkeypatch.setattr(promo_only, "is_promotional", lambda content: False)
+    monkeypatch.setattr(promo_only, "ask_model", ask)
+    monkeypatch.setattr(promo_only, "record_message", MagicMock())
+    monkeypatch.setattr(promo_only, "verdict_for", lambda *a, **k: promo_only.Verdict(False, 1, 0, "history is not all promotional"))
+
+    await handle_promo_message(message, enabled=True, dry_run=True)
+
+    ask.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_legend_role_is_not_deleted(monkeypatch):
     message = _message()
     role = MagicMock()

@@ -26,6 +26,7 @@ EXEMPT_ROLE_IDS = frozenset({
     "1235430975870210149",  # legend
     "1303355924903104563",  # MVP
     "1303354826251436045",  # active
+    "1306413611580653599",  # OG
 })
 
 # Same room the anti-spam posts to, and the same person it pings.
@@ -44,11 +45,19 @@ _PROMO_PATTERNS = (
     r"\bdm me\b",
     r"\bfree airdrop\b",
     r"\bclaim (?:your |free )?(?:tokens|airdrop|nft)\b",
-    r"\bearn \$\d+",
+    r"\bearning \$\d+",
     r"\blimited time\b",
+    # North Korea identity-proxy pitches. Checked against the archive: zero
+    # ordinary messages match any of these.
+    r"\bai training (?:platform|task)s?\b",
+    r"(?:one|1) account\b.{0,40}\b(?:one|1) computer\b",
 )
 
 _PROMO_RE = re.compile("|".join(_PROMO_PATTERNS), re.IGNORECASE)
+
+# A phrase miss only reaches the model when the text is long enough to be a
+# pitch. A short "hello" is not this scam, and the model costs money.
+MODEL_MIN_CHARS = 180
 
 
 @dataclass(frozen=True)
@@ -66,6 +75,34 @@ def is_promotional(content: str) -> bool:
     if not content:
         return False
     return _PROMO_RE.search(content) is not None
+
+
+async def ask_model(content: str) -> bool:
+    """True when the model says this one message is an identity-proxy pitch.
+
+    A failed or unclear answer is False. The check must be wrong in the safe
+    direction: a pitch it cannot read is left alone.
+    """
+    import llm_handler
+
+    prompt = (
+        "Answer yes or no only. Is this one message an identity-proxy pitch "
+        "that recruits people to do AI training work under their own name?\n\n"
+        f"{content[:1500]}"
+    )
+    try:
+        completion = await llm_handler.llm_client.chat.completions.create(
+            model=llm_handler.config.llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0,
+            extra_body={"reasoning": {"effort": "none", "exclude": True}},
+        )
+        answer = (completion.choices[0].message.content or "").strip().lower()
+    except Exception as exc:
+        logger.error(f"Promo-only: model check failed: {exc}")
+        return False
+    return answer.startswith("yes")
 
 
 DEFAULT_ARCHIVE = os.path.expanduser("~/.local/share/discrawl/discrawl.db")
@@ -113,7 +150,7 @@ def record_message(user_id: str, guild_id: str, message_id: str, content: str) -
 
 
 def holds_exempt_role(roles) -> bool:
-    """True when the member holds legend, MVP, or active."""
+    """True when the member holds legend, MVP, active, or OG."""
     for role in roles or []:
         if str(getattr(role, "id", "")) in EXEMPT_ROLE_IDS:
             return True
@@ -205,6 +242,9 @@ async def handle_promo_message(message, enabled: bool, dry_run: bool) -> Optiona
 
     content = getattr(message, "content", "") or ""
     user_id = str(author.id)
+    if not is_promotional(content) and len(content) >= MODEL_MIN_CHARS:
+        if await ask_model(content):
+            content = "identity-proxy pitch: earn $1"
     load_archive_history(user_id, str(guild.id))
     record_message(user_id, str(guild.id), str(message.id), content)
     verdict = verdict_for(user_id, str(guild.id), content, message_id=str(message.id))
