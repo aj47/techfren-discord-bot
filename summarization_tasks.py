@@ -54,7 +54,10 @@ def _summary_text_looks_truncated(summary_text):
     bullet = last.lstrip()
     if (
         bullet.startswith("•") or bullet.startswith("- ") or bullet.startswith("* ")
-    ) and not re.search(r"(\)|`|\.|!|\?)$", bullet):
+    ) and not re.search(r"(\)|`|\.|!|\?|<t:\d+(?::[tTdDfFR])?>)$", bullet):
+        # A bullet may legitimately end with a Discord timestamp such as
+        # <t:1795666890:t> (Links section, 2026-11-23..26 digests were all
+        # dropped for this). A half-written "<t:179" still counts as cut off.
         return True
     return False
 

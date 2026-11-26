@@ -72,6 +72,28 @@ class TestIsSummaryGenerationFailure(unittest.TestCase):
         )
         self.assertTrue(_is_summary_generation_failure(stub))
 
+    def test_links_bullet_ending_in_discord_timestamp_is_valid(self):
+        # 2026-11-23..26: complete digests whose last Links bullet ended in
+        # a Discord timestamp were rejected as truncated, so no Highlights
+        # were stored for four days.
+        digest = (
+            "**🔥 Highlights**\n\n"
+            "• **Janus cluster** up on tailnet - **`tazr.dev`** "
+            "[source](<https://discord.com/channels/1/2/3>)\n\n"
+            "**🔗 Links**\n\n"
+            "• [Nodecode](<https://nodecode.ai/>) - agent tooling - "
+            "**`tazr.dev`** <t:1795666890:t>"
+        )
+        self.assertFalse(_is_summary_generation_failure(digest))
+
+    def test_bullet_cut_inside_discord_timestamp_is_rejected(self):
+        digest = (
+            "**🔥 Highlights**\n\n"
+            "• [Nodecode](<https://nodecode.ai/>) - agent tooling - "
+            "**`tazr.dev`** <t:17956"
+        )
+        self.assertTrue(_is_summary_generation_failure(digest))
+
     def test_complete_two_bullet_highlights_digest_is_valid(self):
         digest = (
             "**🔥 Highlights**\n\n"
