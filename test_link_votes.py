@@ -15,6 +15,7 @@ def _message(content, channel_id=111, author_bot=False, is_thread=False):
     message.channel.parent_id = 111 if is_thread else None
     type(message.channel).mro = lambda self: (type(self),)
     message.channel.__class__ = type("TextChannel", (), {})
+    message.type = 0
     if is_thread:
         message.channel.__class__ = type("Thread", (), {})
         # isinstance(..., discord.Thread) is patched per test; flag is enough here.
@@ -58,6 +59,20 @@ def test_x_link_repost_in_any_channel_is_seeded():
     assert link_votes.should_seed(message, dump_channel_id="111", human_repost=True) is True
     other = _message("https://fixupx.com/user/status/1", channel_id=222, author_bot=True)
     assert link_votes.should_seed(other, dump_channel_id="111", human_repost=True) is True
+
+
+def test_a_thread_start_is_not_seeded():
+    message = _message("https://fixupx.com/user/status/", channel_id=111)
+    message.type = 18
+    assert link_votes.should_seed(message, dump_channel_id="111") is False
+
+
+def test_a_discord_message_link_is_not_seeded():
+    jump = "https://discord.com/channels/1/2/3"
+    only = _message(f"see {jump}", channel_id=222)
+    assert link_votes.should_seed(only, dump_channel_id="111") is False
+    mixed = _message(f"{jump} and https://example.com/a", channel_id=222)
+    assert link_votes.should_seed(mixed, dump_channel_id="111") is True
 
 
 def test_seeding_does_not_need_the_dump_channel():

@@ -49,14 +49,38 @@ def is_resource_url(url: str) -> bool:
     return _MEDIA_EXT.search(url.split("?", 1)[0]) is None
 
 
+# Discord copies a thread's parent into the channel as the thread starter.
+# That copy is not a new link. Type 18 is the parent side of the pair.
+_THREAD_STARTER_TYPE = 18
+
+_DISCORD_JUMP = re.compile(r"https?://(?:\w+\.)?discord(?:app)?\.com/channels/", re.I)
+
+
+def _is_thread_start(message) -> bool:
+    """True for the channel message Discord creates when a thread opens."""
+    return getattr(message, "type", None) == _THREAD_STARTER_TYPE
+
+
+def _only_discord_jumps(message) -> bool:
+    """True when every link points at another Discord message."""
+    urls = _URL.findall(message.content or "")
+    return bool(urls) and all(_DISCORD_JUMP.match(url) for url in urls)
+
+
 def should_seed(message, dump_channel_id=None, human_repost: bool = False) -> bool:
     """True when this message should receive both vote arrows.
 
     Any channel. One real link is enough. The links-channel setting is not
     used here. The sorted list still uses it. A bot message is skipped, except
     an X-link repost. That repost is the message that stays.
+
+    A thread start is skipped. Discord copies the parent link into it, and
+    that copy is not a new post. A message that only links to another Discord
+    message is skipped for the same reason.
     """
     del dump_channel_id
+    if _is_thread_start(message) or _only_discord_jumps(message):
+        return False
     if getattr(message.author, "bot", False) and not human_repost:
         return False
     return any(is_resource_url(url) for url in _URL.findall(message.content or ""))
